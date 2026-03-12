@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import TaskBoard from './TaskBoard';
 import TaskDetail from './TaskDetail';
 import SessionView from './SessionView';
 import NewTaskModal from './NewTaskModal';
 import SettingsModal from './SettingsModal';
 import type { Task } from '@/src/types';
+
+const WebTerminal = lazy(() => import('./WebTerminal'));
 
 interface UsageSummary {
   provider: string;
@@ -29,7 +31,7 @@ interface ProjectInfo {
 }
 
 export default function Dashboard({ user }: { user: any }) {
-  const [viewMode, setViewMode] = useState<'tasks' | 'sessions'>('tasks');
+  const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal'>('tasks');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
@@ -91,6 +93,16 @@ export default function Dashboard({ user }: { user: any }) {
               }`}
             >
               Sessions
+            </button>
+            <button
+              onClick={() => setViewMode('terminal')}
+              className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
+                viewMode === 'terminal'
+                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              Terminal
             </button>
           </div>
 
@@ -211,9 +223,13 @@ export default function Dashboard({ user }: { user: any }) {
               )}
             </aside>
           </>
-        ) : (
-          /* Sessions view — full width */
+        ) : viewMode === 'sessions' ? (
           <SessionView projects={projects} />
+        ) : (
+          /* Terminal — full width */
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading terminal...</div>}>
+            <WebTerminal />
+          </Suspense>
         )}
       </div>
 

@@ -34,6 +34,8 @@ export default function SessionView({
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [entries, setEntries] = useState<SessionEntry[]>([]);
   const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set());
+  const [messageText, setMessageText] = useState('');
+  const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Fetch sessions when project changes
@@ -185,6 +187,52 @@ export default function SessionView({
           )}
           <div ref={bottomRef} />
         </div>
+
+        {/* Message input */}
+        {activeSessionId && selectedProject && (
+          <div className="border-t border-[var(--border)] px-4 py-2 shrink-0">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!messageText.trim() || sending) return;
+                setSending(true);
+                try {
+                  await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      projectName: selectedProject,
+                      prompt: messageText.trim(),
+                      conversationId: activeSessionId,
+                    }),
+                  });
+                  setMessageText('');
+                } finally {
+                  setSending(false);
+                }
+              }}
+              className="flex gap-2"
+            >
+              <input
+                type="text"
+                value={messageText}
+                onChange={e => setMessageText(e.target.value)}
+                placeholder={`Send message to session ${activeSessionId?.slice(0, 8)}...`}
+                className="flex-1 px-3 py-1.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+              />
+              <button
+                type="submit"
+                disabled={!messageText.trim() || sending}
+                className="text-xs px-3 py-1.5 bg-[var(--accent)] text-white rounded hover:opacity-90 disabled:opacity-50"
+              >
+                {sending ? '...' : 'Send'}
+              </button>
+            </form>
+            <p className="text-[9px] text-[var(--text-secondary)] mt-1">
+              Creates a task with --resume to continue this session
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

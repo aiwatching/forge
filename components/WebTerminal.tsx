@@ -35,11 +35,27 @@ interface TabState {
 // ─── Layout persistence ──────────────────────────────────────
 
 const STORAGE_KEY = 'mw-terminal-tabs';
+const LABELS_KEY = 'mw-session-labels';
 
 function saveTabs(tabs: TabState[], activeTabId: number) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ tabs, activeTabId }));
   } catch {}
+}
+
+/** Persist session name → user-assigned label mapping */
+function saveSessionLabels(labels: Record<string, string>) {
+  try {
+    localStorage.setItem(LABELS_KEY, JSON.stringify(labels));
+  } catch {}
+}
+
+function loadSessionLabels(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(LABELS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return {};
 }
 
 function loadTabs(): { tabs: TabState[]; activeTabId: number } | null {
@@ -159,6 +175,7 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
   const [editingTabId, setEditingTabId] = useState<number | null>(null);
   const [editingLabel, setEditingLabel] = useState('');
   const [closeConfirm, setCloseConfirm] = useState<{ tabId: number; sessions: string[] } | null>(null);
+  const [sessionLabels, setSessionLabels] = useState<Record<string, string>>({});
   const dragTabRef = useRef<number | null>(null);
 
   // Restore from localStorage after mount (avoids hydration mismatch)
@@ -169,12 +186,25 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
       setTabs(saved.tabs);
       setActiveTabId(saved.activeTabId);
     }
+    setSessionLabels(loadSessionLabels());
     setHydrated(true);
   }, []);
 
   // Persist on changes (only after hydration)
   useEffect(() => {
-    if (hydrated) saveTabs(tabs, activeTabId);
+    if (!hydrated) return;
+    saveTabs(tabs, activeTabId);
+    // Sync session name → tab label mapping
+    setSessionLabels(prev => {
+      const next = { ...prev };
+      for (const tab of tabs) {
+        for (const sn of collectSessionNames(tab.tree)) {
+          next[sn] = tab.label;
+        }
+      }
+      saveSessionLabels(next);
+      return next;
+    });
   }, [tabs, activeTabId, hydrated]);
 
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
@@ -284,7 +314,22 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
   const renameTab = useCallback((tabId: number, newLabel: string) => {
     const label = newLabel.trim();
     if (!label) return;
-    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, label } : t));
+    setTabs(prev => {
+      const tab = prev.find(t => t.id === tabId);
+      if (tab) {
+        // Update session labels mapping for all sessions in this tab
+        const sessions = collectSessionNames(tab.tree);
+        if (sessions.length > 0) {
+          setSessionLabels(sl => {
+            const next = { ...sl };
+            for (const sn of sessions) next[sn] = label;
+            saveSessionLabels(next);
+            return next;
+          });
+        }
+      }
+      return prev.map(t => t.id === tabId ? { ...t, label } : t);
+    });
     setEditingTabId(null);
   }, []);
 
@@ -495,9 +540,16 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
               <tbody>
                 {tmuxSessions.map(s => {
                   const inUse = usedSessions.includes(s.name);
+                  const savedLabel = sessionLabels[s.name];
                   return (
                     <tr key={s.name} className="border-b border-[#2a2a4a]/50 hover:bg-[#1a1a2e]">
-                      <td className="py-1.5 pr-3 font-mono text-gray-300">{s.name.replace('mw-', '')}</td>
+                      <td className="py-1.5 pr-3 text-gray-300">
+                        {savedLabel ? (
+                          <><span>{savedLabel}</span> <span className="font-mono text-gray-600 text-[9px]">{s.name.replace('mw-', '')}</span></>
+                        ) : (
+                          <span className="font-mono">{s.name.replace('mw-', '')}</span>
+                        )}
+                      </td>
                       <td className="py-1.5 pr-3 text-gray-500">{new Date(s.created).toLocaleString()}</td>
                       <td className="py-1.5 pr-3">
                         {inUse ? (
@@ -510,9 +562,10 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
                         {!inUse && (
                           <button
                             onClick={() => {
-                              // Open in a new tab
+                              // Open in a new tab, restore saved label if available
                               const tree = makeTerminal(s.name);
-                              const newTab: TabState = { id: nextId++, label: s.name.replace('mw-', ''), tree, ratios: {}, activeId: firstTerminalId(tree) };
+                              const label = sessionLabels[s.name] || s.name.replace('mw-', '');
+                              const newTab: TabState = { id: nextId++, label, tree, ratios: {}, activeId: firstTerminalId(tree) };
                               setTabs(prev => [...prev, newTab]);
                               setActiveTabId(newTab.id);
                               setShowSessionPicker(false);

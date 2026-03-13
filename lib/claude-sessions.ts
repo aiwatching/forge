@@ -248,6 +248,7 @@ export function tailSessionFile(
     }
   };
 
+  // Use both fs.watch AND polling as fallback (fs.watch is unreliable on macOS)
   const watcher = watch(filePath, (eventType) => {
     if (eventType === 'change') {
       readNewBytes();
@@ -256,7 +257,11 @@ export function tailSessionFile(
 
   watcher.on('error', (err) => onError?.(err));
 
+  // Poll every 5 seconds as fallback
+  const pollTimer = setInterval(readNewBytes, 5000);
+
   return () => {
     watcher.close();
+    clearInterval(pollTimer);
   };
 }

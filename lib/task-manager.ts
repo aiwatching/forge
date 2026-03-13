@@ -15,6 +15,9 @@ import type { Task, TaskLogEntry, TaskStatus, TaskMode, WatchConfig } from '@/sr
 let runner: ReturnType<typeof setInterval> | null = null;
 let currentTaskId: string | null = null;
 
+// Per-project concurrency: track which projects have a running prompt task
+const runningProjects = new Set<string>();
+
 // Event listeners for real-time updates
 type TaskListener = (taskId: string, event: 'log' | 'status', data?: any) => void;
 const listeners = new Set<TaskListener>();
@@ -112,12 +115,13 @@ export function cancelTask(id: string): boolean {
     return true;
   }
 
-  if (task.status === 'running' && currentTaskId === id) {
-    updateTaskStatus(id, 'cancelled');
-    return true;
+  updateTaskStatus(id, 'cancelled');
+
+  // Clean up project lock if this was a running prompt task
+  if (task.status === 'running') {
+    runningProjects.delete(task.projectName);
   }
 
-  updateTaskStatus(id, 'cancelled');
   return true;
 }
 
@@ -160,33 +164,39 @@ export function stopRunner() {
 }
 
 async function processNextTask() {
-  if (currentTaskId) return; // Already running one
-
-  const next = db().prepare(`
+  // Find all queued tasks ready to run
+  const queued = db().prepare(`
     SELECT * FROM tasks WHERE status = 'queued'
     AND (scheduled_at IS NULL OR scheduled_at <= datetime('now'))
-    ORDER BY priority DESC, created_at ASC LIMIT 1
-  `).get() as any;
+    ORDER BY priority DESC, created_at ASC
+  `).all() as any[];
 
-  if (!next) return;
+  for (const next of queued) {
+    const task = rowToTask(next);
 
-  const task = rowToTask(next);
+    if (task.mode === 'monitor') {
+      // Monitor tasks run in background, don't block the runner
+      startMonitorTask(task);
+      continue;
+    }
 
-  if (task.mode === 'monitor') {
-    // Monitor tasks run in background, don't block the runner
-    startMonitorTask(task);
-    return;
-  }
+    // Skip if this project already has a running prompt task
+    if (runningProjects.has(task.projectName)) continue;
 
-  currentTaskId = task.id;
+    // Run this task
+    runningProjects.add(task.projectName);
+    currentTaskId = task.id;
 
-  try {
-    await executeTask(task);
-  } catch (err: any) {
-    appendLog(task.id, { type: 'system', subtype: 'error', content: err.message, timestamp: new Date().toISOString() });
-    updateTaskStatus(task.id, 'failed', err.message);
-  } finally {
-    currentTaskId = null;
+    // Execute async — don't await so we can process tasks for other projects in parallel
+    executeTask(task)
+      .catch((err: any) => {
+        appendLog(task.id, { type: 'system', subtype: 'error', content: err.message, timestamp: new Date().toISOString() });
+        updateTaskStatus(task.id, 'failed', err.message);
+      })
+      .finally(() => {
+        runningProjects.delete(task.projectName);
+        if (currentTaskId === task.id) currentTaskId = null;
+      });
   }
 }
 
@@ -471,6 +481,8 @@ function startMonitorTask(task: Task) {
     return;
   }
 
+  console.log(`[monitor] Starting monitor ${task.id} for ${task.projectName}/${task.conversationId.slice(0, 8)} — condition: ${config.condition}, action: ${config.action}, file: ${fp}`);
+
   updateTaskStatus(task.id, 'running');
   appendLog(task.id, {
     type: 'system', subtype: 'init',
@@ -495,10 +507,11 @@ function startMonitorTask(task: Task) {
     }, 30_000);
   }
 
-  // Tail the file for changes
+  // Tail the file for changes (uses fs.watch + 5s polling fallback)
   const stopTail = tailSessionFile(fp, (newEntries) => {
     lastActivityTime = Date.now();
     lastEntryCount += newEntries.length;
+    console.log(`[monitor] ${task.id}: +${newEntries.length} entries (${lastEntryCount} total)`);
 
     appendLog(task.id, {
       type: 'system', subtype: 'text',
@@ -549,6 +562,13 @@ function startMonitorTask(task: Task) {
         }
       }
     }
+  }, (err) => {
+    console.error(`[monitor] ${task.id} tail error:`, err.message);
+    appendLog(task.id, {
+      type: 'system', subtype: 'error',
+      content: `File watch error: ${err.message}`,
+      timestamp: new Date().toISOString(),
+    });
   });
 
   const cleanup = () => {
@@ -585,7 +605,6 @@ async function triggerMonitorAction(task: Task, context: string) {
 
   if (config.action === 'notify') {
     // Send Telegram notification
-    const { notifyTaskComplete } = await import('./notify');
     const settings = loadSettings();
     if (settings.telegramBotToken && settings.telegramChatId) {
       const msg = config.actionPrompt
@@ -594,16 +613,17 @@ async function triggerMonitorAction(task: Task, context: string) {
       await sendTelegramDirect(settings.telegramBotToken, settings.telegramChatId, msg);
     }
   } else if (config.action === 'message' && config.actionPrompt && task.conversationId) {
-    // Send a message to the session by creating a prompt task
-    createTask({
+    // Send a message to the session by creating a prompt task (will queue if project is busy)
+    const newTask = createTask({
       projectName: task.projectName,
       projectPath: task.projectPath,
       prompt: config.actionPrompt,
       conversationId: task.conversationId,
     });
+    const queued = runningProjects.has(task.projectName) ? ' (queued — project busy)' : '';
     appendLog(task.id, {
       type: 'system', subtype: 'text',
-      content: `Created follow-up task with prompt: ${config.actionPrompt.slice(0, 100)}`,
+      content: `Created follow-up task ${newTask.id}${queued}: ${config.actionPrompt.slice(0, 100)}`,
       timestamp: new Date().toISOString(),
     });
   } else if (config.action === 'task' && config.actionPrompt) {
@@ -623,12 +643,18 @@ async function triggerMonitorAction(task: Task, context: string) {
 
 async function sendTelegramDirect(token: string, chatId: string, text: string) {
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
     });
-  } catch {}
+    if (!res.ok) {
+      const body = await res.text();
+      console.error(`[monitor] Telegram send failed: ${res.status} ${body}`);
+    }
+  } catch (err) {
+    console.error('[monitor] Telegram send error:', err);
+  }
 }
 
 function summarizeNewEntries(entries: SessionEntry[]): string {

@@ -507,7 +507,7 @@ export default function SessionView({
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-2">
           {!activeSessionId && (
             <div className="flex-1 flex items-center justify-center text-[var(--text-secondary)] h-full">
               <p>Select a session from the tree to view</p>
@@ -576,7 +576,7 @@ function SessionEntryView({
 
   if (entry.type === 'assistant_text') {
     return (
-      <div className="py-1">
+      <div className="py-1 overflow-hidden">
         <MarkdownContent content={entry.content} />
       </div>
     );
@@ -605,7 +605,7 @@ function SessionEntryView({
   if (entry.type === 'tool_use') {
     const isLong = entry.content.length > 80;
     return (
-      <div className="border border-[var(--border)] rounded overflow-hidden">
+      <div className="border border-[var(--border)] rounded overflow-hidden max-w-full">
         <button
           onClick={onToggle}
           className="w-full flex items-center gap-2 px-2 py-1.5 bg-[var(--bg-tertiary)] hover:bg-[var(--border)]/30 transition-colors text-left"
@@ -630,8 +630,8 @@ function SessionEntryView({
   if (entry.type === 'tool_result') {
     const isLong = entry.content.length > 150;
     return (
-      <div className="ml-4 border-l-2 border-[var(--accent)]/30 pl-3">
-        <pre className={`text-[11px] text-[var(--text-secondary)] font-mono whitespace-pre-wrap break-words ${isLong && !expanded ? 'max-h-16 overflow-hidden' : 'max-h-80 overflow-y-auto'}`}>
+      <div className="ml-4 border-l-2 border-[var(--accent)]/30 pl-3 overflow-hidden">
+        <pre className={`text-[11px] text-[var(--text-secondary)] font-mono whitespace-pre-wrap break-all ${isLong && !expanded ? 'max-h-16 overflow-hidden' : 'max-h-80 overflow-y-auto'}`}>
           {entry.content}
         </pre>
         {isLong && !expanded && (

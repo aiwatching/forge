@@ -16,7 +16,7 @@ export async function POST() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: telegramChatId,
-        text: '✅ *My Workflow* — Test notification!\n\nTelegram notifications are working.',
+        text: '✅ *Forge* — Test notification!\n\nTelegram notifications are working.',
         parse_mode: 'Markdown',
       }),
     });

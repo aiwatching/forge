@@ -1,20 +1,30 @@
 {
-  "name": "my-workflow",
+  "name": "@aion0/forge",
   "version": "0.1.0",
-  "description": "Unified AI workflow platform — multi-model, persistent sessions, web-first",
+  "description": "Unified AI workflow platform — multi-model task orchestration, persistent sessions, web terminal, remote access",
   "type": "module",
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "mw": "npx tsx cli/mw.ts"
+    "forge": "npx tsx cli/mw.ts"
   },
   "bin": {
+    "forge": "./cli/mw.ts",
     "mw": "./cli/mw.ts"
   },
-  "keywords": [],
+  "keywords": [
+    "ai",
+    "workflow",
+    "claude",
+    "task-orchestration",
+    "terminal",
+    "tmux",
+    "multi-model",
+    "telegram"
+  ],
   "author": "zliu",
-  "license": "ISC",
+  "license": "MIT",
   "packageManager": "pnpm@10.32.1",
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.58",

@@ -73,7 +73,7 @@ export default function Dashboard({ user }: { user: any }) {
       {/* Top bar */}
       <header className="h-10 border-b border-[var(--border)] flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-4">
-          <span className="text-sm font-bold text-[var(--accent)]">My Workflow</span>
+          <span className="text-sm font-bold text-[var(--accent)]">Forge</span>
 
           {/* View mode toggle */}
           <div className="flex bg-[var(--bg-tertiary)] rounded p-0.5">

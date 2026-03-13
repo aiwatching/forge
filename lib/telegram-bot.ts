@@ -219,7 +219,7 @@ async function handleMessage(msg: any) {
 
 async function sendHelp(chatId: number) {
   await send(chatId,
-    `🤖 My Workflow\n\n` +
+    `🤖 Forge\n\n` +
     `📋 /tasks — numbered task list\n` +
     `/tasks running — filter by status\n` +
     `🔍 /sessions — browse session content\n` +

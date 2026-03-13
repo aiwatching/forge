@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /**
- * mw — My Workflow CLI
+ * forge — Forge CLI
  *
  * Local CLI that talks to the same backend as Telegram.
  * Usage:
@@ -341,32 +341,32 @@ async function main() {
     }
 
     default:
-      console.log(`mw — My Workflow CLI
+      console.log(`forge — Forge CLI (@aion0/forge)
 
 Usage:
-  mw task <project> <prompt>     Submit a task (auto-continues project session)
-  mw task <project> <prompt> --new  Force a fresh session
-  mw run <flow-name>             Run a YAML workflow
-  mw tasks [status]              List tasks (running|queued|done|failed)
-  mw watch <id>                  Live stream task output
-  mw log <id>                    Show execution log
-  mw status <id>                 Task details + result
-  mw session [project]           Show session IDs → local claude --resume
-  mw session link <project> <id> Link a local CLI session to the web system
-  mw cancel <id>                 Cancel a task
-  mw retry <id>                  Retry a failed task
-  mw flows                       List workflows
-  mw projects                    List projects
-  mw password                    Show login password
+  forge task <project> <prompt>     Submit a task (auto-continues project session)
+  forge task <project> <prompt> --new  Force a fresh session
+  forge run <flow-name>             Run a YAML workflow
+  forge tasks [status]              List tasks (running|queued|done|failed)
+  forge watch <id>                  Live stream task output
+  forge log <id>                    Show execution log
+  forge status <id>                 Task details + result
+  forge session [project]           Show session IDs → local claude --resume
+  forge session link <project> <id> Link a local CLI session to the web system
+  forge cancel <id>                 Cancel a task
+  forge retry <id>                  Retry a failed task
+  forge flows                       List workflows
+  forge projects                    List projects
+  forge password                    Show login password
 
 Shortcuts: t=task, r=run, ls=tasks, w=watch, l=log, s=status, f=flows, p=projects, pw=password
 
 Examples:
-  mw task accord "Fix the authentication bug in login.ts"
-  mw watch abc123
-  mw run daily-review
-  mw tasks running
-  mw session accord              Show session ID, then:
+  forge task accord "Fix the authentication bug in login.ts"
+  forge watch abc123
+  forge run daily-review
+  forge tasks running
+  forge session accord              Show session ID, then:
     cd ~/IdeaProjects/accord && claude --resume <session-id>`);
   }
 }

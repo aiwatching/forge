@@ -20,7 +20,7 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center">
       <div className="w-80 space-y-6">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-[var(--text-primary)]">My Workflow</h1>
+          <h1 className="text-2xl font-bold text-[var(--text-primary)]">Forge</h1>
           <p className="text-sm text-[var(--text-secondary)] mt-1">Unified AI Platform</p>
         </div>
 

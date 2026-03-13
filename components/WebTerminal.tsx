@@ -140,6 +140,8 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
   const [showSessionPicker, setShowSessionPicker] = useState(false);
   const [editingTabId, setEditingTabId] = useState<number | null>(null);
   const [editingLabel, setEditingLabel] = useState('');
+  const [closeConfirm, setCloseConfirm] = useState<{ tabId: number; sessions: string[] } | null>(null);
+  const dragTabRef = useRef<number | null>(null);
 
   // Restore from localStorage after mount (avoids hydration mismatch)
   useEffect(() => {
@@ -190,10 +192,21 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
   }, [tabs.length]);
 
   const closeTab = useCallback((tabId: number) => {
+    const tab = tabs.find(t => t.id === tabId);
+    if (!tab) return;
+    const sessions = collectSessionNames(tab.tree);
+    if (sessions.length > 0) {
+      setCloseConfirm({ tabId, sessions });
+    } else {
+      // No sessions, just close
+      removeTab(tabId);
+    }
+  }, [tabs]);
+
+  const removeTab = useCallback((tabId: number) => {
     setTabs(prev => {
       if (prev.length <= 1) return prev;
-      const filtered = prev.filter(t => t.id !== tabId);
-      return filtered;
+      return prev.filter(t => t.id !== tabId);
     });
     setActiveTabId(prev => {
       if (prev === tabId) {
@@ -204,6 +217,39 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
       return prev;
     });
   }, [tabs]);
+
+  const closeTabWithAction = useCallback((action: 'detach' | 'kill') => {
+    if (!closeConfirm) return;
+    const { tabId, sessions } = closeConfirm;
+    if (action === 'kill') {
+      // Kill all tmux sessions in this tab
+      const wsHost = window.location.hostname;
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      for (const sn of sessions) {
+        const ws = new WebSocket(`${wsProtocol}//${wsHost}:3001`);
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ type: 'kill', sessionName: sn }));
+          setTimeout(() => ws.close(), 500);
+        };
+      }
+    }
+    // Both actions remove the tab; 'detach' keeps tmux sessions alive
+    removeTab(tabId);
+    setCloseConfirm(null);
+  }, [closeConfirm, removeTab]);
+
+  const moveTab = useCallback((fromId: number, toId: number) => {
+    if (fromId === toId) return;
+    setTabs(prev => {
+      const fromIdx = prev.findIndex(t => t.id === fromId);
+      const toIdx = prev.findIndex(t => t.id === toId);
+      if (fromIdx < 0 || toIdx < 0) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next;
+    });
+  }, []);
 
   const renameTab = useCallback((tabId: number, newLabel: string) => {
     const label = newLabel.trim();
@@ -267,6 +313,16 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
 
   const usedSessions = collectAllSessionNames(tabs);
 
+  // Auto-refresh tmux sessions periodically to show detached count
+  useEffect(() => {
+    if (!hydrated) return;
+    refreshSessions();
+    const timer = setInterval(refreshSessions, 10000);
+    return () => clearInterval(timer);
+  }, [hydrated, refreshSessions]);
+
+  const detachedCount = tmuxSessions.filter(s => !usedSessions.includes(s.name)).length;
+
   return (
     <div className="h-full w-full flex-1 flex flex-col bg-[#1a1a2e]">
       {/* Tab bar + toolbar */}
@@ -276,7 +332,28 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
           {tabs.map(tab => (
             <div
               key={tab.id}
-              className={`flex items-center gap-1 px-3 py-1 text-[11px] cursor-pointer border-r border-[#2a2a4a] ${
+              draggable={editingTabId !== tab.id}
+              onDragStart={(e) => {
+                dragTabRef.current = tab.id;
+                e.dataTransfer.effectAllowed = 'move';
+                // Make drag image semi-transparent
+                if (e.currentTarget instanceof HTMLElement) {
+                  e.dataTransfer.setDragImage(e.currentTarget, 0, 0);
+                }
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragTabRef.current !== null) {
+                  moveTab(dragTabRef.current, tab.id);
+                  dragTabRef.current = null;
+                }
+              }}
+              onDragEnd={() => { dragTabRef.current = null; }}
+              className={`flex items-center gap-1 px-3 py-1 text-[11px] cursor-pointer border-r border-[#2a2a4a] select-none ${
                 tab.id === activeTabId
                   ? 'bg-[#1a1a2e] text-white'
                   : 'text-gray-500 hover:text-gray-300 hover:bg-[#1a1a2e]/50'
@@ -337,9 +414,14 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
           </button>
           <button
             onClick={() => { refreshSessions(); setShowSessionPicker(v => !v); }}
-            className={`text-[10px] px-2 py-0.5 rounded ${showSessionPicker ? 'text-white bg-[#7c5bf0]/30' : 'text-gray-400 hover:text-white hover:bg-[#2a2a4a]'}`}
+            className={`text-[10px] px-2 py-0.5 rounded relative ${showSessionPicker ? 'text-white bg-[#7c5bf0]/30' : 'text-gray-400 hover:text-white hover:bg-[#2a2a4a]'}`}
           >
             Sessions
+            {detachedCount > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full bg-yellow-500/80 text-[8px] text-black font-bold px-1">
+                {detachedCount}
+              </span>
+            )}
           </button>
           {activeTab && countTerminals(activeTab.tree) > 1 && (
             <button onClick={onClosePane} className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-red-400 hover:bg-[#2a2a4a] rounded">
@@ -425,6 +507,45 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
               </tbody>
             </table>
           )}
+        </div>
+      )}
+
+      {/* Close confirmation dialog */}
+      {closeConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setCloseConfirm(null)}>
+          <div className="bg-[#1a1a2e] border border-[#2a2a4a] rounded-lg p-4 shadow-xl max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-white mb-2">Close Tab</h3>
+            <p className="text-xs text-gray-400 mb-1">
+              This tab has {closeConfirm.sessions.length} active session{closeConfirm.sessions.length > 1 ? 's' : ''}:
+            </p>
+            <div className="text-[10px] text-gray-500 font-mono mb-3 space-y-0.5">
+              {closeConfirm.sessions.map(s => (
+                <div key={s}>• {s.replace('mw-', '')}</div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => closeTabWithAction('detach')}
+                className="flex-1 px-3 py-1.5 text-[11px] rounded bg-[#2a2a4a] text-gray-300 hover:bg-[#3a3a5a] hover:text-white"
+              >
+                Hide Tab
+                <span className="block text-[9px] text-gray-500 mt-0.5">Session keeps running</span>
+              </button>
+              <button
+                onClick={() => closeTabWithAction('kill')}
+                className="flex-1 px-3 py-1.5 text-[11px] rounded bg-red-500/20 text-red-400 hover:bg-red-500/30"
+              >
+                Kill Session
+                <span className="block text-[9px] text-red-400/60 mt-0.5">Permanently close</span>
+              </button>
+            </div>
+            <button
+              onClick={() => setCloseConfirm(null)}
+              className="w-full mt-2 px-3 py-1 text-[10px] text-gray-500 hover:text-gray-300"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 

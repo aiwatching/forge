@@ -675,7 +675,7 @@ async function handleTunnel(chatId: number, action?: string, password?: string, 
     const result = await startTunnel();
     if (result.url) {
       await send(chatId, '✅ Tunnel started:');
-      await sendHtml(chatId, `<code>${result.url}</code>`);
+      await sendHtml(chatId, `<a href="${result.url}">${result.url}</a>`);
     } else {
       await send(chatId, `❌ Failed: ${result.error}`);
     }
@@ -729,7 +729,7 @@ async function handleTunnelPassword(chatId: number, password?: string, userMsgId
   if (pwId) deleteMessageLater(chatId, pwId);
   if (status.status === 'running' && status.url) {
     const urlLabelId = await send(chatId, '🌐 URL:');
-    const urlId = await sendHtml(chatId, `<code>${status.url}</code>`);
+    const urlId = await sendHtml(chatId, `<a href="${status.url}">${status.url}</a>`);
     if (urlLabelId) deleteMessageLater(chatId, urlLabelId);
     if (urlId) deleteMessageLater(chatId, urlId);
   }

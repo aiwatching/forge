@@ -493,15 +493,22 @@ function DraggableSplit({
   const secondRef = useRef<HTMLDivElement>(null);
   const dividerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
+  const ratioRef = useRef(ratio);
   const isVert = direction === 'vertical';
 
+  // Keep ref in sync — avoid re-registering listeners on every ratio change
+  ratioRef.current = ratio;
+
+  // Apply ratio to DOM (only when not dragging — drag updates imperatively)
   useEffect(() => {
+    if (draggingRef.current) return;
     if (!firstRef.current || !secondRef.current) return;
     const prop = isVert ? 'width' : 'height';
     firstRef.current.style[prop] = `calc(${ratio * 100}% - 4px)`;
     secondRef.current.style[prop] = `calc(${(1 - ratio) * 100}% - 4px)`;
   }, [ratio, isVert]);
 
+  // Pointer capture drag — registered once, uses refs
   useEffect(() => {
     const divider = dividerRef.current;
     const container = containerRef.current;
@@ -511,14 +518,14 @@ function DraggableSplit({
 
     const vertical = isVert;
     const prop = vertical ? 'width' : 'height';
-    let lastRatio = ratio;
+    let lastRatio = ratioRef.current;
 
     const onPointerDown = (e: PointerEvent) => {
       e.preventDefault();
       e.stopPropagation();
       divider.setPointerCapture(e.pointerId);
       draggingRef.current = true;
-      lastRatio = ratio;
+      lastRatio = ratioRef.current;
       document.body.style.cursor = vertical ? 'col-resize' : 'row-resize';
       document.body.style.userSelect = 'none';
     };
@@ -531,6 +538,7 @@ function DraggableSplit({
         : (e.clientY - rect.top) / rect.height;
       r = Math.max(0.1, Math.min(0.9, r));
       lastRatio = r;
+      // Imperative DOM update — no React re-render during drag
       first.style[prop] = `calc(${r * 100}% - 4px)`;
       second.style[prop] = `calc(${(1 - r) * 100}% - 4px)`;
     };
@@ -540,6 +548,7 @@ function DraggableSplit({
       draggingRef.current = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      // Commit final ratio to React state (single re-render)
       setRatios(prev => ({ ...prev, [splitId]: lastRatio }));
     };
 
@@ -554,7 +563,8 @@ function DraggableSplit({
       divider.removeEventListener('pointerup', onPointerUp);
       divider.removeEventListener('lostpointercapture', onPointerUp);
     };
-  }, [isVert, ratio, splitId, setRatios]);
+    // Only re-register if direction or splitId changes (not on every ratio change)
+  }, [isVert, splitId, setRatios]);
 
   return (
     <div ref={containerRef} className="h-full w-full" style={{ display: 'flex', flexDirection: isVert ? 'row' : 'column' }}>
@@ -671,15 +681,25 @@ const MemoTerminalPane = memo(function TerminalPane({
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
     });
 
+    let resizeRaf = 0;
     const handleResize = () => {
-      fit.fit();
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      if (resizeRaf) cancelAnimationFrame(resizeRaf);
+      resizeRaf = requestAnimationFrame(() => {
+        resizeRaf = 0;
+        const el = containerRef.current;
+        if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) return; // hidden tab
+        try {
+          fit.fit();
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+        } catch {}
+      });
     };
 
     const resizeObserver = new ResizeObserver(handleResize);
     resizeObserver.observe(containerRef.current);
 
     return () => {
+      if (resizeRaf) cancelAnimationFrame(resizeRaf);
       resizeObserver.disconnect();
       ws.close();
       term.dispose();

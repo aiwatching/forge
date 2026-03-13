@@ -59,6 +59,25 @@ function saveTerminalState(data: unknown): void {
   }
 }
 
+/** Get session names that have custom labels (user-renamed) */
+function getRenamedSessions(): Set<string> {
+  try {
+    const state = loadTerminalState() as any;
+    if (!state?.sessionLabels) return new Set();
+    // sessionLabels: { "mw-xxx": "My Custom Name", ... }
+    // A session is "renamed" if its label differs from default patterns
+    const renamed = new Set<string>();
+    for (const [sessionName, label] of Object.entries(state.sessionLabels)) {
+      if (label && typeof label === 'string') {
+        renamed.add(sessionName);
+      }
+    }
+    return renamed;
+  } catch {
+    return new Set();
+  }
+}
+
 // ─── tmux helpers ──────────────────────────────────────────────
 
 function tmuxBin(): string {
@@ -160,6 +179,26 @@ function trackDetach(ws: WebSocket, sessionName: string) {
   sessionClients.get(sessionName)?.delete(ws);
   if (sessionClients.get(sessionName)?.size === 0) sessionClients.delete(sessionName);
 }
+
+// ─── Periodic orphan cleanup ─────────────────────────────────
+
+/** Clean up detached tmux sessions that no WS client is connected to (skip renamed ones) */
+function cleanupOrphanedSessions() {
+  const renamed = getRenamedSessions();
+  const sessions = listTmuxSessions();
+  for (const s of sessions) {
+    if (s.attached) continue;
+    if (renamed.has(s.name)) continue; // user renamed — preserve
+    const clients = sessionClients.get(s.name)?.size ?? 0;
+    if (clients === 0) {
+      console.log(`[terminal] Cleanup: killing orphaned session "${s.name}" (no clients, not renamed)`);
+      killTmuxSession(s.name);
+    }
+  }
+}
+
+// Run cleanup every 30 seconds
+setInterval(cleanupOrphanedSessions, 30_000);
 
 // ─── WebSocket server ──────────────────────────────────────────
 
@@ -303,18 +342,22 @@ wss.on('connection', (ws: WebSocket) => {
     }
 
     // Untrack this client
+    const disconnectedSession = sessionName;
     if (sessionName) trackDetach(ws, sessionName);
-
-    // Orphan cleanup: if this client *created* the session < 5s ago
-    // and no other clients are attached, kill it (React Strict Mode artifact)
-    const created = createdAt.get(ws);
-    if (created && Date.now() - created.time < 5000) {
-      const otherClients = sessionClients.get(created.session)?.size ?? 0;
-      if (otherClients === 0 && tmuxSessionExists(created.session)) {
-        console.log(`[terminal] Auto-killing orphaned session "${created.session}" (created ${Date.now() - created.time}ms ago, no clients)`);
-        killTmuxSession(created.session);
-      }
-    }
     createdAt.delete(ws);
+
+    // Grace period cleanup: if no client reconnects within 10s, kill the session (unless renamed)
+    if (disconnectedSession) {
+      setTimeout(() => {
+        const clients = sessionClients.get(disconnectedSession)?.size ?? 0;
+        if (clients === 0 && tmuxSessionExists(disconnectedSession)) {
+          const renamed = getRenamedSessions();
+          if (!renamed.has(disconnectedSession)) {
+            console.log(`[terminal] Auto-killing orphaned session "${disconnectedSession}" (no clients after 10s, not renamed)`);
+            killTmuxSession(disconnectedSession);
+          }
+        }
+      }, 10_000);
+    }
   });
 });

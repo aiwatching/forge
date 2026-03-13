@@ -186,6 +186,7 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
   const [closeConfirm, setCloseConfirm] = useState<{ tabId: number; sessions: string[] } | null>(null);
   const sessionLabelsRef = useRef<Record<string, string>>({});
   const dragTabRef = useRef<number | null>(null);
+  const [refreshKeys, setRefreshKeys] = useState<Record<number, number>>({});
 
   // Restore shared state from server after mount
   useEffect(() => {
@@ -507,6 +508,16 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
               </span>
             )}
           </button>
+          <button
+            onClick={() => {
+              if (!activeTab) return;
+              setRefreshKeys(prev => ({ ...prev, [activeTab.activeId]: (prev[activeTab.activeId] || 0) + 1 }));
+            }}
+            className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-white hover:bg-[#2a2a4a] rounded"
+            title="Refresh terminal (fix garbled display)"
+          >
+            Refresh
+          </button>
           {activeTab && countTerminals(activeTab.tree) > 1 && (
             <button onClick={onClosePane} className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-red-400 hover:bg-[#2a2a4a] rounded">
               Close Pane
@@ -649,6 +660,7 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
             ratios={tab.ratios}
             setRatios={tab.id === activeTabId ? setRatios : () => {}}
             onSessionConnected={onSessionConnected}
+            refreshKeys={refreshKeys}
           />
         </div>
       ))}
@@ -661,7 +673,7 @@ export default WebTerminal;
 // ─── Pane renderer ───────────────────────────────────────────
 
 function PaneRenderer({
-  node, activeId, onFocus, ratios, setRatios, onSessionConnected,
+  node, activeId, onFocus, ratios, setRatios, onSessionConnected, refreshKeys,
 }: {
   node: SplitNode;
   activeId: number;
@@ -669,11 +681,12 @@ function PaneRenderer({
   ratios: Record<number, number>;
   setRatios: React.Dispatch<React.SetStateAction<Record<number, number>>>;
   onSessionConnected: (paneId: number, sessionName: string) => void;
+  refreshKeys: Record<number, number>;
 }) {
   if (node.type === 'terminal') {
     return (
       <div className={`h-full w-full ${activeId === node.id ? 'ring-1 ring-[#7c5bf0]/50 ring-inset' : ''}`} onMouseDown={() => onFocus(node.id)}>
-        <MemoTerminalPane id={node.id} sessionName={node.sessionName} onSessionConnected={onSessionConnected} />
+        <MemoTerminalPane key={`${node.id}-${refreshKeys[node.id] || 0}`} id={node.id} sessionName={node.sessionName} onSessionConnected={onSessionConnected} />
       </div>
     );
   }
@@ -682,8 +695,8 @@ function PaneRenderer({
 
   return (
     <DraggableSplit splitId={node.id} direction={node.direction} ratio={ratio} setRatios={setRatios}>
-      <PaneRenderer node={node.first} activeId={activeId} onFocus={onFocus} ratios={ratios} setRatios={setRatios} onSessionConnected={onSessionConnected} />
-      <PaneRenderer node={node.second} activeId={activeId} onFocus={onFocus} ratios={ratios} setRatios={setRatios} onSessionConnected={onSessionConnected} />
+      <PaneRenderer node={node.first} activeId={activeId} onFocus={onFocus} ratios={ratios} setRatios={setRatios} onSessionConnected={onSessionConnected} refreshKeys={refreshKeys} />
+      <PaneRenderer node={node.second} activeId={activeId} onFocus={onFocus} ratios={ratios} setRatios={setRatios} onSessionConnected={onSessionConnected} refreshKeys={refreshKeys} />
     </DraggableSplit>
   );
 }
@@ -823,6 +836,7 @@ const MemoTerminalPane = memo(function TerminalPane({
       fontSize: 13,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       scrollback: 10000,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
       theme: {
         background: '#1a1a2e',
         foreground: '#e0e0e0',
@@ -849,11 +863,34 @@ const MemoTerminalPane = memo(function TerminalPane({
 
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.open(containerRef.current);
+
+    // Wait for container to be visible and have stable dimensions before opening
+    let initDone = false;
+    const el = containerRef.current;
+
+    function initTerminal() {
+      if (initDone || disposed || !el) return;
+      // Don't init if inside a hidden tab or too small
+      if (el.closest('.hidden') || el.offsetWidth < 50 || el.offsetHeight < 30) return;
+      initDone = true;
+      term.open(el);
+      try { fit.fit(); } catch {}
+      connect();
+    }
+
+    // Try immediately, then observe for visibility changes
     requestAnimationFrame(() => {
       if (disposed) return;
-      try { fit.fit(); } catch {}
+      initTerminal();
     });
+
+    // If not visible yet (hidden tab), use IntersectionObserver to detect when it becomes visible
+    const visObserver = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) {
+        initTerminal();
+      }
+    });
+    visObserver.observe(el);
 
     // ── WebSocket with auto-reconnect ──
 
@@ -864,22 +901,24 @@ const MemoTerminalPane = memo(function TerminalPane({
 
     function connect() {
       if (disposed) return;
-      ws = new WebSocket(wsUrl);
+      const socket = new WebSocket(wsUrl);
+      ws = socket;
 
-      ws.onopen = () => {
-        if (disposed) { ws?.close(); return; }
+      socket.onopen = () => {
+        if (disposed) { socket.close(); return; }
+        if (socket.readyState !== WebSocket.OPEN) return;
         const cols = term.cols;
         const rows = term.rows;
 
         if (connectedSession) {
           // Reconnect to the same session
-          ws!.send(JSON.stringify({ type: 'attach', sessionName: connectedSession, cols, rows }));
+          socket.send(JSON.stringify({ type: 'attach', sessionName: connectedSession, cols, rows }));
         } else {
           const sn = sessionNameRef.current;
           if (sn) {
-            ws!.send(JSON.stringify({ type: 'attach', sessionName: sn, cols, rows }));
+            socket.send(JSON.stringify({ type: 'attach', sessionName: sn, cols, rows }));
           } else {
-            ws!.send(JSON.stringify({ type: 'create', cols, rows }));
+            socket.send(JSON.stringify({ type: 'create', cols, rows }));
           }
         }
       };
@@ -893,6 +932,16 @@ const MemoTerminalPane = memo(function TerminalPane({
           } else if (msg.type === 'connected') {
             connectedSession = msg.sessionName;
             onSessionConnected(id, msg.sessionName);
+            // Force tmux to redraw by toggling size, then send reset
+            setTimeout(() => {
+              if (disposed || ws?.readyState !== WebSocket.OPEN) return;
+              const c = term.cols, r = term.rows;
+              ws!.send(JSON.stringify({ type: 'resize', cols: c - 1, rows: r }));
+              setTimeout(() => {
+                if (disposed || ws?.readyState !== WebSocket.OPEN) return;
+                ws!.send(JSON.stringify({ type: 'resize', cols: c, rows: r }));
+              }, 50);
+            }, 100);
             const cmd = pendingCommands.get(id);
             if (cmd) {
               pendingCommands.delete(id);
@@ -946,6 +995,10 @@ const MemoTerminalPane = memo(function TerminalPane({
       if (disposed) return;
       const el = containerRef.current;
       if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) return;
+      // Skip if container is inside a hidden tab (prevents wrong resize)
+      if (el.closest('.hidden')) return;
+      // Skip unreasonably small sizes (layout transient)
+      if (el.offsetWidth < 50 || el.offsetHeight < 30) return;
       const w = el.offsetWidth;
       const h = el.offsetHeight;
       if (w === lastW && h === lastH) return;
@@ -971,7 +1024,10 @@ const MemoTerminalPane = memo(function TerminalPane({
     };
     window.addEventListener('terminal-drag-end', onDragEnd);
 
-    const resizeObserver = new ResizeObserver(handleResize);
+    const resizeObserver = new ResizeObserver(() => {
+      if (!initDone) { initTerminal(); return; }
+      handleResize();
+    });
     resizeObserver.observe(containerRef.current);
 
     // ── Cleanup ──
@@ -980,6 +1036,7 @@ const MemoTerminalPane = memo(function TerminalPane({
 
     return () => {
       disposed = true;
+      visObserver.disconnect();
       clearTimeout(resizeTimer);
       clearTimeout(reconnectTimer);
       window.removeEventListener('terminal-drag-end', onDragEnd);

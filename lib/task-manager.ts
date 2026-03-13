@@ -42,6 +42,7 @@ export function createTask(opts: {
   prompt: string;
   priority?: number;
   conversationId?: string;  // Explicit override; otherwise auto-inherits from project
+  scheduledAt?: string;     // ISO timestamp — task won't run until this time
 }): Task {
   const id = randomUUID().slice(0, 8);
 
@@ -52,9 +53,9 @@ export function createTask(opts: {
     : (opts.conversationId || getProjectConversationId(opts.projectName));
 
   db().prepare(`
-    INSERT INTO tasks (id, project_name, project_path, prompt, status, priority, conversation_id, log)
-    VALUES (?, ?, ?, ?, 'queued', ?, ?, '[]')
-  `).run(id, opts.projectName, opts.projectPath, opts.prompt, opts.priority || 0, convId || null);
+    INSERT INTO tasks (id, project_name, project_path, prompt, status, priority, conversation_id, log, scheduled_at)
+    VALUES (?, ?, ?, ?, 'queued', ?, ?, '[]', ?)
+  `).run(id, opts.projectName, opts.projectPath, opts.prompt, opts.priority || 0, convId || null, opts.scheduledAt || null);
 
   // Kick the runner
   ensureRunnerStarted();
@@ -151,6 +152,7 @@ async function processNextTask() {
 
   const next = db().prepare(`
     SELECT * FROM tasks WHERE status = 'queued'
+    AND (scheduled_at IS NULL OR scheduled_at <= datetime('now'))
     ORDER BY priority DESC, created_at ASC LIMIT 1
   `).get() as any;
 
@@ -425,5 +427,6 @@ function rowToTask(row: any): Task {
     createdAt: row.created_at,
     startedAt: row.started_at || undefined,
     completedAt: row.completed_at || undefined,
+    scheduledAt: row.scheduled_at || undefined,
   };
 }

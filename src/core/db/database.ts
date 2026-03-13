@@ -20,6 +20,9 @@ export function getDb(dbPath: string): Database.Database {
 }
 
 function initSchema(db: Database.Database) {
+  // Migrations for existing tables
+  try { db.exec('ALTER TABLE tasks ADD COLUMN scheduled_at TEXT'); } catch {}
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -76,10 +79,45 @@ function initSchema(db: Database.Database) {
       error TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       started_at TEXT,
-      completed_at TEXT
+      completed_at TEXT,
+      scheduled_at TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, created_at);
+
+    -- Cached Claude CLI sessions for tree view
+    CREATE TABLE IF NOT EXISTS cached_sessions (
+      project_name TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      summary TEXT,
+      first_prompt TEXT,
+      message_count INTEGER DEFAULT 0,
+      entry_count INTEGER DEFAULT 0,
+      created TEXT,
+      modified TEXT,
+      git_branch TEXT,
+      file_size INTEGER DEFAULT 0,
+      last_synced TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (project_name, session_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cached_sessions_project ON cached_sessions(project_name, modified);
+
+    -- Session watchers — monitor sessions and notify via Telegram
+    CREATE TABLE IF NOT EXISTS session_watchers (
+      id TEXT PRIMARY KEY,
+      project_name TEXT NOT NULL,
+      session_id TEXT,
+      label TEXT,
+      check_interval INTEGER NOT NULL DEFAULT 60,
+      last_entry_count INTEGER DEFAULT 0,
+      last_checked TEXT,
+      notify_on_change INTEGER NOT NULL DEFAULT 1,
+      notify_on_idle INTEGER NOT NULL DEFAULT 1,
+      idle_threshold INTEGER NOT NULL DEFAULT 300,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }
 

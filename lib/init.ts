@@ -5,6 +5,7 @@
 
 import { ensureRunnerStarted } from './task-manager';
 import { startTelegramBot, stopTelegramBot } from './telegram-bot';
+import { startWatcherLoop } from './session-watcher';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 
@@ -22,6 +23,9 @@ export function ensureInitialized() {
 
   // Start terminal WebSocket server as separate process (node-pty needs native module)
   startTerminalProcess();
+
+  // Start session watcher loop
+  startWatcherLoop();
 
   console.log('[init] Background services started');
 }
@@ -50,7 +54,7 @@ function startTerminalProcess() {
     const script = join(process.cwd(), 'lib', 'terminal-standalone.ts');
     terminalChild = spawn('npx', ['tsx', script], {
       stdio: ['ignore', 'inherit', 'inherit'],
-      env: { ...process.env, CLAUDECODE: '' },
+      env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'CLAUDECODE')) } as NodeJS.ProcessEnv,
       detached: false,
     });
     terminalChild.on('exit', () => { terminalChild = null; });

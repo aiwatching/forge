@@ -103,6 +103,7 @@ export interface Task {
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
+  scheduledAt?: string;
 }
 
 export interface TaskLogEntry {

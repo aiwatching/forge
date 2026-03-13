@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import TaskBoard from './TaskBoard';
 import TaskDetail from './TaskDetail';
 import SessionView from './SessionView';
 import NewTaskModal from './NewTaskModal';
 import SettingsModal from './SettingsModal';
 import type { Task } from '@/src/types';
+import type { WebTerminalHandle } from './WebTerminal';
 
 const WebTerminal = lazy(() => import('./WebTerminal'));
 
@@ -39,6 +40,7 @@ export default function Dashboard({ user }: { user: any }) {
   const [usage, setUsage] = useState<UsageSummary[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const terminalRef = useRef<WebTerminalHandle>(null);
 
   const fetchData = useCallback(async () => {
     const [tasksRes, statusRes, projectsRes] = await Promise.all([
@@ -224,13 +226,23 @@ export default function Dashboard({ user }: { user: any }) {
             </aside>
           </>
         ) : viewMode === 'sessions' ? (
-          <SessionView projects={projects} />
-        ) : (
-          /* Terminal — full width */
+          <SessionView
+            projects={projects}
+            onOpenInTerminal={(sessionId, projectPath) => {
+              setViewMode('terminal');
+              setTimeout(() => {
+                terminalRef.current?.openSessionInTerminal(sessionId, projectPath);
+              }, 100);
+            }}
+          />
+        ) : null}
+
+        {/* Terminal — always mounted, hidden when not active to keep sessions alive */}
+        <div className={`flex-1 min-h-0 ${viewMode === 'terminal' ? '' : 'hidden'}`}>
           <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading terminal...</div>}>
-            <WebTerminal />
+            <WebTerminal ref={terminalRef} />
           </Suspense>
-        )}
+        </div>
       </div>
 
       {showNewTask && (

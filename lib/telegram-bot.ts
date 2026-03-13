@@ -11,6 +11,7 @@ import { loadSettings } from './settings';
 import { createTask, getTask, listTasks, cancelTask, retryTask, onTaskEvent } from './task-manager';
 import { scanProjects } from './projects';
 import { listClaudeSessions, getSessionFilePath, readSessionEntries } from './claude-sessions';
+import { listWatchers, createWatcher, deleteWatcher, toggleWatcher } from './session-watcher';
 import type { Task, TaskLogEntry } from '@/src/types';
 
 let polling = false;
@@ -158,6 +159,16 @@ async function handleMessage(msg: any) {
       case '/p':
         await sendProjectList(chatId);
         break;
+      case '/watch':
+        await handleWatch(chatId, args[0], args[1]);
+        break;
+      case '/watchers':
+      case '/w':
+        await sendWatcherList(chatId);
+        break;
+      case '/unwatch':
+        await handleUnwatch(chatId, args[0]);
+        break;
       case '/cancel':
         await handleCancel(chatId, args[0]);
         break;
@@ -195,10 +206,13 @@ async function sendHelp(chatId: number) {
     `/tasks running — filter by status\n` +
     `🔍 /sessions — browse session content\n` +
     `/sessions <project> — sessions for project\n\n` +
+    `👁 /watch <project> [sessionId] — monitor session\n` +
+    `/watchers — list active watchers\n` +
+    `/unwatch <id> — stop watching\n\n` +
     `📝 Submit task:\nproject-name: your instructions\n\n` +
     `🔧 /cancel <id>  /retry <id>\n` +
     `/projects — list projects\n\n` +
-    `Reply number to select, reply message to follow-up`
+    `Reply number to select`
   );
 }
 
@@ -391,26 +405,74 @@ async function sendSessionContent(chatId: number, projectName: string, sessionId
   }
 }
 
+/**
+ * Parse task creation input. Supports:
+ *   project-name instructions
+ *   project-name -s sessionId instructions
+ *   project-name -in 30m instructions
+ *   project-name -at 2024-01-01T10:00 instructions
+ */
 async function handleNewTask(chatId: number, input: string) {
   if (!input) {
-    await send(chatId, 'Usage:\nproject-name: instructions\n\nExample:\nmy-app: Fix the login bug');
+    await send(chatId,
+      'Usage:\nproject: instructions\n\n' +
+      'Options:\n' +
+      '  -s <sessionId> — resume specific session\n' +
+      '  -in 30m — delay (e.g. 10m, 2h, 1d)\n' +
+      '  -at 18:00 — schedule at time\n\n' +
+      'Example:\nmy-app: Fix the login bug\nmy-app -s abc123 -in 1h: continue work'
+    );
     return;
   }
 
-  const [projectName, ...rest] = input.split(/\s+/);
-  const prompt = rest.join(' ');
+  // Parse project name (before first space or colon)
+  const colonIdx = input.indexOf(':');
+  let projectPart: string;
+  let restPart: string;
 
-  if (!prompt) {
-    await send(chatId, 'Please provide instructions after the project name.');
-    return;
+  if (colonIdx > 0 && colonIdx < 40) {
+    projectPart = input.slice(0, colonIdx).trim();
+    restPart = input.slice(colonIdx + 1).trim();
+  } else {
+    const spaceIdx = input.indexOf(' ');
+    if (spaceIdx < 0) {
+      await send(chatId, 'Please provide instructions after the project name.');
+      return;
+    }
+    projectPart = input.slice(0, spaceIdx).trim();
+    restPart = input.slice(spaceIdx + 1).trim();
   }
 
   const projects = scanProjects();
-  const project = projects.find(p => p.name === projectName || p.name.toLowerCase() === projectName.toLowerCase());
+  const project = projects.find(p => p.name === projectPart || p.name.toLowerCase() === projectPart.toLowerCase());
 
   if (!project) {
     const available = projects.slice(0, 10).map(p => `  ${p.name}`).join('\n');
-    await send(chatId, `Project not found: ${projectName}\n\nAvailable:\n${available}`);
+    await send(chatId, `Project not found: ${projectPart}\n\nAvailable:\n${available}`);
+    return;
+  }
+
+  // Parse flags
+  let sessionId: string | undefined;
+  let scheduledAt: string | undefined;
+  let tokens = restPart.split(/\s+/);
+  const promptTokens: string[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] === '-s' && i + 1 < tokens.length) {
+      sessionId = tokens[++i];
+    } else if (tokens[i] === '-in' && i + 1 < tokens.length) {
+      scheduledAt = parseDelay(tokens[++i]);
+    } else if (tokens[i] === '-at' && i + 1 < tokens.length) {
+      scheduledAt = parseTimeAt(tokens[++i]);
+    } else {
+      promptTokens.push(tokens[i]);
+    }
+  }
+
+  const prompt = promptTokens.join(' ');
+  if (!prompt) {
+    await send(chatId, 'Please provide instructions.');
     return;
   }
 
@@ -418,16 +480,52 @@ async function handleNewTask(chatId: number, input: string) {
     projectName: project.name,
     projectPath: project.path,
     prompt,
+    conversationId: sessionId,
+    scheduledAt,
   });
 
+  let statusLine = 'Status: queued';
+  if (scheduledAt) {
+    statusLine = `Scheduled: ${new Date(scheduledAt).toLocaleString()}`;
+  }
+  if (sessionId) {
+    statusLine += `\nSession: ${sessionId.slice(0, 12)}`;
+  }
+
   const msgId = await send(chatId,
-    `📋 Task created: ${task.id}\n${task.projectName}: ${prompt}\n\nStatus: queued`
+    `📋 Task created: ${task.id}\n${task.projectName}: ${prompt}\n\n${statusLine}`
   );
 
   if (msgId) {
     taskMessageMap.set(msgId, task.id);
     taskChatMap.set(task.id, chatId);
   }
+}
+
+function parseDelay(s: string): string | undefined {
+  const match = s.match(/^(\d+)(m|h|d)$/);
+  if (!match) return undefined;
+  const val = Number(match[1]);
+  const unit = match[2];
+  const ms = unit === 'm' ? val * 60_000 : unit === 'h' ? val * 3600_000 : val * 86400_000;
+  return new Date(Date.now() + ms).toISOString();
+}
+
+function parseTimeAt(s: string): string | undefined {
+  // Try HH:MM format (today)
+  const timeMatch = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (timeMatch) {
+    const now = new Date();
+    now.setHours(Number(timeMatch[1]), Number(timeMatch[2]), 0, 0);
+    if (now.getTime() < Date.now()) now.setDate(now.getDate() + 1); // next day
+    return now.toISOString();
+  }
+  // Try ISO or date format
+  try {
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  } catch {}
+  return undefined;
 }
 
 async function handleFollowUp(chatId: number, taskId: string, message: string) {
@@ -485,6 +583,43 @@ async function handleRetry(chatId: number, taskId?: string) {
     taskMessageMap.set(msgId, newTask.id);
     taskChatMap.set(newTask.id, chatId);
   }
+}
+
+// ─── Watcher Commands ────────────────────────────────────────
+
+async function handleWatch(chatId: number, projectName?: string, sessionId?: string) {
+  if (!projectName) {
+    await send(chatId, 'Usage: /watch <project> [sessionId]\n\nMonitors a session and sends updates here.');
+    return;
+  }
+  const label = sessionId ? `${projectName}/${sessionId.slice(0, 8)}` : projectName;
+  const watcher = createWatcher({ projectName, sessionId, label });
+  await send(chatId, `👁 Watching: ${label}\nID: ${watcher.id}\nChecking every ${watcher.checkInterval}s`);
+}
+
+async function sendWatcherList(chatId: number) {
+  const all = listWatchers();
+  if (all.length === 0) {
+    await send(chatId, '👁 No watchers.\n\nUse /watch <project> [sessionId] to add one.');
+    return;
+  }
+
+  const lines = all.map((w, i) => {
+    const status = w.active ? '●' : '○';
+    const target = w.sessionId ? `${w.projectName}/${w.sessionId.slice(0, 8)}` : w.projectName;
+    return `${status} ${w.id} — ${target} (${w.checkInterval}s)`;
+  });
+
+  await send(chatId, `👁 Watchers\n\n${lines.join('\n')}\n\nUse /unwatch <id> to remove`);
+}
+
+async function handleUnwatch(chatId: number, watcherId?: string) {
+  if (!watcherId) {
+    await send(chatId, 'Usage: /unwatch <watcher-id>');
+    return;
+  }
+  deleteWatcher(watcherId);
+  await send(chatId, `🗑 Watcher ${watcherId} removed`);
 }
 
 // ─── Real-time Streaming ─────────────────────────────────────

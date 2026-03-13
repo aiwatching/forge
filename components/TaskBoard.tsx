@@ -65,7 +65,9 @@ export default function TaskBoard({
               <span className={`text-[10px] ${STATUS_COLORS[task.status]}`}>●</span>
               <span className="text-xs font-medium truncate">{task.projectName}</span>
               <span className={`text-[9px] ml-auto ${STATUS_COLORS[task.status]}`}>
-                {STATUS_LABELS[task.status]}
+                {task.scheduledAt && task.status === 'queued'
+                  ? `⏰ ${new Date(task.scheduledAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+                  : STATUS_LABELS[task.status]}
               </span>
             </div>
             <p className="text-[11px] text-[var(--text-secondary)] truncate pl-4">

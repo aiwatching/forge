@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import MarkdownContent from './MarkdownContent';
 
 interface SessionEntry {
@@ -22,37 +22,75 @@ interface ClaudeSessionInfo {
   fileSize: number;
 }
 
+interface Watcher {
+  id: string;
+  projectName: string;
+  sessionId: string | null;
+  label: string | null;
+  checkInterval: number;
+  active: boolean;
+  createdAt: string;
+}
+
 export default function SessionView({
   projectName,
   projects,
+  onOpenInTerminal,
 }: {
   projectName?: string;
   projects: { name: string; path: string; language: string | null }[];
+  onOpenInTerminal?: (sessionId: string, projectPath: string) => void;
 }) {
+  // Tree data: project → sessions
+  const [sessionTree, setSessionTree] = useState<Record<string, ClaudeSessionInfo[]>>({});
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [selectedProject, setSelectedProject] = useState(projectName || '');
-  const [sessions, setSessions] = useState<ClaudeSessionInfo[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [entries, setEntries] = useState<SessionEntry[]>([]);
   const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set());
-  const [messageText, setMessageText] = useState('');
-  const [sending, setSending] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [watchers, setWatchers] = useState<Watcher[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Fetch sessions when project changes
-  useEffect(() => {
-    if (!selectedProject) { setSessions([]); return; }
-    fetch(`/api/claude-sessions/${encodeURIComponent(selectedProject)}`)
-      .then(r => r.json())
-      .then(setSessions)
-      .catch(() => setSessions([]));
-  }, [selectedProject]);
+  // Load cached sessions tree
+  const loadTree = useCallback(async (force = false) => {
+    setSyncing(true);
+    try {
+      if (force) {
+        const res = await fetch('/api/claude-sessions/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await res.json();
+        setSessionTree(data.sessions);
+      } else {
+        const res = await fetch('/api/claude-sessions/sync');
+        const data = await res.json();
+        setSessionTree(data);
+      }
+    } catch {}
+    setSyncing(false);
+  }, []);
 
-  // Auto-select first session
+  // Load watchers
+  const loadWatchers = useCallback(async () => {
+    try {
+      const res = await fetch('/api/watchers');
+      setWatchers(await res.json());
+    } catch {}
+  }, []);
+
   useEffect(() => {
-    if (sessions.length > 0 && !activeSessionId) {
-      setActiveSessionId(sessions[0].sessionId);
+    loadTree(true); // Initial sync
+    loadWatchers();
+  }, [loadTree, loadWatchers]);
+
+  // Auto-expand project if only one or if pre-selected
+  useEffect(() => {
+    const projectNames = Object.keys(sessionTree);
+    if (projectName && sessionTree[projectName]) {
+      setExpandedProjects(new Set([projectName]));
+    } else if (projectNames.length === 1) {
+      setExpandedProjects(new Set([projectNames[0]]));
     }
-  }, [sessions, activeSessionId]);
+  }, [sessionTree, projectName]);
 
   // SSE live stream
   useEffect(() => {
@@ -66,18 +104,12 @@ export default function SessionView({
     es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'init') {
-          setEntries(data.entries);
-        } else if (data.type === 'update') {
-          setEntries(prev => [...prev, ...data.entries]);
-        }
+        if (data.type === 'init') setEntries(data.entries);
+        else if (data.type === 'update') setEntries(prev => [...prev, ...data.entries]);
       } catch {}
     };
 
-    es.onerror = () => {
-      es.close();
-    };
-
+    es.onerror = () => es.close();
     return () => es.close();
   }, [selectedProject, activeSessionId]);
 
@@ -85,6 +117,21 @@ export default function SessionView({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [entries]);
+
+  const toggleProject = (name: string) => {
+    setExpandedProjects(prev => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+  };
+
+  const selectSession = (project: string, sessionId: string) => {
+    setSelectedProject(project);
+    setActiveSessionId(sessionId);
+    setEntries([]);
+    setExpandedTools(new Set());
+  };
 
   const toggleTool = (i: number) => {
     setExpandedTools(prev => {
@@ -94,54 +141,126 @@ export default function SessionView({
     });
   };
 
-  const activeSession = sessions.find(s => s.sessionId === activeSessionId);
+  const addWatcher = async (project: string, sessionId?: string) => {
+    await fetch('/api/watchers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectName: project, sessionId, label: sessionId ? `${project}/${sessionId.slice(0, 8)}` : project }),
+    });
+    loadWatchers();
+  };
+
+  const removeWatcher = async (id: string) => {
+    await fetch('/api/watchers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete', id }),
+    });
+    loadWatchers();
+  };
+
+  const activeSession = sessionTree[selectedProject]?.find(s => s.sessionId === activeSessionId);
+  const watchedSessionIds = new Set(watchers.filter(w => w.active).map(w => w.sessionId));
+  const watchedProjects = new Set(watchers.filter(w => w.active && !w.sessionId).map(w => w.projectName));
 
   return (
     <div className="flex h-full">
-      {/* Left: session list */}
-      <div className="w-64 border-r border-[var(--border)] flex flex-col shrink-0">
-        {/* Project selector */}
-        <div className="p-2 border-b border-[var(--border)]">
-          <select
-            value={selectedProject}
-            onChange={e => { setSelectedProject(e.target.value); setActiveSessionId(null); }}
-            className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] focus:outline-none"
+      {/* Left: tree view */}
+      <div className="w-72 border-r border-[var(--border)] flex flex-col shrink-0">
+        {/* Header */}
+        <div className="flex items-center justify-between p-2 border-b border-[var(--border)]">
+          <span className="text-[10px] font-semibold text-[var(--text-secondary)] uppercase">Sessions</span>
+          <button
+            onClick={() => loadTree(true)}
+            disabled={syncing}
+            className="text-[9px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50"
           >
-            <option value="">Select project...</option>
-            {projects.map(p => (
-              <option key={p.name} value={p.name}>{p.name}</option>
-            ))}
-          </select>
+            {syncing ? 'Syncing...' : 'Sync'}
+          </button>
         </div>
 
-        {/* Session list */}
+        {/* Tree */}
         <div className="flex-1 overflow-y-auto">
-          {sessions.length === 0 && selectedProject && (
-            <p className="text-[10px] text-[var(--text-secondary)] p-3">No sessions found</p>
+          {Object.keys(sessionTree).length === 0 && (
+            <p className="text-[10px] text-[var(--text-secondary)] p-3">
+              {syncing ? 'Loading sessions...' : 'No sessions found. Click Sync.'}
+            </p>
           )}
-          {sessions.map(s => (
-            <button
-              key={s.sessionId}
-              onClick={() => { setActiveSessionId(s.sessionId); setEntries([]); setExpandedTools(new Set()); }}
-              className={`w-full text-left px-3 py-2 border-b border-[var(--border)] hover:bg-[var(--bg-tertiary)] transition-colors ${
-                activeSessionId === s.sessionId ? 'bg-[var(--bg-tertiary)] border-l-2 border-l-[var(--accent)]' : ''
-              }`}
-            >
-              <div className="text-[11px] text-[var(--text-primary)] truncate">
-                {s.summary || s.firstPrompt || s.sessionId.slice(0, 8)}
-              </div>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-[9px] text-[var(--text-secondary)] font-mono">{s.sessionId.slice(0, 8)}</span>
-                {s.gitBranch && <span className="text-[9px] text-[var(--accent)]">{s.gitBranch}</span>}
-                {s.messageCount != null && <span className="text-[9px] text-[var(--text-secondary)]">{s.messageCount} msgs</span>}
-              </div>
-              {s.modified && (
-                <div className="text-[9px] text-[var(--text-secondary)] mt-0.5">
-                  {new Date(s.modified).toLocaleString()}
-                </div>
-              )}
-            </button>
+
+          {Object.entries(sessionTree).map(([project, sessions]) => (
+            <div key={project}>
+              {/* Project node */}
+              <button
+                onClick={() => toggleProject(project)}
+                className="w-full flex items-center gap-1.5 px-2 py-1.5 text-left hover:bg-[var(--bg-tertiary)] transition-colors border-b border-[var(--border)]/50"
+              >
+                <span className="text-[10px] text-[var(--text-secondary)]">
+                  {expandedProjects.has(project) ? '▼' : '▶'}
+                </span>
+                <span className="text-[11px] font-medium text-[var(--text-primary)] truncate flex-1">{project}</span>
+                <span className="text-[9px] text-[var(--text-secondary)]">{sessions.length}</span>
+                {watchedProjects.has(project) && (
+                  <span className="text-[9px] text-[var(--accent)]" title="Watching">👁</span>
+                )}
+              </button>
+
+              {/* Session children */}
+              {expandedProjects.has(project) && sessions.map(s => {
+                const isActive = selectedProject === project && activeSessionId === s.sessionId;
+                const isWatched = watchedSessionIds.has(s.sessionId);
+                return (
+                  <button
+                    key={s.sessionId}
+                    onClick={() => selectSession(project, s.sessionId)}
+                    className={`w-full text-left pl-6 pr-2 py-1.5 hover:bg-[var(--bg-tertiary)] transition-colors ${
+                      isActive ? 'bg-[var(--bg-tertiary)] border-l-2 border-l-[var(--accent)]' : 'border-l-2 border-l-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-[var(--text-primary)] truncate flex-1">
+                        {s.summary || s.firstPrompt?.slice(0, 40) || s.sessionId.slice(0, 8)}
+                      </span>
+                      {isWatched && <span className="text-[8px] text-[var(--accent)]">👁</span>}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[8px] text-[var(--text-secondary)] font-mono">{s.sessionId.slice(0, 8)}</span>
+                      {s.gitBranch && <span className="text-[8px] text-[var(--accent)]">{s.gitBranch}</span>}
+                      {s.modified && (
+                        <span className="text-[8px] text-[var(--text-secondary)]">
+                          {timeAgo(s.modified)}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           ))}
+
+          {/* Active watchers section */}
+          {watchers.length > 0 && (
+            <div className="border-t border-[var(--border)] mt-2 pt-2">
+              <div className="px-2 mb-1">
+                <span className="text-[9px] font-semibold text-[var(--text-secondary)] uppercase">Watchers</span>
+              </div>
+              {watchers.map(w => (
+                <div key={w.id} className="flex items-center gap-1 px-2 py-1 text-[10px]">
+                  <span className={`${w.active ? 'text-green-400' : 'text-gray-500'}`}>
+                    {w.active ? '●' : '○'}
+                  </span>
+                  <span className="text-[var(--text-secondary)] truncate flex-1">
+                    {w.label || w.projectName}
+                  </span>
+                  <button
+                    onClick={() => removeWatcher(w.id)}
+                    className="text-[8px] text-gray-500 hover:text-red-400"
+                  >
+                    x
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -157,6 +276,27 @@ export default function SessionView({
                   {activeSession.gitBranch}
                 </span>
               )}
+              <div className="ml-auto flex items-center gap-2">
+                {activeSessionId && !watchedSessionIds.has(activeSessionId) && (
+                  <button
+                    onClick={() => addWatcher(selectedProject, activeSessionId!)}
+                    className="text-[10px] px-2 py-0.5 border border-[var(--border)] text-[var(--text-secondary)] rounded hover:text-[var(--text-primary)] hover:border-[var(--accent)]"
+                  >
+                    Watch
+                  </button>
+                )}
+                {onOpenInTerminal && activeSessionId && (
+                  <button
+                    onClick={() => {
+                      const proj = projects.find(p => p.name === selectedProject);
+                      if (proj) onOpenInTerminal(activeSessionId!, proj.path);
+                    }}
+                    className="text-[10px] px-2 py-0.5 bg-[var(--accent)] text-white rounded hover:opacity-90"
+                  >
+                    Open in Terminal
+                  </button>
+                )}
+              </div>
             </div>
             {activeSession.summary && (
               <p className="text-xs text-[var(--text-secondary)] mt-0.5">{activeSession.summary}</p>
@@ -167,7 +307,7 @@ export default function SessionView({
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {!activeSessionId && (
             <div className="flex-1 flex items-center justify-center text-[var(--text-secondary)] h-full">
-              <p>Select a project and session to view</p>
+              <p>Select a session from the tree to view</p>
             </div>
           )}
 
@@ -187,56 +327,25 @@ export default function SessionView({
           )}
           <div ref={bottomRef} />
         </div>
-
-        {/* Message input */}
-        {activeSessionId && selectedProject && (
-          <div className="border-t border-[var(--border)] px-4 py-2 shrink-0">
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                if (!messageText.trim() || sending) return;
-                setSending(true);
-                try {
-                  await fetch('/api/tasks', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      projectName: selectedProject,
-                      prompt: messageText.trim(),
-                      conversationId: activeSessionId,
-                    }),
-                  });
-                  setMessageText('');
-                } finally {
-                  setSending(false);
-                }
-              }}
-              className="flex gap-2"
-            >
-              <input
-                type="text"
-                value={messageText}
-                onChange={e => setMessageText(e.target.value)}
-                placeholder={`Send message to session ${activeSessionId?.slice(0, 8)}...`}
-                className="flex-1 px-3 py-1.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
-              />
-              <button
-                type="submit"
-                disabled={!messageText.trim() || sending}
-                className="text-xs px-3 py-1.5 bg-[var(--accent)] text-white rounded hover:opacity-90 disabled:opacity-50"
-              >
-                {sending ? '...' : 'Send'}
-              </button>
-            </form>
-            <p className="text-[9px] text-[var(--text-secondary)] mt-1">
-              Creates a task with --resume to continue this session
-            </p>
-          </div>
-        )}
       </div>
     </div>
   );
 }
+
+// ─── Time ago helper ─────────────────────────────────────────
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+// ─── Session entry renderer ─────────────────────────────────
 
 function SessionEntryView({
   entry,
@@ -247,7 +356,6 @@ function SessionEntryView({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  // User message
   if (entry.type === 'user') {
     return (
       <div className="flex justify-end">
@@ -263,7 +371,6 @@ function SessionEntryView({
     );
   }
 
-  // Assistant text
   if (entry.type === 'assistant_text') {
     return (
       <div className="py-1">
@@ -272,7 +379,6 @@ function SessionEntryView({
     );
   }
 
-  // Thinking
   if (entry.type === 'thinking') {
     const isLong = entry.content.length > 100;
     return (
@@ -293,7 +399,6 @@ function SessionEntryView({
     );
   }
 
-  // Tool use
   if (entry.type === 'tool_use') {
     const isLong = entry.content.length > 80;
     return (
@@ -319,7 +424,6 @@ function SessionEntryView({
     );
   }
 
-  // Tool result
   if (entry.type === 'tool_result') {
     const isLong = entry.content.length > 150;
     return (
@@ -336,7 +440,6 @@ function SessionEntryView({
     );
   }
 
-  // System
   if (entry.type === 'system') {
     return (
       <div className="text-[10px] text-[var(--text-secondary)] py-0.5 flex items-center gap-1 opacity-50">

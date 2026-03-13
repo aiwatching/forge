@@ -1,20 +1,78 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, memo } from 'react';
+import { useState, useEffect, useRef, useCallback, memo, useImperativeHandle, forwardRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 
-// ─── Split tree data model ────────────────────────────────────
+// ─── Imperative API for parent components ────────────────────
+
+export interface WebTerminalHandle {
+  openSessionInTerminal: (sessionId: string, projectPath: string) => void;
+}
+
+// ─── Types ───────────────────────────────────────────────────
+
+interface TmuxSession {
+  name: string;
+  created: string;
+  attached: boolean;
+  windows: number;
+}
 
 type SplitNode =
-  | { type: 'terminal'; id: number }
+  | { type: 'terminal'; id: number; sessionName?: string }
   | { type: 'split'; id: number; direction: 'horizontal' | 'vertical'; ratio: number; first: SplitNode; second: SplitNode };
+
+interface TabState {
+  id: number;
+  label: string;
+  tree: SplitNode;
+  ratios: Record<number, number>;
+  activeId: number;
+}
+
+// ─── Layout persistence ──────────────────────────────────────
+
+const STORAGE_KEY = 'mw-terminal-tabs';
+
+function saveTabs(tabs: TabState[], activeTabId: number) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ tabs, activeTabId }));
+  } catch {}
+}
+
+function loadTabs(): { tabs: TabState[]; activeTabId: number } | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+
+// ─── Split tree helpers ──────────────────────────────────────
 
 let nextId = 1;
 
-function makeTerminal(): SplitNode {
-  return { type: 'terminal', id: nextId++ };
+function initNextId(tree: SplitNode) {
+  if (tree.type === 'terminal') {
+    nextId = Math.max(nextId, tree.id + 1);
+  } else {
+    nextId = Math.max(nextId, tree.id + 1);
+    initNextId(tree.first);
+    initNextId(tree.second);
+  }
+}
+
+function initNextIdFromTabs(tabs: TabState[]) {
+  for (const tab of tabs) {
+    nextId = Math.max(nextId, tab.id + 1);
+    initNextId(tab.tree);
+  }
+}
+
+function makeTerminal(sessionName?: string): SplitNode {
+  return { type: 'terminal', id: nextId++, sessionName };
 }
 
 function makeSplit(direction: 'horizontal' | 'vertical', first: SplitNode, second: SplitNode): SplitNode {
@@ -40,96 +98,352 @@ function removeNodeById(tree: SplitNode, targetId: number): SplitNode | null {
   return tree;
 }
 
+function updateSessionName(tree: SplitNode, targetId: number, sessionName: string): SplitNode {
+  if (tree.type === 'terminal') {
+    return tree.id === targetId ? { ...tree, sessionName } : tree;
+  }
+  return { ...tree, first: updateSessionName(tree.first, targetId, sessionName), second: updateSessionName(tree.second, targetId, sessionName) };
+}
+
 function countTerminals(tree: SplitNode): number {
   if (tree.type === 'terminal') return 1;
   return countTerminals(tree.first) + countTerminals(tree.second);
 }
 
-// ─── Main component ───────────────────────────────────────────
+function firstTerminalId(n: SplitNode): number {
+  return n.type === 'terminal' ? n.id : firstTerminalId(n.first);
+}
 
-export default function WebTerminal() {
-  const [tree, setTree] = useState<SplitNode>(() => makeTerminal());
-  const [activeId, setActiveId] = useState(1);
-  // Store ratios separately to avoid re-rendering the whole tree
-  const [ratios, setRatios] = useState<Record<number, number>>({});
+function collectSessionNames(tree: SplitNode): string[] {
+  if (tree.type === 'terminal') return tree.sessionName ? [tree.sessionName] : [];
+  return [...collectSessionNames(tree.first), ...collectSessionNames(tree.second)];
+}
 
-  const onSplit = useCallback((id: number, dir: 'horizontal' | 'vertical') => {
-    setTree(prev => splitNodeById(prev, id, dir));
-  }, []);
+function collectAllSessionNames(tabs: TabState[]): string[] {
+  return tabs.flatMap(t => collectSessionNames(t.tree));
+}
 
-  const onClose = useCallback((id: number) => {
-    setTree(prev => {
-      if (countTerminals(prev) <= 1) return prev;
-      return removeNodeById(prev, id) || prev;
+// ─── Pending commands for new terminal panes ────────────────
+
+const pendingCommands = new Map<number, string>();
+
+// ─── Main component ─────────────────────────────────────────
+
+const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, ref) {
+  const [tabs, setTabs] = useState<TabState[]>(() => {
+    const saved = loadTabs();
+    if (saved && saved.tabs.length > 0) {
+      initNextIdFromTabs(saved.tabs);
+      return saved.tabs;
+    }
+    const tree = makeTerminal();
+    return [{ id: nextId++, label: 'Terminal 1', tree, ratios: {}, activeId: firstTerminalId(tree) }];
+  });
+  const [activeTabId, setActiveTabId] = useState(() => {
+    const saved = loadTabs();
+    return saved?.activeTabId || tabs[0]?.id || 1;
+  });
+  const [tmuxSessions, setTmuxSessions] = useState<TmuxSession[]>([]);
+  const [showSessionPicker, setShowSessionPicker] = useState(false);
+
+  // Persist on changes
+  useEffect(() => {
+    saveTabs(tabs, activeTabId);
+  }, [tabs, activeTabId]);
+
+  const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
+
+  // ─── Imperative handle for parent ─────────────────────
+
+  useImperativeHandle(ref, () => ({
+    openSessionInTerminal(sessionId: string, projectPath: string) {
+      const tree = makeTerminal();
+      const paneId = firstTerminalId(tree);
+      const cmd = `cd ${projectPath} && claude --resume ${sessionId}\n`;
+      pendingCommands.set(paneId, cmd);
+      const newTab: TabState = {
+        id: nextId++,
+        label: `claude ${sessionId.slice(0, 8)}`,
+        tree,
+        ratios: {},
+        activeId: paneId,
+      };
+      setTabs(prev => [...prev, newTab]);
+      setActiveTabId(newTab.id);
+    },
+  }));
+
+  // ─── Tab operations ───────────────────────────────────
+
+  const addTab = useCallback(() => {
+    const tree = makeTerminal();
+    const tabNum = tabs.length + 1;
+    const newTab: TabState = { id: nextId++, label: `Terminal ${tabNum}`, tree, ratios: {}, activeId: firstTerminalId(tree) };
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(newTab.id);
+  }, [tabs.length]);
+
+  const closeTab = useCallback((tabId: number) => {
+    setTabs(prev => {
+      if (prev.length <= 1) return prev;
+      const filtered = prev.filter(t => t.id !== tabId);
+      return filtered;
     });
+    setActiveTabId(prev => {
+      if (prev === tabId) {
+        const idx = tabs.findIndex(t => t.id === tabId);
+        const next = tabs[idx - 1] || tabs[idx + 1];
+        return next?.id || tabs[0]?.id || 0;
+      }
+      return prev;
+    });
+  }, [tabs]);
+
+  // ─── Update active tab's state ─────────────────────────
+
+  const updateActiveTab = useCallback((updater: (tab: TabState) => TabState) => {
+    setTabs(prev => prev.map(t => t.id === activeTabId ? updater(t) : t));
+  }, [activeTabId]);
+
+  const onSessionConnected = useCallback((paneId: number, sessionName: string) => {
+    setTabs(prev => prev.map(t => ({
+      ...t,
+      tree: updateSessionName(t.tree, paneId, sessionName),
+    })));
   }, []);
+
+  const refreshSessions = useCallback(() => {
+    const wsHost = window.location.hostname;
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${wsProtocol}//${wsHost}:3001`);
+    ws.onopen = () => ws.send(JSON.stringify({ type: 'list' }));
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'sessions') setTmuxSessions(msg.sessions);
+      } catch {}
+      ws.close();
+    };
+    ws.onerror = () => ws.close();
+  }, []);
+
+  const onSplit = useCallback((dir: 'horizontal' | 'vertical') => {
+    if (!activeTab) return;
+    updateActiveTab(t => ({ ...t, tree: splitNodeById(t.tree, t.activeId, dir) }));
+  }, [activeTab, updateActiveTab]);
+
+  const onClosePane = useCallback(() => {
+    if (!activeTab) return;
+    updateActiveTab(t => {
+      if (countTerminals(t.tree) <= 1) return t;
+      const newTree = removeNodeById(t.tree, t.activeId) || t.tree;
+      return { ...t, tree: newTree, activeId: firstTerminalId(newTree) };
+    });
+  }, [activeTab, updateActiveTab]);
+
+  const setActiveId = useCallback((id: number) => {
+    updateActiveTab(t => ({ ...t, activeId: id }));
+  }, [updateActiveTab]);
+
+  const setRatios = useCallback((updater: React.SetStateAction<Record<number, number>>) => {
+    updateActiveTab(t => ({
+      ...t,
+      ratios: typeof updater === 'function' ? updater(t.ratios) : updater,
+    }));
+  }, [updateActiveTab]);
+
+  const usedSessions = collectAllSessionNames(tabs);
 
   return (
     <div className="h-full w-full flex-1 flex flex-col bg-[#1a1a2e]">
-      <div className="flex items-center gap-1 px-2 py-1 bg-[#12122a] border-b border-[#2a2a4a] shrink-0">
-        <button onClick={() => onSplit(activeId, 'vertical')} className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-white hover:bg-[#2a2a4a] rounded">
-          Split Right
-        </button>
-        <button onClick={() => onSplit(activeId, 'horizontal')} className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-white hover:bg-[#2a2a4a] rounded">
-          Split Down
-        </button>
-        {countTerminals(tree) > 1 && (
-          <button onClick={() => onClose(activeId)} className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-red-400 hover:bg-[#2a2a4a] rounded">
-            Close Pane
+      {/* Tab bar + toolbar */}
+      <div className="flex items-center bg-[#12122a] border-b border-[#2a2a4a] shrink-0">
+        {/* Tabs */}
+        <div className="flex items-center overflow-x-auto">
+          {tabs.map(tab => (
+            <div
+              key={tab.id}
+              className={`flex items-center gap-1 px-3 py-1 text-[11px] cursor-pointer border-r border-[#2a2a4a] ${
+                tab.id === activeTabId
+                  ? 'bg-[#1a1a2e] text-white'
+                  : 'text-gray-500 hover:text-gray-300 hover:bg-[#1a1a2e]/50'
+              }`}
+              onClick={() => setActiveTabId(tab.id)}
+            >
+              <span className="truncate max-w-[100px]">{tab.label}</span>
+              {tabs.length > 1 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                  className="text-[9px] text-gray-600 hover:text-red-400 ml-1"
+                >
+                  x
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            onClick={addTab}
+            className="px-2 py-1 text-[11px] text-gray-500 hover:text-white hover:bg-[#2a2a4a]"
+            title="New terminal tab"
+          >
+            +
           </button>
-        )}
-        <span className="text-[9px] text-gray-600 ml-auto">{countTerminals(tree)} pane(s)</span>
+        </div>
+
+        {/* Toolbar */}
+        <div className="flex items-center gap-1 px-2 ml-auto">
+          <button onClick={() => onSplit('vertical')} className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-white hover:bg-[#2a2a4a] rounded">
+            Split Right
+          </button>
+          <button onClick={() => onSplit('horizontal')} className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-white hover:bg-[#2a2a4a] rounded">
+            Split Down
+          </button>
+          <button
+            onClick={() => { refreshSessions(); setShowSessionPicker(v => !v); }}
+            className={`text-[10px] px-2 py-0.5 rounded ${showSessionPicker ? 'text-white bg-[#7c5bf0]/30' : 'text-gray-400 hover:text-white hover:bg-[#2a2a4a]'}`}
+          >
+            Sessions
+          </button>
+          {activeTab && countTerminals(activeTab.tree) > 1 && (
+            <button onClick={onClosePane} className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-red-400 hover:bg-[#2a2a4a] rounded">
+              Close Pane
+            </button>
+          )}
+        </div>
       </div>
-      <div className="flex-1 min-h-0">
-        <PaneRenderer node={tree} activeId={activeId} onFocus={setActiveId} ratios={ratios} setRatios={setRatios} />
-      </div>
+
+      {/* Session management panel */}
+      {showSessionPicker && (
+        <div className="bg-[#0e0e20] border-b border-[#2a2a4a] px-3 py-2 shrink-0 max-h-48 overflow-y-auto">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] text-gray-400 font-semibold uppercase">Tmux Sessions</span>
+            <button
+              onClick={refreshSessions}
+              className="text-[9px] text-gray-500 hover:text-white"
+            >
+              Refresh
+            </button>
+          </div>
+          {tmuxSessions.length === 0 ? (
+            <p className="text-[10px] text-gray-500">No persistent sessions. New terminals auto-create tmux sessions.</p>
+          ) : (
+            <table className="w-full text-[10px]">
+              <thead>
+                <tr className="text-gray-500 text-left border-b border-[#2a2a4a]">
+                  <th className="py-1 pr-3 font-medium">Session</th>
+                  <th className="py-1 pr-3 font-medium">Created</th>
+                  <th className="py-1 pr-3 font-medium">Status</th>
+                  <th className="py-1 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tmuxSessions.map(s => {
+                  const inUse = usedSessions.includes(s.name);
+                  return (
+                    <tr key={s.name} className="border-b border-[#2a2a4a]/50 hover:bg-[#1a1a2e]">
+                      <td className="py-1.5 pr-3 font-mono text-gray-300">{s.name.replace('mw-', '')}</td>
+                      <td className="py-1.5 pr-3 text-gray-500">{new Date(s.created).toLocaleString()}</td>
+                      <td className="py-1.5 pr-3">
+                        {inUse ? (
+                          <span className="text-green-400">● connected</span>
+                        ) : (
+                          <span className="text-yellow-500">○ detached</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 text-right space-x-2">
+                        {!inUse && (
+                          <button
+                            onClick={() => {
+                              // Open in a new tab
+                              const tree = makeTerminal(s.name);
+                              const newTab: TabState = { id: nextId++, label: s.name.replace('mw-', ''), tree, ratios: {}, activeId: firstTerminalId(tree) };
+                              setTabs(prev => [...prev, newTab]);
+                              setActiveTabId(newTab.id);
+                              setShowSessionPicker(false);
+                            }}
+                            className="text-[#7c5bf0] hover:text-white"
+                          >
+                            Attach
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            if (!confirm(`Kill session ${s.name}?`)) return;
+                            const wsHost = window.location.hostname;
+                            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                            const ws = new WebSocket(`${wsProtocol}//${wsHost}:3001`);
+                            ws.onopen = () => {
+                              ws.send(JSON.stringify({ type: 'kill', sessionName: s.name }));
+                              setTimeout(() => { ws.close(); refreshSessions(); }, 500);
+                            };
+                          }}
+                          className="text-red-400/60 hover:text-red-400"
+                        >
+                          Kill
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Terminal panes — render all tabs, hide inactive */}
+      {tabs.map(tab => (
+        <div key={tab.id} className={`flex-1 min-h-0 ${tab.id === activeTabId ? '' : 'hidden'}`}>
+          <PaneRenderer
+            node={tab.tree}
+            activeId={tab.activeId}
+            onFocus={tab.id === activeTabId ? setActiveId : () => {}}
+            ratios={tab.ratios}
+            setRatios={tab.id === activeTabId ? setRatios : () => {}}
+            onSessionConnected={onSessionConnected}
+          />
+        </div>
+      ))}
     </div>
   );
-}
+});
 
-// ─── Pane renderer ────────────────────────────────────────────
+export default WebTerminal;
+
+// ─── Pane renderer ───────────────────────────────────────────
 
 function PaneRenderer({
-  node, activeId, onFocus, ratios, setRatios,
+  node, activeId, onFocus, ratios, setRatios, onSessionConnected,
 }: {
   node: SplitNode;
   activeId: number;
   onFocus: (id: number) => void;
   ratios: Record<number, number>;
   setRatios: React.Dispatch<React.SetStateAction<Record<number, number>>>;
+  onSessionConnected: (paneId: number, sessionName: string) => void;
 }) {
   if (node.type === 'terminal') {
     return (
       <div className={`h-full w-full ${activeId === node.id ? 'ring-1 ring-[#7c5bf0]/50 ring-inset' : ''}`} onMouseDown={() => onFocus(node.id)}>
-        <MemoTerminalPane id={node.id} />
+        <MemoTerminalPane id={node.id} sessionName={node.sessionName} onSessionConnected={onSessionConnected} />
       </div>
     );
   }
 
   const ratio = ratios[node.id] ?? node.ratio;
-  const isVert = node.direction === 'vertical';
 
   return (
-    <DraggableSplit
-      splitId={node.id}
-      direction={node.direction}
-      ratio={ratio}
-      setRatios={setRatios}
-    >
-      <PaneRenderer node={node.first} activeId={activeId} onFocus={onFocus} ratios={ratios} setRatios={setRatios} />
-      <PaneRenderer node={node.second} activeId={activeId} onFocus={onFocus} ratios={ratios} setRatios={setRatios} />
+    <DraggableSplit splitId={node.id} direction={node.direction} ratio={ratio} setRatios={setRatios}>
+      <PaneRenderer node={node.first} activeId={activeId} onFocus={onFocus} ratios={ratios} setRatios={setRatios} onSessionConnected={onSessionConnected} />
+      <PaneRenderer node={node.second} activeId={activeId} onFocus={onFocus} ratios={ratios} setRatios={setRatios} onSessionConnected={onSessionConnected} />
     </DraggableSplit>
   );
 }
 
-// ─── Draggable split — uses pointer capture for reliable drag ─────────
+// ─── Draggable split — uses pointer capture for reliable drag ─
 
 function DraggableSplit({
-  splitId,
-  direction,
-  ratio,
-  setRatios,
-  children,
+  splitId, direction, ratio, setRatios, children,
 }: {
   splitId: number;
   direction: 'horizontal' | 'vertical';
@@ -144,7 +458,6 @@ function DraggableSplit({
   const draggingRef = useRef(false);
   const isVert = direction === 'vertical';
 
-  // Apply ratio via DOM directly (no React re-render during drag)
   useEffect(() => {
     if (!firstRef.current || !secondRef.current) return;
     const prop = isVert ? 'width' : 'height';
@@ -152,7 +465,6 @@ function DraggableSplit({
     secondRef.current.style[prop] = `calc(${(1 - ratio) * 100}% - 4px)`;
   }, [ratio, isVert]);
 
-  // Attach pointer events natively to bypass React synthetic event issues
   useEffect(() => {
     const divider = dividerRef.current;
     const container = containerRef.current;
@@ -208,11 +520,7 @@ function DraggableSplit({
   }, [isVert, ratio, splitId, setRatios]);
 
   return (
-    <div
-      ref={containerRef}
-      className="h-full w-full"
-      style={{ display: 'flex', flexDirection: isVert ? 'row' : 'column' }}
-    >
+    <div ref={containerRef} className="h-full w-full" style={{ display: 'flex', flexDirection: isVert ? 'row' : 'column' }}>
       <div ref={firstRef} style={{ minWidth: 0, minHeight: 0, overflow: 'hidden', [isVert ? 'width' : 'height']: `calc(${ratio * 100}% - 4px)` }}>
         {children[0]}
       </div>
@@ -228,10 +536,20 @@ function DraggableSplit({
   );
 }
 
-// ─── Memoized terminal pane — never re-renders unless id changes ──
+// ─── Terminal pane with tmux session support ──────────────────
 
-const MemoTerminalPane = memo(function TerminalPane({ id }: { id: number }) {
+const MemoTerminalPane = memo(function TerminalPane({
+  id,
+  sessionName,
+  onSessionConnected,
+}: {
+  id: number;
+  sessionName?: string;
+  onSessionConnected: (paneId: number, sessionName: string) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const sessionNameRef = useRef(sessionName);
+  sessionNameRef.current = sessionName;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -274,19 +592,42 @@ const MemoTerminalPane = memo(function TerminalPane({ id }: { id: number }) {
     const ws = new WebSocket(`${wsProtocol}//${wsHost}:3001`);
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      const cols = term.cols;
+      const rows = term.rows;
+      const sn = sessionNameRef.current;
+
+      if (sn) {
+        ws.send(JSON.stringify({ type: 'attach', sessionName: sn, cols, rows }));
+      } else {
+        ws.send(JSON.stringify({ type: 'create', cols, rows }));
+      }
     };
 
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        if (msg.type === 'output') term.write(msg.data);
-        else if (msg.type === 'exit') term.write('\r\n\x1b[90m[session ended]\x1b[0m\r\n');
+        if (msg.type === 'output') {
+          term.write(msg.data);
+        } else if (msg.type === 'connected') {
+          onSessionConnected(id, msg.sessionName);
+          // Send pending command if any (e.g. claude --resume)
+          const cmd = pendingCommands.get(id);
+          if (cmd) {
+            pendingCommands.delete(id);
+            setTimeout(() => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'input', data: cmd }));
+              }
+            }, 500);
+          }
+        } else if (msg.type === 'exit') {
+          term.write('\r\n\x1b[90m[session ended]\x1b[0m\r\n');
+        }
       } catch {}
     };
 
     ws.onclose = () => {
-      term.write('\r\n\x1b[90m[disconnected]\x1b[0m\r\n');
+      term.write('\r\n\x1b[90m[disconnected — session persists in tmux]\x1b[0m\r\n');
     };
 
     term.onData((data) => {
@@ -306,7 +647,7 @@ const MemoTerminalPane = memo(function TerminalPane({ id }: { id: number }) {
       ws.close();
       term.dispose();
     };
-  }, []);
+  }, [id, onSessionConnected]);
 
   return <div ref={containerRef} className="h-full w-full" />;
 });

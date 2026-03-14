@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 
 interface Settings {
   projectRoots: string[];
+  docRoots: string[];
   claudePath: string;
   telegramBotToken: string;
   telegramChatId: string;
@@ -24,6 +25,7 @@ interface TunnelStatus {
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<Settings>({
     projectRoots: [],
+    docRoots: [],
     claudePath: '',
     telegramBotToken: '',
     telegramChatId: '',
@@ -33,6 +35,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     telegramTunnelPassword: '',
   });
   const [newRoot, setNewRoot] = useState('');
+  const [newDocRoot, setNewDocRoot] = useState('');
   const [saved, setSaved] = useState(false);
   const [tunnel, setTunnel] = useState<TunnelStatus>({
     status: 'stopped', url: null, error: null, installed: false, log: [],
@@ -121,6 +124,58 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             />
             <button
               onClick={addRoot}
+              className="text-[10px] px-3 py-1.5 bg-[var(--accent)] text-white rounded hover:opacity-90"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+
+        {/* Document Roots */}
+        <div className="space-y-2">
+          <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">
+            Document Directories
+          </label>
+          <p className="text-[10px] text-[var(--text-secondary)]">
+            Markdown document directories (e.g. Obsidian vaults). Shown in the Docs tab.
+          </p>
+
+          {(settings.docRoots || []).map(root => (
+            <div key={root} className="flex items-center gap-2">
+              <span className="flex-1 text-xs px-2 py-1.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded font-mono truncate">
+                {root}
+              </span>
+              <button
+                onClick={() => setSettings({ ...settings, docRoots: settings.docRoots.filter(r => r !== root) })}
+                className="text-[10px] px-2 py-1 text-[var(--red)] hover:bg-[var(--red)] hover:text-white rounded transition-colors"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+
+          <div className="flex gap-2">
+            <input
+              value={newDocRoot}
+              onChange={e => setNewDocRoot(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && newDocRoot.trim()) {
+                  if (!settings.docRoots.includes(newDocRoot.trim())) {
+                    setSettings({ ...settings, docRoots: [...(settings.docRoots || []), newDocRoot.trim()] });
+                  }
+                  setNewDocRoot('');
+                }
+              }}
+              placeholder="/Users/you/obsidian-vault"
+              className="flex-1 px-2 py-1.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]"
+            />
+            <button
+              onClick={() => {
+                if (newDocRoot.trim() && !settings.docRoots.includes(newDocRoot.trim())) {
+                  setSettings({ ...settings, docRoots: [...(settings.docRoots || []), newDocRoot.trim()] });
+                }
+                setNewDocRoot('');
+              }}
               className="text-[10px] px-3 py-1.5 bg-[var(--accent)] text-white rounded hover:opacity-90"
             >
               Add

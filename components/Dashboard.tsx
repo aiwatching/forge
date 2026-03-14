@@ -11,6 +11,7 @@ import type { Task } from '@/src/types';
 import type { WebTerminalHandle } from './WebTerminal';
 
 const WebTerminal = lazy(() => import('./WebTerminal'));
+const DocsViewer = lazy(() => import('./DocsViewer'));
 
 interface UsageSummary {
   provider: string;
@@ -33,7 +34,7 @@ interface ProjectInfo {
 }
 
 export default function Dashboard({ user }: { user: any }) {
-  const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal'>('tasks');
+  const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal' | 'docs'>('tasks');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
@@ -106,6 +107,16 @@ export default function Dashboard({ user }: { user: any }) {
               }`}
             >
               Terminal
+            </button>
+            <button
+              onClick={() => setViewMode('docs')}
+              className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
+                viewMode === 'docs'
+                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              Docs
             </button>
           </div>
 
@@ -237,6 +248,10 @@ export default function Dashboard({ user }: { user: any }) {
               }, 100);
             }}
           />
+        ) : viewMode === 'docs' ? (
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
+            <DocsViewer />
+          </Suspense>
         ) : null}
 
         {/* Terminal — always mounted, hidden when not active to keep sessions alive */}

@@ -305,7 +305,26 @@ wss.on('connection', (ws: WebSocket) => {
           const cols = parsed.cols || 120;
           const rows = parsed.rows || 30;
           try {
-            const name = createTmuxSession(cols, rows);
+            // Support fixed session name (e.g. mw-docs-claude)
+            let name: string;
+            if (parsed.sessionName && parsed.sessionName.startsWith(SESSION_PREFIX)) {
+              // Create with fixed name if it doesn't exist, otherwise attach
+              if (tmuxSessionExists(parsed.sessionName)) {
+                attachToTmux(parsed.sessionName, cols, rows);
+                break;
+              }
+              name = parsed.sessionName;
+              execSync(`${TMUX} new-session -d -s ${name} -x ${cols} -y ${rows}`, {
+                cwd: homedir(),
+                env: { ...process.env, TERM: 'xterm-256color' },
+              });
+              try {
+                execSync(`${TMUX} set-option -t ${name} mouse on 2>/dev/null`);
+                execSync(`${TMUX} set-option -t ${name} history-limit 50000 2>/dev/null`);
+              } catch {}
+            } else {
+              name = createTmuxSession(cols, rows);
+            }
             createdAt.set(ws, { session: name, time: Date.now() });
             attachToTmux(name, cols, rows);
           } catch (e: unknown) {

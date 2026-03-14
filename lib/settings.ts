@@ -7,6 +7,7 @@ const SETTINGS_FILE = join(homedir(), '.forge', 'settings.yaml');
 
 export interface Settings {
   projectRoots: string[];       // Multiple project directories
+  docRoots: string[];           // Markdown document directories (e.g. Obsidian vaults)
   claudePath: string;           // Path to claude binary
   telegramBotToken: string;     // Telegram Bot API token
   telegramChatId: string;       // Telegram chat ID to send notifications to
@@ -18,6 +19,7 @@ export interface Settings {
 
 const defaults: Settings = {
   projectRoots: [],
+  docRoots: [],
   claudePath: '',
   telegramBotToken: '',
   telegramChatId: '',

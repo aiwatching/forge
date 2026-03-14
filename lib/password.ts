@@ -1,6 +1,6 @@
 /**
  * Auto-generated login password.
- * Rotates daily. Saved to ~/.my-workflow/password.json with date.
+ * Rotates daily. Saved to ~/.forge/password.json with date.
  * CLI can read it via `mw password`.
  */
 
@@ -9,7 +9,7 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
-const PASSWORD_FILE = join(homedir(), '.my-workflow', 'password.json');
+const PASSWORD_FILE = join(homedir(), '.forge', 'password.json');
 
 function generatePassword(): string {
   // 8-char alphanumeric, easy to type

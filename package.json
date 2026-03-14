@@ -1,6 +1,6 @@
 {
   "name": "@aion0/forge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Unified AI workflow platform — multi-model task orchestration, persistent sessions, web terminal, remote access",
   "type": "module",
   "scripts": {
@@ -11,6 +11,7 @@
   },
   "bin": {
     "forge": "./cli/mw.ts",
+    "forge-server": "./bin/forge-server.mjs",
     "mw": "./cli/mw.ts"
   },
   "keywords": [

@@ -105,7 +105,7 @@ async function poll() {
 
 async function handleMessage(msg: any) {
   const chatId = msg.chat.id;
-  console.log(`[telegram] Message from chat ID: ${chatId}, user: ${msg.from?.username || msg.from?.first_name || 'unknown'}`);
+  // Message received (logged silently)
   const text: string = msg.text.trim();
   const replyTo = msg.reply_to_message?.message_id;
 

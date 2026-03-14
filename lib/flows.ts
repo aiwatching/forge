@@ -1,7 +1,7 @@
 /**
  * Workflow (Flow) engine — loads YAML flow definitions and executes them.
  *
- * Flow files live in ~/.my-workflow/flows/*.yaml
+ * Flow files live in ~/.forge/flows/*.yaml
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -12,7 +12,7 @@ import { createTask } from './task-manager';
 import { getProjectInfo } from './projects';
 import type { Task } from '@/src/types';
 
-const FLOWS_DIR = join(homedir(), '.my-workflow', 'flows');
+const FLOWS_DIR = join(homedir(), '.forge', 'flows');
 
 export interface FlowStep {
   project: string;

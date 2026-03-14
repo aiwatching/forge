@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import YAML from 'yaml';
 
-const SETTINGS_FILE = join(homedir(), '.my-workflow', 'settings.yaml');
+const SETTINGS_FILE = join(homedir(), '.forge', 'settings.yaml');
 
 export interface Settings {
   projectRoots: string[];       // Multiple project directories

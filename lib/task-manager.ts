@@ -222,8 +222,7 @@ function executeTask(task: Task): Promise<void> {
 
     // Resolve the actual claude CLI script path (claude is a symlink to a .js file)
     const resolvedClaude = resolveClaudePath(claudePath);
-    console.log(`[task-runner] Spawning: ${resolvedClaude.cmd} ${resolvedClaude.prefix.concat(args).join(' ')}`);
-    console.log(`[task-runner] CWD: ${task.projectPath}`);
+    console.log(`[task] ${task.projectName}: "${task.prompt.slice(0, 60)}..."`);
 
     const child = spawn(resolvedClaude.cmd, [...resolvedClaude.prefix, ...args], {
       cwd: task.projectPath,
@@ -243,7 +242,7 @@ function executeTask(task: Task): Promise<void> {
     });
 
     child.stdout?.on('data', (data: Buffer) => {
-      console.log(`[task-runner] stdout chunk: ${data.toString().slice(0, 200)}`);
+      // stdout chunk processing (silent)
 
       // Check if cancelled
       if (getTask(task.id)?.status === 'cancelled') {
@@ -275,14 +274,14 @@ function executeTask(task: Task): Promise<void> {
 
     child.stderr?.on('data', (data: Buffer) => {
       const text = data.toString().trim();
-      console.error(`[task-runner] stderr: ${text.slice(0, 300)}`);
+      // stderr logged to task log only
       if (text) {
         appendLog(task.id, { type: 'system', subtype: 'error', content: text, timestamp: new Date().toISOString() });
       }
     });
 
     child.on('exit', (code, signal) => {
-      console.log(`[task-runner] Process exited: code=${code}, signal=${signal}`);
+      // Process exit handled below
       // Process remaining buffer
       if (buffer.trim()) {
         try {
@@ -511,7 +510,7 @@ function startMonitorTask(task: Task) {
   const stopTail = tailSessionFile(fp, (newEntries) => {
     lastActivityTime = Date.now();
     lastEntryCount += newEntries.length;
-    console.log(`[monitor] ${task.id}: +${newEntries.length} entries (${lastEntryCount} total)`);
+    // Monitor entries tracked in task log only
 
     appendLog(task.id, {
       type: 'system', subtype: 'text',

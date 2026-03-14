@@ -31,6 +31,12 @@ No API keys required. Forge runs on your existing Claude Code subscription.
 
 ```bash
 npm install -g @aion0/forge
+
+# Start the server
+forge-server
+
+# Or in development mode
+forge-server --dev
 ```
 
 ### From source
@@ -39,38 +45,12 @@ npm install -g @aion0/forge
 git clone https://github.com/aiwatching/forge.git
 cd forge
 pnpm install
-pnpm build
+pnpm dev
 ```
 
 ## Quick Start
 
-### 1. Create config
-
-Create `.env.local` in the project root:
-
-```env
-# Auth (generate a random string, e.g. openssl rand -hex 32)
-AUTH_SECRET=<random-string>
-AUTH_TRUST_HOST=true
-
-# Optional: Google OAuth for production
-# GOOGLE_CLIENT_ID=...
-# GOOGLE_CLIENT_SECRET=...
-```
-
-> **API keys are not required.** Forge uses your local Claude Code CLI, which runs on your Anthropic subscription. If you want to use the built-in multi-model chat feature, you can optionally add provider keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `XAI_API_KEY`) later.
-
-### 2. Start the server
-
-```bash
-# Development
-pnpm dev
-
-# Production
-pnpm build && pnpm start
-```
-
-### 3. Log in
+### 1. Log in
 
 Open `http://localhost:3000`. A login password is auto-generated and printed in the console:
 
@@ -141,10 +121,10 @@ forge retry <task-id>
 
 ## YAML Workflows
 
-Define multi-step flows in `~/.my-workflow/flows/`:
+Define multi-step flows in `~/.forge/flows/`:
 
 ```yaml
-# ~/.my-workflow/flows/daily-review.yaml
+# ~/.forge/flows/daily-review.yaml
 name: daily-review
 steps:
   - project: my-app
@@ -182,10 +162,10 @@ Password-protected commands auto-delete your message to keep credentials safe.
 
 ## Configuration
 
-All config lives in `~/.my-workflow/`:
+All config lives in `~/.forge/`:
 
 ```
-~/.my-workflow/
+~/.forge/
   settings.yaml       # Main configuration
   password.json        # Daily auto-generated login password
   data.db              # SQLite database (tasks, sessions)

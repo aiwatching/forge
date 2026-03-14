@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import https from 'node:https';
 import http from 'node:http';
 
-const BIN_DIR = join(homedir(), '.my-workflow', 'bin');
+const BIN_DIR = join(homedir(), '.forge', 'bin');
 const BIN_NAME = platform() === 'win32' ? 'cloudflared.exe' : 'cloudflared';
 const BIN_PATH = join(BIN_DIR, BIN_NAME);
 
@@ -40,7 +40,7 @@ function getDownloadUrl(): string {
 function followRedirects(url: string, dest: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const client = url.startsWith('https') ? https : http;
-    client.get(url, { headers: { 'User-Agent': 'my-workflow' } }, (res) => {
+    client.get(url, { headers: { 'User-Agent': 'forge' } }, (res) => {
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         followRedirects(res.headers.location, dest).then(resolve, reject);
         return;

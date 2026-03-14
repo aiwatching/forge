@@ -19,7 +19,7 @@ import {
 import { scanProjects } from './projects';
 import { loadSettings } from './settings';
 
-const DB_PATH = join(homedir(), '.my-workflow', 'data.db');
+const DB_PATH = join(homedir(), '.forge', 'data.db');
 
 // ─── Types ───────────────────────────────────────────────────
 

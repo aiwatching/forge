@@ -39,7 +39,7 @@ delete process.env.CLAUDECODE;
 
 // ─── Shared state persistence ─────────────────────────────────
 
-const STATE_DIR = join(homedir(), '.my-workflow');
+const STATE_DIR = join(homedir(), '.forge');
 const STATE_FILE = join(STATE_DIR, 'terminal-state.json');
 
 function loadTerminalState(): unknown {
@@ -245,7 +245,7 @@ wss.on('connection', (ws: WebSocket) => {
       } as Record<string, string>,
     });
 
-    console.log(`[terminal] Attached to tmux session "${name}" (pid: ${term.pid})`);
+    // Attached to tmux session (silent)
     ws.send(JSON.stringify({ type: 'connected', sessionName: name }));
 
     term.onData((data: string) => {
@@ -344,7 +344,7 @@ wss.on('connection', (ws: WebSocket) => {
     // Only kill the pty attach process, NOT the tmux session — it persists
     if (term) {
       term.kill();
-      console.log(`[terminal] Detached from tmux session "${sessionName}"`);
+      // Detached from tmux session (silent)
     }
 
     // Untrack this client

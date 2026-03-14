@@ -229,7 +229,7 @@ async function main() {
       const flows = await api('/api/flows');
       if (flows.length === 0) {
         console.log('No flows defined.');
-        console.log(`Create flows in ~/.my-workflow/flows/*.yaml`);
+        console.log(`Create flows in ~/.forge/flows/*.yaml`);
         break;
       }
       for (const f of flows) {
@@ -313,7 +313,7 @@ async function main() {
       const { readFileSync } = await import('node:fs');
       const { homedir } = await import('node:os');
       const { join } = await import('node:path');
-      const pwFile = join(homedir(), '.my-workflow', 'password.json');
+      const pwFile = join(homedir(), '.forge', 'password.json');
       try {
         const data = JSON.parse(readFileSync(pwFile, 'utf-8'));
         const today = new Date().toISOString().slice(0, 10);

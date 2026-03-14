@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import YAML from 'yaml';
 import type { AppConfig, ProviderName, SessionTemplate } from '@/src/types';
 
-const CONFIG_DIR = join(homedir(), '.my-workflow');
+const CONFIG_DIR = join(homedir(), '.forge');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.yaml');
 const TEMPLATES_DIR = join(CONFIG_DIR, 'templates');
 

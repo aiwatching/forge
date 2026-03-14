@@ -836,7 +836,7 @@ const MemoTerminalPane = memo(function TerminalPane({
       fontSize: 13,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       scrollback: 10000,
-      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      logger: { trace: () => {}, debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
       theme: {
         background: '#1a1a2e',
         foreground: '#e0e0e0',

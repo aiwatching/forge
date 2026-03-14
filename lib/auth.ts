@@ -3,6 +3,7 @@ import Google from 'next-auth/providers/google';
 import Credentials from 'next-auth/providers/credentials';
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  trustHost: true,
   providers: [
     // Google OAuth — for production use
     Google({
@@ -20,7 +21,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const { getPassword } = await import('./password');
         const localPassword = getPassword();
         if (credentials?.password === localPassword) {
-          return { id: 'local', name: 'zliu', email: 'local@my-workflow' };
+          return { id: 'local', name: 'zliu', email: 'local@forge' };
         }
         return null;
       },

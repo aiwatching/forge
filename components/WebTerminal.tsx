@@ -478,6 +478,7 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
 
         {/* Toolbar */}
         <div className="flex items-center gap-1 px-2 ml-auto">
+          <span className="text-[9px] text-gray-600 mr-2">Shift+drag to copy</span>
           <button onClick={() => onSplit('vertical')} className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-white hover:bg-[#2a2a4a] rounded">
             Split Right
           </button>
@@ -828,7 +829,7 @@ const MemoTerminalPane = memo(function TerminalPane({
         background: '#1a1a2e',
         foreground: '#e0e0e0',
         cursor: '#7c5bf0',
-        selectionBackground: '#7c5bf044',
+        selectionBackground: '#7c5bf066',
         black: '#1a1a2e',
         red: '#ff6b6b',
         green: '#69db7c',

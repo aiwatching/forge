@@ -94,8 +94,12 @@ async function poll() {
         }
       }
     }
-  } catch (err) {
-    console.error('[telegram] Poll error:', err);
+  } catch (err: any) {
+    // Network errors (ECONNRESET, fetch failed) are normal during sleep/wake — silent retry
+    const isNetworkError = err?.cause?.code === 'ECONNRESET' || err?.message?.includes('fetch failed');
+    if (!isNetworkError) {
+      console.error('[telegram] Poll error:', err);
+    }
   }
 
   pollTimer = setTimeout(poll, 1000);

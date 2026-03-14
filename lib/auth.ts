@@ -1,6 +1,12 @@
 import NextAuth from 'next-auth';
 import Google from 'next-auth/providers/google';
 import Credentials from 'next-auth/providers/credentials';
+import { randomBytes } from 'node:crypto';
+
+// Ensure AUTH_SECRET exists before NextAuth initializes
+if (!process.env.AUTH_SECRET) {
+  process.env.AUTH_SECRET = randomBytes(32).toString('hex');
+}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,

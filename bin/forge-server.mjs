@@ -24,9 +24,24 @@ const LOG_FILE = join(DATA_DIR, 'forge.log');
 const isDev = process.argv.includes('--dev');
 const isBackground = process.argv.includes('--background');
 const isStop = process.argv.includes('--stop');
+const isRebuild = process.argv.includes('--rebuild');
 
 process.chdir(ROOT);
 mkdirSync(DATA_DIR, { recursive: true });
+
+// ── Load ~/.forge/.env.local ──
+const envFile = join(DATA_DIR, '.env.local');
+if (existsSync(envFile)) {
+  for (const line of readFileSync(envFile, 'utf-8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const val = trimmed.slice(eq + 1).trim();
+    if (!process.env[key]) process.env[key] = val;
+  }
+}
 
 // ── Stop ──
 if (isStop) {
@@ -39,6 +54,25 @@ if (isStop) {
     console.log('[forge] No running server found');
   }
   process.exit(0);
+}
+
+// ── Rebuild ──
+if (isRebuild || existsSync(join(ROOT, '.next', 'BUILD_ID'))) {
+  // Always rebuild after npm install (new version)
+  const buildIdFile = join(ROOT, '.next', 'BUILD_ID');
+  const pkgVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8')).version;
+  const versionFile = join(ROOT, '.next', '.forge-version');
+  const lastBuiltVersion = existsSync(versionFile) ? readFileSync(versionFile, 'utf-8').trim() : '';
+  if (isRebuild || lastBuiltVersion !== pkgVersion) {
+    console.log(`[forge] Rebuilding (v${pkgVersion})...`);
+    execSync('rm -rf .next', { cwd: ROOT });
+    execSync('npx next build', { cwd: ROOT, stdio: 'inherit' });
+    writeFileSync(versionFile, pkgVersion);
+    if (isRebuild) {
+      console.log('[forge] Rebuild complete');
+      process.exit(0);
+    }
+  }
 }
 
 // ── Background ──

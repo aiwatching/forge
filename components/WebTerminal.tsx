@@ -46,35 +46,19 @@ function getWsUrl() {
   return `${wsProtocol}//${wsHost}:3001`;
 }
 
-/** Load shared terminal state from server */
-function loadSharedState(): Promise<{ tabs: TabState[]; activeTabId: number; sessionLabels: Record<string, string> } | null> {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => resolve(null), 3000);
-    try {
-      const ws = new WebSocket(getWsUrl());
-      ws.onopen = () => ws.send(JSON.stringify({ type: 'load-state' }));
-      ws.onmessage = (e) => {
-        clearTimeout(timeout);
-        try {
-          const msg = JSON.parse(e.data);
-          if (msg.type === 'terminal-state' && msg.data) {
-            const d = msg.data;
-            if (Array.isArray(d.tabs) && d.tabs.length > 0 && typeof d.activeTabId === 'number') {
-              resolve({ tabs: d.tabs, activeTabId: d.activeTabId, sessionLabels: d.sessionLabels || {} });
-              ws.close();
-              return;
-            }
-          }
-        } catch {}
-        resolve(null);
-        ws.close();
-      };
-      ws.onerror = () => { clearTimeout(timeout); resolve(null); };
-    } catch {
-      clearTimeout(timeout);
-      resolve(null);
+/** Load shared terminal state via API (always available, doesn't depend on terminal WebSocket server) */
+async function loadSharedState(): Promise<{ tabs: TabState[]; activeTabId: number; sessionLabels: Record<string, string> } | null> {
+  try {
+    const res = await fetch('/api/terminal-state');
+    if (!res.ok) return null;
+    const d = await res.json();
+    if (d && Array.isArray(d.tabs) && d.tabs.length > 0 && typeof d.activeTabId === 'number') {
+      return { tabs: d.tabs, activeTabId: d.activeTabId, sessionLabels: d.sessionLabels || {} };
     }
-  });
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /** Save shared terminal state to server (fire-and-forget) */
@@ -179,6 +163,7 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
   });
   const [activeTabId, setActiveTabId] = useState(() => tabs[0]?.id || 1);
   const [hydrated, setHydrated] = useState(false);
+  const stateLoadedRef = useRef(false);
   const [tmuxSessions, setTmuxSessions] = useState<TmuxSession[]>([]);
   const [showSessionPicker, setShowSessionPicker] = useState(false);
   const [editingTabId, setEditingTabId] = useState<number | null>(null);
@@ -196,6 +181,7 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
         setTabs(saved.tabs);
         setActiveTabId(saved.activeTabId);
         sessionLabelsRef.current = saved.sessionLabels || {};
+        stateLoadedRef.current = true;
       }
       setHydrated(true);
     });
@@ -345,6 +331,7 @@ const WebTerminal = forwardRef<WebTerminalHandle>(function WebTerminal(_props, r
   }, [activeTabId]);
 
   const onSessionConnected = useCallback((paneId: number, sessionName: string) => {
+    stateLoadedRef.current = true; // Allow saving once a session is connected
     setTabs(prev => prev.map(t => ({
       ...t,
       tree: updateSessionName(t.tree, paneId, sessionName),

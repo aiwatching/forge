@@ -166,12 +166,25 @@ All config lives in `~/.forge/`:
 
 ```
 ~/.forge/
-  settings.yaml       # Main configuration
+  .env.local           # Environment variables (AUTH_SECRET, API keys, etc.)
+  settings.yaml        # Main configuration
   password.json        # Daily auto-generated login password
   data.db              # SQLite database (tasks, sessions)
   terminal-state.json  # Terminal tab layout
   flows/               # YAML workflow definitions
   bin/                 # Auto-downloaded binaries (cloudflared)
+```
+
+### .env.local (optional)
+
+```env
+# Fixed auth secret (optional — auto-generated if not set)
+AUTH_SECRET=<random-string>
+
+# Optional: AI provider API keys for multi-model chat
+# ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-...
+# GOOGLE_GENERATIVE_AI_API_KEY=AI...
 ```
 
 ### settings.yaml

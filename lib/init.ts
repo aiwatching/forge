@@ -19,12 +19,6 @@ export function ensureInitialized() {
   if (gInit[initKey]) return;
   gInit[initKey] = true;
 
-  // Ensure AUTH_SECRET is set (NextAuth requires it)
-  if (!process.env.AUTH_SECRET) {
-    const { randomBytes } = require('node:crypto');
-    process.env.AUTH_SECRET = randomBytes(32).toString('hex');
-  }
-
   // Display login password (auto-generated, rotates daily)
   const password = getPassword();
   console.log(`[init] Login password: ${password} (valid today)`);

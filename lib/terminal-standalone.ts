@@ -182,23 +182,51 @@ function trackDetach(ws: WebSocket, sessionName: string) {
 
 // ─── Periodic orphan cleanup ─────────────────────────────────
 
-/** Clean up detached tmux sessions that no WS client is connected to (skip renamed ones) */
+/** Clean up detached tmux sessions that are not tracked in terminal-state.json */
 function cleanupOrphanedSessions() {
-  const renamed = getRenamedSessions();
+  const knownSessions = getKnownSessions();
   const sessions = listTmuxSessions();
   for (const s of sessions) {
     if (s.attached) continue;
-    if (renamed.has(s.name)) continue; // user renamed — preserve
+    if (knownSessions.has(s.name)) continue; // saved in terminal state — preserve
     const clients = sessionClients.get(s.name)?.size ?? 0;
     if (clients === 0) {
-      console.log(`[terminal] Cleanup: killing orphaned session "${s.name}" (no clients, not renamed)`);
       killTmuxSession(s.name);
     }
   }
 }
 
-// Run cleanup every 30 seconds
-setInterval(cleanupOrphanedSessions, 30_000);
+/** Get all session names referenced in terminal-state.json (tabs + labels) */
+function getKnownSessions(): Set<string> {
+  try {
+    const state = loadTerminalState() as any;
+    if (!state) return new Set();
+    const known = new Set<string>();
+    // From sessionLabels
+    if (state.sessionLabels) {
+      for (const name of Object.keys(state.sessionLabels)) known.add(name);
+    }
+    // From tab trees
+    if (state.tabs) {
+      for (const tab of state.tabs) {
+        collectTreeSessions(tab.tree, known);
+      }
+    }
+    return known;
+  } catch {
+    return new Set();
+  }
+}
+
+function collectTreeSessions(node: any, set: Set<string>) {
+  if (!node) return;
+  if (node.type === 'terminal' && node.sessionName) set.add(node.sessionName);
+  if (node.first) collectTreeSessions(node.first, set);
+  if (node.second) collectTreeSessions(node.second, set);
+}
+
+// Run cleanup every 60 seconds, with a 60s initial delay to let clients reconnect after restart
+setTimeout(() => setInterval(cleanupOrphanedSessions, 60_000), 60_000);
 
 // ─── WebSocket server ──────────────────────────────────────────
 
@@ -352,18 +380,7 @@ wss.on('connection', (ws: WebSocket) => {
     if (sessionName) trackDetach(ws, sessionName);
     createdAt.delete(ws);
 
-    // Grace period cleanup: if no client reconnects within 10s, kill the session (unless renamed)
-    if (disconnectedSession) {
-      setTimeout(() => {
-        const clients = sessionClients.get(disconnectedSession)?.size ?? 0;
-        if (clients === 0 && tmuxSessionExists(disconnectedSession)) {
-          const renamed = getRenamedSessions();
-          if (!renamed.has(disconnectedSession)) {
-            console.log(`[terminal] Auto-killing orphaned session "${disconnectedSession}" (no clients after 10s, not renamed)`);
-            killTmuxSession(disconnectedSession);
-          }
-        }
-      }, 10_000);
-    }
+    // Orphan cleanup is handled by the periodic cleanupOrphanedSessions() (every 30s)
+    // which checks sessionClients and getRenamedSessions() from terminal-state.json
   });
 });

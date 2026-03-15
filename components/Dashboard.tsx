@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import { signOut } from 'next-auth/react';
 import TaskBoard from './TaskBoard';
 import TaskDetail from './TaskDetail';
 import SessionView from './SessionView';
@@ -178,6 +179,12 @@ export default function Dashboard({ user }: { user: any }) {
             Settings
           </button>
           <span className="text-xs text-[var(--text-secondary)]">{user?.name || 'local'}</span>
+          <button
+            onClick={() => signOut({ callbackUrl: '/login' })}
+            className="text-xs text-[var(--text-secondary)] hover:text-[var(--red)]"
+          >
+            Logout
+          </button>
         </div>
       </header>
 

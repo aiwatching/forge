@@ -237,7 +237,7 @@ function executeTask(task: Task): Promise<void> {
     const settings = loadSettings();
     const claudePath = settings.claudePath || process.env.CLAUDE_PATH || 'claude';
 
-    const args = ['-p', '--verbose', '--output-format', 'stream-json'];
+    const args = ['-p', '--verbose', '--output-format', 'stream-json', '--dangerously-skip-permissions'];
 
     // Resume specific session to continue the conversation
     if (task.conversationId) {

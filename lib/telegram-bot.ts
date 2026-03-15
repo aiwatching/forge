@@ -1191,7 +1191,10 @@ async function sendNoteToDocsClaude(chatId: number, content: string) {
     return;
   }
 
-  const { execSync } = require('child_process');
+  const { execSync, spawnSync } = require('child_process');
+  const { writeFileSync, unlinkSync } = require('fs');
+  const { join } = require('path');
+  const { homedir } = require('os');
   const SESSION_NAME = 'mw-docs-claude';
 
   // Check if the docs tmux session exists
@@ -1206,25 +1209,33 @@ async function sendNoteToDocsClaude(chatId: number, content: string) {
     return;
   }
 
-  // Escape content for tmux send-keys
-  // Replace newlines with Enter key, escape special chars
-  const escaped = content
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/'/g, "\\'")
-    .replace(/\$/g, '\\$')
-    .replace(/`/g, '\\`');
-
-  // Send the note as input to the docs claude session
-  const prompt = `Please help me save this note to the appropriate file in my docs. Analyze the content, determine the best file/location, and save it. If unsure, create a new note. Here's the content:\n\n${escaped}`;
-
+  // Check if Claude is the active process (not shell)
+  let paneCmd = '';
   try {
-    // Send to tmux session
-    execSync(`tmux send-keys -t ${SESSION_NAME} "${prompt.replace(/\n/g, '" Enter "')}" Enter`, {
-      timeout: 5000,
-    });
+    paneCmd = execSync(`tmux display-message -p -t ${SESSION_NAME} '#{pane_current_command}'`, { encoding: 'utf-8', timeout: 2000 }).trim();
+  } catch {}
+
+  if (paneCmd === 'zsh' || paneCmd === 'bash' || paneCmd === 'fish' || !paneCmd) {
+    await send(chatId, '⚠️ Claude is not running in the Docs session. Open the Docs tab and start Claude first.');
+    return;
+  }
+
+  // Write content to a temp file, then use tmux to send a prompt referencing it
+  const tmpFile = join(homedir(), '.forge', '.note-tmp.txt');
+  try {
+    writeFileSync(tmpFile, content, 'utf-8');
+
+    // Send a single-line prompt to Claude via tmux send-keys using the temp file
+    const prompt = `Please read the file ${tmpFile} and save its content as a note in the appropriate location in my docs. Analyze the content to determine the best file and location. After saving, delete the temp file.`;
+
+    // Use tmux send-keys with literal flag to avoid interpretation issues
+    spawnSync('tmux', ['send-keys', '-t', SESSION_NAME, '-l', prompt], { timeout: 5000 });
+    // Send Enter separately
+    spawnSync('tmux', ['send-keys', '-t', SESSION_NAME, 'Enter'], { timeout: 2000 });
+
     await send(chatId, `📝 Note sent to Docs Claude:\n\n${content.slice(0, 200)}${content.length > 200 ? '...' : ''}`);
   } catch (err) {
+    try { unlinkSync(tmpFile); } catch {}
     await send(chatId, '❌ Failed to send note to Claude session');
   }
 }

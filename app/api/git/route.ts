@@ -24,11 +24,11 @@ export async function GET(req: NextRequest) {
 
   try {
     const branch = git('rev-parse --abbrev-ref HEAD', dir);
-    const statusOut = git('status --porcelain -u', dir);
-    const changes = statusOut ? statusOut.split('\n').filter(Boolean).map(line => ({
+    const statusRaw = execSync('git status --porcelain -u', { cwd: dir, encoding: 'utf-8', timeout: 15000 });
+    const changes = statusRaw.replace(/\n$/, '').split('\n').filter(Boolean).map(line => ({
       status: line.substring(0, 2).trim() || 'M',
-      path: line.substring(3),
-    })) : [];
+      path: line.substring(3).replace(/\/$/, ''),
+    }));
 
     let remote = '';
     try { remote = git('remote get-url origin', dir); } catch {}
@@ -44,7 +44,17 @@ export async function GET(req: NextRequest) {
 
     const lastCommit = git('log -1 --format="%h %s" 2>/dev/null || echo ""', dir);
 
-    return NextResponse.json({ branch, changes, remote, ahead, behind, lastCommit });
+    // Git log — recent commits
+    let log: { hash: string; message: string; author: string; date: string }[] = [];
+    try {
+      const logOut = git('log --format="%h||%s||%an||%ar" -20', dir);
+      log = logOut.split('\n').filter(Boolean).map(line => {
+        const [hash, message, author, date] = line.split('||');
+        return { hash, message, author, date };
+      });
+    } catch {}
+
+    return NextResponse.json({ branch, changes, remote, ahead, behind, lastCommit, log });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }

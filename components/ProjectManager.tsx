@@ -17,6 +17,7 @@ interface GitInfo {
   ahead: number;
   behind: number;
   lastCommit: string;
+  log: { hash: string; message: string; author: string; date: string }[];
 }
 
 export default function ProjectManager() {
@@ -35,6 +36,7 @@ export default function ProjectManager() {
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileLanguage, setFileLanguage] = useState('');
   const [fileLoading, setFileLoading] = useState(false);
+  const [showLog, setShowLog] = useState(false);
 
   // Fetch projects
   useEffect(() => {
@@ -223,12 +225,34 @@ export default function ProjectManager() {
                 )}
               </div>
               {gitInfo?.lastCommit && (
-                <div className="text-[9px] text-[var(--text-secondary)] mt-0.5 font-mono">{gitInfo.lastCommit}</div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-[9px] text-[var(--text-secondary)] font-mono truncate">{gitInfo.lastCommit}</span>
+                  <button
+                    onClick={() => setShowLog(v => !v)}
+                    className={`text-[9px] px-1.5 py-0.5 rounded shrink-0 ${showLog ? 'text-white bg-[var(--accent)]/30' : 'text-[var(--accent)] hover:bg-[var(--accent)]/10'}`}
+                  >
+                    History
+                  </button>
+                </div>
               )}
             </div>
 
+            {/* Git log */}
+            {showLog && gitInfo?.log && gitInfo.log.length > 0 && (
+              <div className="max-h-48 overflow-y-auto border-b border-[var(--border)] bg-[var(--bg-tertiary)]">
+                {gitInfo.log.map(c => (
+                  <div key={c.hash} className="px-4 py-1.5 border-b border-[var(--border)]/30 text-xs flex items-start gap-2">
+                    <span className="font-mono text-[var(--accent)] shrink-0 text-[10px]">{c.hash}</span>
+                    <span className="text-[var(--text-primary)] truncate flex-1">{c.message}</span>
+                    <span className="text-[var(--text-secondary)] text-[9px] shrink-0">{c.author}</span>
+                    <span className="text-[var(--text-secondary)] text-[9px] shrink-0 w-16 text-right">{c.date}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Content area */}
-            <div className="flex-1 flex min-h-0">
+            <div className="flex-1 flex min-h-0 overflow-hidden">
               {/* File tree */}
               <div className="w-52 border-r border-[var(--border)] overflow-y-auto p-1 shrink-0">
                 {fileTree.map((node: any) => (
@@ -236,13 +260,13 @@ export default function ProjectManager() {
                 ))}
               </div>
 
-              {/* File content */}
-              <div className="flex-1 flex flex-col min-w-0">
+              {/* File content — independent scroll */}
+              <div className="flex-1 min-w-0 overflow-auto bg-[var(--bg-primary)]">
                 {fileLoading ? (
-                  <div className="flex-1 flex items-center justify-center text-xs text-[var(--text-secondary)]">Loading...</div>
+                  <div className="h-full flex items-center justify-center text-xs text-[var(--text-secondary)]">Loading...</div>
                 ) : selectedFile && fileContent !== null ? (
-                  <div className="flex-1 overflow-auto bg-[var(--bg-primary)]">
-                    <div className="px-3 py-1 border-b border-[var(--border)] text-[10px] text-[var(--text-secondary)]">{selectedFile}</div>
+                  <>
+                    <div className="px-3 py-1 border-b border-[var(--border)] text-[10px] text-[var(--text-secondary)] sticky top-0 bg-[var(--bg-primary)] z-10">{selectedFile}</div>
                     <pre className="p-4 text-[12px] leading-[1.5] font-mono text-[var(--text-primary)] whitespace-pre" style={{ fontFamily: 'Menlo, Monaco, "Courier New", monospace', tabSize: 2 }}>
                       {fileContent.split('\n').map((line, i) => (
                         <div key={i} className="flex hover:bg-[var(--bg-tertiary)]/50">
@@ -251,7 +275,7 @@ export default function ProjectManager() {
                         </div>
                       ))}
                     </pre>
-                  </div>
+                  </>
                 ) : (
                   <div className="flex-1 flex items-center justify-center text-xs text-[var(--text-secondary)]">
                     Select a file to view

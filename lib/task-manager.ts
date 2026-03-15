@@ -382,7 +382,6 @@ function executeTask(task: Task): Promise<void> {
  */
 function notifyTerminalSession(task: Task, status: 'done' | 'failed', sessionId?: string) {
   try {
-    const { execSync } = require('node:child_process');
     const out = execSync(
       `tmux list-sessions -F "#{session_name}" 2>/dev/null`,
       { encoding: 'utf-8', timeout: 3000 }
@@ -396,28 +395,32 @@ function notifyTerminalSession(task: Task, status: 'done' | 'failed', sessionId?
           `tmux display-message -p -t ${name} '#{pane_current_path}'`,
           { encoding: 'utf-8', timeout: 2000 }
         ).trim();
-        if (cwd && (cwd === task.projectPath || cwd.startsWith(task.projectPath + '/'))) {
-          // Check if claude is running in this pane (waiting for input)
-          const paneCmd = execSync(
-            `tmux display-message -p -t ${name} '#{pane_current_command}'`,
-            { encoding: 'utf-8', timeout: 2000 }
-          ).trim();
 
-          if (status === 'done') {
-            const summary = task.prompt.slice(0, 100).replace(/'/g, "'\\''");
-            const msg = `A background task just completed in this project. Task: "${summary}". Please check git diff and the latest file changes, then continue working.`;
+        // Match: same dir, parent dir, or child dir
+        const match = cwd && (
+          cwd === task.projectPath ||
+          cwd.startsWith(task.projectPath + '/') ||
+          task.projectPath.startsWith(cwd + '/')
+        );
+        if (!match) continue;
 
-            // If claude is the active command, send the message as input
-            if (paneCmd === 'node' || paneCmd === 'claude') {
-              // Claude is likely running and waiting for input — send message directly
-              execSync(`tmux send-keys -t ${name} "${msg.replace(/"/g, '\\"')}" Enter`, { timeout: 2000 });
-            } else {
-              // Shell prompt — show a notification
-              execSync(`tmux display-message -t ${name} "✅ Task ${task.id} done — changes ready"`, { timeout: 2000 });
-            }
+        const paneCmd = execSync(
+          `tmux display-message -p -t ${name} '#{pane_current_command}'`,
+          { encoding: 'utf-8', timeout: 2000 }
+        ).trim();
+
+        if (status === 'done') {
+          const summary = task.prompt.slice(0, 80).replace(/"/g, "'");
+          const msg = `A background task just completed. Task: "${summary}". Please check git diff and continue.`;
+
+          // If a process is running (claude/node), send as input
+          if (paneCmd !== 'zsh' && paneCmd !== 'bash' && paneCmd !== 'fish') {
+            execSync(`tmux send-keys -t ${name} -- "${msg.replace(/"/g, '\\"')}" Enter`, { timeout: 2000 });
           } else {
-            execSync(`tmux display-message -t ${name} "❌ Task ${task.id} failed"`, { timeout: 2000 });
+            execSync(`tmux display-message -t ${name} "✅ Task ${task.id} done — changes ready"`, { timeout: 2000 });
           }
+        } else {
+          execSync(`tmux display-message -t ${name} "❌ Task ${task.id} failed"`, { timeout: 2000 });
         }
       } catch {}
     }

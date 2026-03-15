@@ -15,13 +15,15 @@ interface FileNode {
 // ─── File Tree ───────────────────────────────────────────
 
 type GitStatusMap = Map<string, string>; // path → status
+type GitRepoMap = Map<string, { branch: string; remote: string }>; // dir name → repo info
 
-function TreeNode({ node, depth, selected, onSelect, gitMap }: {
+function TreeNode({ node, depth, selected, onSelect, gitMap, repoMap }: {
   node: FileNode;
   depth: number;
   selected: string | null;
   onSelect: (path: string) => void;
   gitMap: GitStatusMap;
+  repoMap: GitRepoMap;
 }) {
   // Auto-expand if selected file is under this directory
   const containsSelected = selected ? selected.startsWith(node.path + '/') : false;
@@ -30,18 +32,23 @@ function TreeNode({ node, depth, selected, onSelect, gitMap }: {
 
   if (node.type === 'dir') {
     const dirHasChanges = node.children?.some(c => hasGitChanges(c, gitMap));
+    const repo = repoMap.get(node.name);
     return (
       <div>
         <button
           onClick={() => setManualExpanded(v => v === null ? !expanded : !v)}
-          className="w-full text-left flex items-center gap-1 px-1 py-0.5 hover:bg-[var(--bg-tertiary)] rounded text-xs"
+          className="w-full text-left flex items-center gap-1 px-1 py-0.5 hover:bg-[var(--bg-tertiary)] rounded text-xs group"
           style={{ paddingLeft: depth * 12 + 4 }}
+          title={repo ? `${repo.branch} · ${repo.remote.replace(/^https?:\/\//, '').replace(/^git@github\.com:/, 'github.com/').replace(/\.git$/, '')}` : undefined}
         >
           <span className="text-[10px] text-[var(--text-secondary)] w-3">{expanded ? '▾' : '▸'}</span>
           <span className={dirHasChanges ? 'text-yellow-400' : 'text-[var(--text-primary)]'}>{node.name}</span>
+          {repo && (
+            <span className="text-[8px] text-[var(--accent)] opacity-60 group-hover:opacity-100 ml-auto shrink-0">{repo.branch}</span>
+          )}
         </button>
         {expanded && node.children?.map(child => (
-          <TreeNode key={child.path} node={child} depth={depth + 1} selected={selected} onSelect={onSelect} gitMap={gitMap} />
+          <TreeNode key={child.path} node={child} depth={depth + 1} selected={selected} onSelect={onSelect} gitMap={gitMap} repoMap={repoMap} />
         ))}
       </div>
     );
@@ -165,6 +172,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
   const [tree, setTree] = useState<FileNode[]>([]);
   const [gitBranch, setGitBranch] = useState('');
   const [gitChanges, setGitChanges] = useState<{ path: string; status: string }[]>([]);
+  const [gitRepos, setGitRepos] = useState<{ name: string; branch: string; remote: string; changes: { path: string; status: string }[] }[]>([]);
   const [showGit, setShowGit] = useState(false);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [content, setContent] = useState<string | null>(null);
@@ -220,6 +228,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
           setDirName(data.dirName || currentDir.split('/').pop() || '');
           setGitBranch(data.gitBranch || '');
           setGitChanges(data.gitChanges || []);
+          setGitRepos(data.gitRepos || []);
         })
         .catch(() => setTree([]));
     };
@@ -228,6 +237,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
 
   // Build git status map for tree coloring
   const gitMap: GitStatusMap = new Map(gitChanges.map(g => [g.path, g.status]));
+  const repoMap: GitRepoMap = new Map(gitRepos.filter(r => r.name !== '.').map(r => [r.name, { branch: r.branch, remote: r.remote }]));
 
   const openFile = useCallback(async (path: string) => {
     if (!currentDir) return;
@@ -318,6 +328,11 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
                   </span>
                 )}
               </div>
+              {gitRepos.find(r => r.name === '.')?.remote && (
+                <div className="text-[9px] text-[var(--text-secondary)] truncate mt-0.5" title={gitRepos.find(r => r.name === '.')!.remote}>
+                  {gitRepos.find(r => r.name === '.')!.remote.replace(/^https?:\/\//, '').replace(/^git@github\.com:/, 'github.com/').replace(/\.git$/, '')}
+                </div>
+              )}
               {gitChanges.length > 0 && (
                 <button
                   onClick={() => setShowGit(v => !v)}
@@ -328,38 +343,55 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
               )}
             </div>
 
-            {/* Git changes */}
+            {/* Git changes — grouped by repo */}
             {showGit && gitChanges.length > 0 && (
               <div className="border-b border-[var(--border)] max-h-48 overflow-y-auto">
-                {gitChanges.map(g => (
-                  <div
-                    key={g.path}
-                    className={`flex items-center px-2 py-1 text-xs hover:bg-[var(--bg-tertiary)] ${
-                      diffFile === g.path && viewMode === 'diff' ? 'bg-[var(--accent)]/10' : ''
-                    }`}
-                  >
-                    <span className={`text-[10px] font-mono w-4 shrink-0 ${
-                      g.status.includes('M') ? 'text-yellow-500' :
-                      g.status.includes('A') || g.status.includes('?') ? 'text-green-500' :
-                      g.status.includes('D') ? 'text-red-500' :
-                      'text-[var(--text-secondary)]'
-                    }`}>
-                      {g.status.includes('?') ? '+' : g.status[0]}
-                    </span>
-                    <button
-                      onClick={() => openDiff(g.path)}
-                      className="flex-1 text-left truncate text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-1"
-                      title="View diff"
-                    >
-                      {g.path}
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); locateFile(g.path); }}
-                      className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 px-1.5 py-0.5 rounded shrink-0"
-                      title="Locate in file tree"
+                {gitRepos.map(repo => (
+                  <div key={repo.name}>
+                    {/* Repo header — only show if multiple repos */}
+                    {gitRepos.length > 1 && (
+                      <div className="px-2 py-1 text-[9px] text-[var(--text-secondary)] bg-[var(--bg-tertiary)] sticky top-0" title={repo.remote}>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-[var(--text-primary)]">{repo.name}</span>
+                          <span className="text-[var(--accent)]">{repo.branch}</span>
+                          <span className="ml-auto">{repo.changes.length}</span>
+                        </div>
+                        {repo.remote && (
+                          <div className="text-[8px] truncate mt-0.5">{repo.remote.replace(/^https?:\/\//, '').replace(/\.git$/, '')}</div>
+                        )}
+                      </div>
+                    )}
+                    {repo.changes.map(g => (
+                      <div
+                        key={g.path}
+                        className={`flex items-center px-2 py-1 text-xs hover:bg-[var(--bg-tertiary)] ${
+                          diffFile === g.path && viewMode === 'diff' ? 'bg-[var(--accent)]/10' : ''
+                        }`}
+                      >
+                        <span className={`text-[10px] font-mono w-4 shrink-0 ${
+                          g.status.includes('M') ? 'text-yellow-500' :
+                          g.status.includes('A') || g.status.includes('?') ? 'text-green-500' :
+                          g.status.includes('D') ? 'text-red-500' :
+                          'text-[var(--text-secondary)]'
+                        }`}>
+                          {g.status.includes('?') ? '+' : g.status[0]}
+                        </span>
+                        <button
+                          onClick={() => openDiff(g.path)}
+                          className="flex-1 text-left truncate text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-1 group relative"
+                          title={`${g.path}${gitRepos.length > 1 ? ` (${repo.name} · ${repo.branch})` : ''}`}
+                        >
+                          {gitRepos.length > 1 ? g.path.replace(repo.name + '/', '') : g.path}
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); locateFile(g.path); }}
+                          className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 px-1.5 py-0.5 rounded shrink-0"
+                          title="Locate in file tree"
                     >
                       file
                     </button>
+                      </div>
+                    ))}
                   </div>
                 ))}
               </div>
@@ -400,7 +432,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
                 )
               ) : (
                 tree.map(node => (
-                  <TreeNode key={node.path} node={node} depth={0} selected={selectedFile} onSelect={openFile} gitMap={gitMap} />
+                  <TreeNode key={node.path} node={node} depth={0} selected={selectedFile} onSelect={openFile} gitMap={gitMap} repoMap={repoMap} />
                 ))
               )}
             </div>

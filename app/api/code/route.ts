@@ -138,23 +138,57 @@ export async function GET(req: Request) {
   const tree = scanDir(resolvedDir, resolvedDir);
   const dirName = resolvedDir.split('/').pop() || resolvedDir;
 
-  // Git status: changed files
-  let gitChanges: { path: string; status: string }[] = [];
-  let gitBranch = '';
-  try {
-    gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: resolvedDir, encoding: 'utf-8', timeout: 3000 }).trim();
-    const statusOut = execSync('git status --porcelain -u', { cwd: resolvedDir, encoding: 'utf-8', timeout: 5000 });
-    gitChanges = statusOut.replace(/\n$/, '').split('\n').filter(Boolean)
-      .map(line => {
-        // Format: XY<space>path — first 2 chars are status, char 3 is space, rest is path
-        if (line.length < 4) return null;
-        return {
-          status: line.substring(0, 2).trim() || 'M',
-          path: line.substring(3).replace(/\/$/, ''),
-        };
-      })
-      .filter((g): g is { status: string; path: string } => g !== null && !!g.path && !g.path.includes(' -> '));
-  } catch {}
+  // Git status: scan for git repos (could be root dir or subdirectories)
+  interface GitRepo {
+    name: string;       // repo dir name (or '.' for root)
+    branch: string;
+    remote: string;     // remote URL
+    changes: { path: string; status: string }[];
+  }
+  const gitRepos: GitRepo[] = [];
 
-  return NextResponse.json({ tree, dirName, dirPath: resolvedDir, gitBranch, gitChanges });
+  function scanGitStatus(dir: string, repoName: string, pathPrefix: string) {
+    try {
+      const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: dir, encoding: 'utf-8', timeout: 3000 }).trim();
+      const statusOut = execSync('git status --porcelain -u', { cwd: dir, encoding: 'utf-8', timeout: 5000 });
+      const changes = statusOut.replace(/\n$/, '').split('\n').filter(Boolean)
+        .map(line => {
+          if (line.length < 4) return null;
+          return {
+            status: line.substring(0, 2).trim() || 'M',
+            path: pathPrefix ? `${pathPrefix}/${line.substring(3).replace(/\/$/, '')}` : line.substring(3).replace(/\/$/, ''),
+          };
+        })
+        .filter((g): g is { status: string; path: string } => g !== null && !!g.path && !g.path.includes(' -> '));
+      let remote = '';
+      try { remote = execSync('git remote get-url origin', { cwd: dir, encoding: 'utf-8', timeout: 2000 }).trim(); } catch {}
+      if (branch || changes.length > 0) {
+        gitRepos.push({ name: repoName, branch, remote, changes });
+      }
+    } catch {}
+  }
+
+  // Check if root is a git repo
+  try {
+    execSync('git rev-parse --git-dir', { cwd: resolvedDir, encoding: 'utf-8', timeout: 2000 });
+    scanGitStatus(resolvedDir, '.', '');
+  } catch {
+    // Root is not a git repo — scan subdirectories
+    try {
+      for (const entry of readdirSync(resolvedDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name.startsWith('.') || IGNORE.has(entry.name)) continue;
+        const subDir = join(resolvedDir, entry.name);
+        try {
+          execSync('git rev-parse --git-dir', { cwd: subDir, encoding: 'utf-8', timeout: 2000 });
+          scanGitStatus(subDir, entry.name, entry.name);
+        } catch {}
+      }
+    } catch {}
+  }
+
+  // Flatten for backward compat
+  const gitChanges = gitRepos.flatMap(r => r.changes);
+  const gitBranch = gitRepos.length === 1 ? gitRepos[0].branch : '';
+
+  return NextResponse.json({ tree, dirName, dirPath: resolvedDir, gitBranch, gitChanges, gitRepos });
 }

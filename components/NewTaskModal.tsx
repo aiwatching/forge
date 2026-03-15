@@ -88,15 +88,15 @@ export default function NewTaskModal({
       .catch(() => setSessions([]));
   }, [selectedProject]);
 
-  const getScheduledAt = (): string | undefined => {
-    if (scheduleMode === 'now') return undefined;
+  const getScheduledAt = (): string | null | undefined => {
+    if (scheduleMode === 'now') return editTask ? null : undefined;  // null clears existing schedule
     if (scheduleMode === 'delay') {
       return new Date(Date.now() + delayMinutes * 60_000).toISOString();
     }
     if (scheduleMode === 'time' && scheduledTime) {
       return new Date(scheduledTime).toISOString();
     }
-    return undefined;
+    return editTask ? null : undefined;
   };
 
   const handleSubmit = (e: React.FormEvent) => {

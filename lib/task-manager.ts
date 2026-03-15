@@ -383,7 +383,6 @@ function executeTask(task: Task): Promise<void> {
 function notifyTerminalSession(task: Task, status: 'done' | 'failed', sessionId?: string) {
   try {
     const { execSync } = require('node:child_process');
-    // Find all mw- tmux sessions and check their cwd
     const out = execSync(
       `tmux list-sessions -F "#{session_name}" 2>/dev/null`,
       { encoding: 'utf-8', timeout: 3000 }
@@ -397,13 +396,28 @@ function notifyTerminalSession(task: Task, status: 'done' | 'failed', sessionId?
           `tmux display-message -p -t ${name} '#{pane_current_path}'`,
           { encoding: 'utf-8', timeout: 2000 }
         ).trim();
-        // Check if this terminal is in the same project directory
         if (cwd && (cwd === task.projectPath || cwd.startsWith(task.projectPath + '/'))) {
-          const icon = status === 'done' ? '✅' : '❌';
-          const resumeHint = sessionId ? ` (claude --resume ${sessionId.slice(0, 8)})` : '';
-          const msg = `\\n\\r\\033[93m[Task ${task.id} ${status}] ${task.prompt.slice(0, 50)}${resumeHint}\\033[0m\\n\\r`;
-          // Send notification via tmux — display as a message and also write to the pane
-          execSync(`tmux display-message -t ${name} "${icon} Task ${task.id} ${status}"`, { timeout: 2000 });
+          // Check if claude is running in this pane (waiting for input)
+          const paneCmd = execSync(
+            `tmux display-message -p -t ${name} '#{pane_current_command}'`,
+            { encoding: 'utf-8', timeout: 2000 }
+          ).trim();
+
+          if (status === 'done') {
+            const summary = task.prompt.slice(0, 100).replace(/'/g, "'\\''");
+            const msg = `A background task just completed in this project. Task: "${summary}". Please check git diff and the latest file changes, then continue working.`;
+
+            // If claude is the active command, send the message as input
+            if (paneCmd === 'node' || paneCmd === 'claude') {
+              // Claude is likely running and waiting for input — send message directly
+              execSync(`tmux send-keys -t ${name} "${msg.replace(/"/g, '\\"')}" Enter`, { timeout: 2000 });
+            } else {
+              // Shell prompt — show a notification
+              execSync(`tmux display-message -t ${name} "✅ Task ${task.id} done — changes ready"`, { timeout: 2000 });
+            }
+          } else {
+            execSync(`tmux display-message -t ${name} "❌ Task ${task.id} failed"`, { timeout: 2000 });
+          }
         }
       } catch {}
     }

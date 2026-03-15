@@ -39,6 +39,9 @@ const chatListMode = new Map<number, 'tasks' | 'projects' | 'sessions' | 'task-c
 // Pending task creation: waiting for prompt text
 const pendingTaskProject = new Map<number, { name: string; path: string }>();  // chatId → project
 
+// Pending note: waiting for content
+const pendingNote = new Set<number>(); // chatIds waiting for note content
+
 // Buffer for streaming logs
 const logBuffers = new Map<string, { entries: string[]; timer: ReturnType<typeof setTimeout> | null }>();
 
@@ -116,6 +119,13 @@ async function handleMessage(msg: any) {
   const text: string = msg.text.trim();
   const replyTo = msg.reply_to_message?.message_id;
 
+  // Check if waiting for note content
+  if (pendingNote.has(chatId) && !text.startsWith('/')) {
+    pendingNote.delete(chatId);
+    await sendNoteToDocsClaude(chatId, text);
+    return;
+  }
+
   // Check if waiting for task prompt
   const pending = pendingTaskProject.get(chatId);
   if (pending && !text.startsWith('/')) {
@@ -186,6 +196,7 @@ async function handleMessage(msg: any) {
   if (text.startsWith('/')) {
     // Any new command cancels pending states
     pendingTaskProject.delete(chatId);
+    pendingNote.delete(chatId);
 
     const [cmd, ...args] = text.split(/\s+/);
     switch (cmd) {
@@ -237,6 +248,10 @@ async function handleMessage(msg: any) {
       case '/docs':
       case '/doc':
         await handleDocs(chatId, args.join(' '));
+        break;
+      case '/note':
+      case '/docs_write':
+        await handleDocsWrite(chatId, args.join(' '));
         break;
       case '/cancel':
         await handleCancel(chatId, args[0]);
@@ -293,7 +308,8 @@ async function sendHelp(chatId: number) {
     `📝 Submit task:\nproject-name: your instructions\n\n` +
     `👀 /peek [project] [sessionId] — session summary\n` +
     `📖 /docs — docs session summary\n` +
-    `/docs <filename> — view doc file\n\n` +
+    `/docs <filename> — view doc file\n` +
+    `📝 /note — quick note to docs claude\n\n` +
     `🔧 /cancel <id>  /retry <id>\n` +
     `/projects — list projects\n\n` +
     `🌐 /tunnel — tunnel status\n` +
@@ -1151,6 +1167,68 @@ async function handleDocs(chatId: number, input: string) {
   }
 }
 
+// ─── Docs Write (Quick Notes) ────────────────────────────────
+
+async function handleDocsWrite(chatId: number, content: string) {
+  const settings = loadSettings();
+  if (String(chatId) !== settings.telegramChatId) { await send(chatId, '⛔ Unauthorized'); return; }
+
+  if (!content) {
+    pendingNote.add(chatId);
+    await send(chatId, '📝 Send your note content:');
+    return;
+  }
+
+  await sendNoteToDocsClaude(chatId, content);
+}
+
+async function sendNoteToDocsClaude(chatId: number, content: string) {
+  const settings = loadSettings();
+  const docRoots = (settings.docRoots || []).map((r: string) => r.replace(/^~/, require('os').homedir()));
+
+  if (docRoots.length === 0) {
+    await send(chatId, '⚠️ No document directories configured.');
+    return;
+  }
+
+  const { execSync } = require('child_process');
+  const SESSION_NAME = 'mw-docs-claude';
+
+  // Check if the docs tmux session exists
+  let sessionExists = false;
+  try {
+    execSync(`tmux has-session -t ${SESSION_NAME} 2>/dev/null`);
+    sessionExists = true;
+  } catch {}
+
+  if (!sessionExists) {
+    await send(chatId, '⚠️ Docs Claude session not running. Open the Docs tab first to start it.');
+    return;
+  }
+
+  // Escape content for tmux send-keys
+  // Replace newlines with Enter key, escape special chars
+  const escaped = content
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/'/g, "\\'")
+    .replace(/\$/g, '\\$')
+    .replace(/`/g, '\\`');
+
+  // Send the note as input to the docs claude session
+  const prompt = `Please help me save this note to the appropriate file in my docs. Analyze the content, determine the best file/location, and save it. If unsure, create a new note. Here's the content:\n\n${escaped}`;
+
+  try {
+    // Send to tmux session
+    execSync(`tmux send-keys -t ${SESSION_NAME} "${prompt.replace(/\n/g, '" Enter "')}" Enter`, {
+      timeout: 5000,
+    });
+    await send(chatId, `📝 Note sent to Docs Claude:\n\n${content.slice(0, 200)}${content.length > 200 ? '...' : ''}`);
+  } catch (err) {
+    await send(chatId, '❌ Failed to send note to Claude session');
+  }
+}
+
 // ─── Real-time Streaming ─────────────────────────────────────
 
 function bufferLogEntry(taskId: string, chatId: number, entry: TaskLogEntry) {
@@ -1283,6 +1361,7 @@ async function setBotCommands(token: string) {
           { command: 'tunnel_password', description: 'Get login password' },
           { command: 'peek', description: 'Session summary (AI + recent)' },
           { command: 'docs', description: 'Docs session summary / view file' },
+          { command: 'note', description: 'Quick note to docs Claude' },
           { command: 'watch', description: 'Monitor session' },
           { command: 'watchers', description: 'List watchers' },
           { command: 'help', description: 'Show help' },

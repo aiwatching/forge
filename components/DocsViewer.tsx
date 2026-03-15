@@ -92,13 +92,21 @@ export default function DocsViewer() {
 
   useEffect(() => { fetchTree(activeRoot); }, [activeRoot, fetchTree]);
 
+  const [fileWarning, setFileWarning] = useState<string | null>(null);
+
   // Fetch file content
   const openFile = useCallback(async (path: string) => {
     setSelectedFile(path);
     setLoading(true);
+    setFileWarning(null);
     const res = await fetch(`/api/docs?root=${activeRoot}&file=${encodeURIComponent(path)}`);
     const data = await res.json();
-    setContent(data.content || null);
+    if (data.tooLarge) {
+      setContent(null);
+      setFileWarning(`File too large (${data.sizeLabel})`);
+    } else {
+      setContent(data.content || null);
+    }
     setLoading(false);
   }, [activeRoot]);
 
@@ -219,7 +227,14 @@ export default function DocsViewer() {
           </div>
 
           {/* Content */}
-          {selectedFile && content ? (
+          {fileWarning ? (
+            <div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">
+              <div className="text-center space-y-2">
+                <div className="text-3xl">⚠️</div>
+                <p className="text-sm">{fileWarning}</p>
+              </div>
+            </div>
+          ) : selectedFile && content ? (
             <div className="flex-1 overflow-y-auto px-8 py-6">
               {loading ? (
                 <div className="text-xs text-[var(--text-secondary)]">Loading...</div>

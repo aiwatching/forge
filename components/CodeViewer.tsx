@@ -191,8 +191,10 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
   }, []);
   const [terminalHeight, setTerminalHeight] = useState(300);
   const [activeSession, setActiveSession] = useState<string | null>(null);
+  const [taskNotification, setTaskNotification] = useState<{ id: string; status: string; prompt: string; sessionId?: string } | null>(null);
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);
   const lastDirRef = useRef<string | null>(null);
+  const lastTaskCheckRef = useRef<string>('');
 
   // When active terminal session changes, query its cwd
   useEffect(() => {
@@ -234,6 +236,36 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
         .catch(() => setTree([]));
     };
     fetchDir();
+  }, [currentDir]);
+
+  // Poll for task completions in the current project
+  useEffect(() => {
+    if (!currentDir) return;
+    const dirName = currentDir.split('/').pop() || '';
+    const check = async () => {
+      try {
+        const res = await fetch('/api/tasks?status=done');
+        const tasks = await res.json();
+        if (!Array.isArray(tasks) || tasks.length === 0) return;
+        const latest = tasks.find((t: any) => t.projectPath === currentDir || t.projectName === dirName);
+        if (latest && latest.id !== lastTaskCheckRef.current && latest.completedAt) {
+          // Only notify if completed in the last 30s
+          const age = Date.now() - new Date(latest.completedAt).getTime();
+          if (age < 30_000) {
+            lastTaskCheckRef.current = latest.id;
+            setTaskNotification({
+              id: latest.id,
+              status: latest.status,
+              prompt: latest.prompt,
+              sessionId: latest.conversationId,
+            });
+            setTimeout(() => setTaskNotification(null), 15_000);
+          }
+        }
+      } catch {}
+    };
+    const timer = setInterval(check, 5000);
+    return () => clearInterval(timer);
   }, [currentDir]);
 
   // Build git status map for tree coloring
@@ -313,6 +345,26 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
+      {/* Task completion notification */}
+      {taskNotification && (
+        <div className="shrink-0 px-3 py-1.5 bg-green-900/30 border-b border-green-800/50 flex items-center gap-2 text-xs">
+          <span className="text-green-400">{taskNotification.status === 'done' ? '✅' : '❌'}</span>
+          <span className="text-green-300 truncate">Task {taskNotification.id}: {taskNotification.prompt.slice(0, 60)}</span>
+          {taskNotification.sessionId && (
+            <button
+              onClick={() => {
+                // Send claude --resume to the active terminal
+                // The tmux display-message from backend already showed the notification
+                setTaskNotification(null);
+              }}
+              className="ml-auto text-[10px] text-green-400 hover:text-white shrink-0"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Terminal — top */}
       <div className={codeOpen ? 'shrink-0' : 'flex-1'} style={codeOpen ? { height: terminalHeight } : undefined}>
         <Suspense fallback={<div className="h-full flex items-center justify-center text-[var(--text-secondary)] text-xs">Loading...</div>}>

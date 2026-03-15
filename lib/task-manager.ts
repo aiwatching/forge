@@ -355,12 +355,14 @@ function executeTask(task: Task): Promise<void> {
         emit(task.id, 'status', 'done');
         const doneTask = getTask(task.id);
         if (doneTask) notifyTaskComplete(doneTask).catch(() => {});
+        notifyTerminalSession(task, 'done', sessionId);
         resolve();
       } else {
         const errMsg = `Process exited with code ${code}`;
         updateTaskStatus(task.id, 'failed', errMsg);
         const failedTask = getTask(task.id);
         if (failedTask) notifyTaskFailed(failedTask).catch(() => {});
+        notifyTerminalSession(task, 'failed', sessionId);
         reject(new Error(errMsg));
       }
     });
@@ -370,6 +372,42 @@ function executeTask(task: Task): Promise<void> {
       reject(err);
     });
   });
+}
+
+// ─── Terminal notification ────────────────────────────────────
+
+/**
+ * Notify tmux terminal sessions in the same project directory that a task completed.
+ * Sends a visible bell character so the user knows to resume.
+ */
+function notifyTerminalSession(task: Task, status: 'done' | 'failed', sessionId?: string) {
+  try {
+    const { execSync } = require('node:child_process');
+    // Find all mw- tmux sessions and check their cwd
+    const out = execSync(
+      `tmux list-sessions -F "#{session_name}" 2>/dev/null`,
+      { encoding: 'utf-8', timeout: 3000 }
+    ).trim();
+    if (!out) return;
+
+    for (const name of out.split('\n')) {
+      if (!name.startsWith('mw-')) continue;
+      try {
+        const cwd = execSync(
+          `tmux display-message -p -t ${name} '#{pane_current_path}'`,
+          { encoding: 'utf-8', timeout: 2000 }
+        ).trim();
+        // Check if this terminal is in the same project directory
+        if (cwd && (cwd === task.projectPath || cwd.startsWith(task.projectPath + '/'))) {
+          const icon = status === 'done' ? '✅' : '❌';
+          const resumeHint = sessionId ? ` (claude --resume ${sessionId.slice(0, 8)})` : '';
+          const msg = `\\n\\r\\033[93m[Task ${task.id} ${status}] ${task.prompt.slice(0, 50)}${resumeHint}\\033[0m\\n\\r`;
+          // Send notification via tmux — display as a message and also write to the pane
+          execSync(`tmux display-message -t ${name} "${icon} Task ${task.id} ${status}"`, { timeout: 2000 });
+        }
+      } catch {}
+    }
+  } catch {}
 }
 
 // ─── Helpers ─────────────────────────────────────────────────

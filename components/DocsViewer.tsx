@@ -165,6 +165,18 @@ export default function DocsViewer() {
               </div>
             )}
 
+            {/* Header with refresh */}
+            <div className="px-3 py-1.5 border-b border-[var(--border)] flex items-center">
+              <span className="text-[10px] text-[var(--text-secondary)] truncate">{roots[activeRoot] || 'Docs'}</span>
+              <button
+                onClick={() => { fetchTree(activeRoot); if (selectedFile) openFile(selectedFile); }}
+                className="text-[9px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-auto shrink-0"
+                title="Refresh files"
+              >
+                ↻
+              </button>
+            </div>
+
             {/* Search */}
             <div className="p-2 border-b border-[var(--border)]">
               <input

@@ -154,7 +154,7 @@ export default function Dashboard({ user }: { user: any }) {
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
-              Preview
+              Demo Preview
             </button>
           </div>
 

@@ -234,6 +234,10 @@ async function handleMessage(msg: any) {
           await startPeekSelection(chatId);
         }
         break;
+      case '/docs':
+      case '/doc':
+        await handleDocs(chatId, args.join(' '));
+        break;
       case '/cancel':
         await handleCancel(chatId, args[0]);
         break;
@@ -287,7 +291,9 @@ async function sendHelp(chatId: number) {
     `/watchers — list active watchers\n` +
     `/unwatch <id> — stop watching\n\n` +
     `📝 Submit task:\nproject-name: your instructions\n\n` +
-    `👀 /peek [project] [sessionId] — session summary\n\n` +
+    `👀 /peek [project] [sessionId] — session summary\n` +
+    `📖 /docs — docs session summary\n` +
+    `/docs <filename> — view doc file\n\n` +
     `🔧 /cancel <id>  /retry <id>\n` +
     `/projects — list projects\n\n` +
     `🌐 /tunnel — tunnel status\n` +
@@ -984,6 +990,167 @@ async function handleTunnelPassword(chatId: number, password?: string, userMsgId
   }
 }
 
+// ─── Docs ────────────────────────────────────────────────────
+
+async function handleDocs(chatId: number, input: string) {
+  const settings = loadSettings();
+  if (String(chatId) !== settings.telegramChatId) { await send(chatId, '⛔ Unauthorized'); return; }
+
+  const docRoots = (settings.docRoots || []).map((r: string) => r.replace(/^~/, require('os').homedir()));
+  if (docRoots.length === 0) {
+    await send(chatId, '⚠️ No document directories configured.\nAdd them in Settings → Document Roots');
+    return;
+  }
+
+  const docRoot = docRoots[0];
+  const { homedir: getHome } = require('os');
+  const { join, extname } = require('path');
+  const { existsSync, readFileSync, readdirSync } = require('fs');
+
+  // /docs <filename> — search and show file content
+  if (input.trim()) {
+    const query = input.trim().toLowerCase();
+
+    // Recursive search for matching .md files
+    const matches: string[] = [];
+    function searchDir(dir: string, depth: number) {
+      if (depth > 5 || matches.length >= 5) return;
+      try {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+          const full = join(dir, entry.name);
+          if (entry.isDirectory()) {
+            searchDir(full, depth + 1);
+          } else if (entry.name.toLowerCase().includes(query) && extname(entry.name) === '.md') {
+            matches.push(full);
+          }
+        }
+      } catch {}
+    }
+    searchDir(docRoot, 0);
+
+    if (matches.length === 0) {
+      await send(chatId, `No docs matching "${input.trim()}"`);
+      return;
+    }
+
+    // Show first match
+    const filePath = matches[0];
+    const relPath = filePath.replace(docRoot + '/', '');
+    try {
+      const content = readFileSync(filePath, 'utf-8');
+      const preview = content.slice(0, 3500);
+      const truncated = content.length > 3500 ? '\n\n... (truncated)' : '';
+      await send(chatId, `📄 ${relPath}\n\n${preview}${truncated}`);
+      if (matches.length > 1) {
+        const others = matches.slice(1).map(m => `  ${m.replace(docRoot + '/', '')}`).join('\n');
+        await send(chatId, `Other matches:\n${others}`);
+      }
+    } catch {
+      await send(chatId, `Failed to read: ${relPath}`);
+    }
+    return;
+  }
+
+  // /docs — show summary of latest Claude session for docs
+  const hash = docRoot.replace(/\//g, '-');
+  const claudeDir = join(getHome(), '.claude', 'projects', hash);
+
+  if (!existsSync(claudeDir)) {
+    await send(chatId, `📖 Docs: ${docRoot.split('/').pop()}\n\nNo Claude sessions yet. Open Docs tab to start.`);
+    return;
+  }
+
+  // Find latest session
+  let latestFile = '';
+  let latestTime = 0;
+  try {
+    for (const f of readdirSync(claudeDir)) {
+      if (!f.endsWith('.jsonl')) continue;
+      const { statSync } = require('fs');
+      const stat = statSync(join(claudeDir, f));
+      if (stat.mtimeMs > latestTime) {
+        latestTime = stat.mtimeMs;
+        latestFile = f;
+      }
+    }
+  } catch {}
+
+  if (!latestFile) {
+    await send(chatId, `📖 Docs: ${docRoot.split('/').pop()}\n\nNo sessions found.`);
+    return;
+  }
+
+  const sessionId = latestFile.replace('.jsonl', '');
+  const filePath = join(claudeDir, latestFile);
+
+  // Read recent entries
+  let entries: string[] = [];
+  try {
+    const content = readFileSync(filePath, 'utf-8');
+    const lines = content.split('\n').filter(Boolean);
+    const recentLines = lines.slice(-30);
+
+    for (const line of recentLines) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type === 'human' || entry.role === 'user') {
+          const text = typeof entry.message === 'string' ? entry.message : entry.message?.content?.[0]?.text || '';
+          if (text) entries.push(`👤 ${text.slice(0, 200)}`);
+        } else if (entry.type === 'assistant' && entry.message?.content) {
+          for (const block of entry.message.content) {
+            if (block.type === 'text' && block.text) {
+              entries.push(`🤖 ${block.text.slice(0, 200)}`);
+            } else if (block.type === 'tool_use') {
+              entries.push(`🔧 ${block.name || 'tool'}`);
+            }
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+
+  const recent = entries.slice(-8).join('\n\n');
+  const header = `📖 Docs: ${docRoot.split('/').pop()}\n📋 Session: ${sessionId.slice(0, 12)}\n`;
+
+  // Try AI summary if available
+  let summary = '';
+  try {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (apiKey && entries.length > 2) {
+      const contextText = entries.slice(-15).join('\n');
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 300,
+          messages: [{
+            role: 'user',
+            content: `Summarize this Claude Code session in 2-3 sentences. What was the user working on? What's the current status? Answer in the same language as the content.\n\n${contextText}`,
+          }],
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        summary = data.content?.[0]?.text || '';
+      }
+    }
+  } catch {}
+
+  const summaryBlock = summary ? `\n📝 ${summary}\n` : '';
+  const fullText = header + summaryBlock + '\n--- Recent ---\n' + recent;
+
+  const chunks = splitMessage(fullText, 4000);
+  for (const chunk of chunks) {
+    await send(chatId, chunk);
+  }
+}
+
 // ─── Real-time Streaming ─────────────────────────────────────
 
 function bufferLogEntry(taskId: string, chatId: number, entry: TaskLogEntry) {
@@ -1115,6 +1282,7 @@ async function setBotCommands(token: string) {
           { command: 'tunnel_stop', description: 'Stop tunnel' },
           { command: 'tunnel_password', description: 'Get login password' },
           { command: 'peek', description: 'Session summary (AI + recent)' },
+          { command: 'docs', description: 'Docs session summary / view file' },
           { command: 'watch', description: 'Monitor session' },
           { command: 'watchers', description: 'List watchers' },
           { command: 'help', description: 'Show help' },

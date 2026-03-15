@@ -372,6 +372,23 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
     setTimeout(() => setGitResult(null), 5000);
   }, [currentDir]);
 
+  const refreshAll = useCallback(() => {
+    if (!currentDir) return;
+    // Refresh tree + git
+    fetch(`/api/code?dir=${encodeURIComponent(currentDir)}`)
+      .then(r => r.json())
+      .then(data => {
+        setTree(data.tree || []);
+        setDirName(data.dirName || currentDir.split('/').pop() || '');
+        setGitBranch(data.gitBranch || '');
+        setGitChanges(data.gitChanges || []);
+        setGitRepos(data.gitRepos || []);
+      })
+      .catch(() => {});
+    // Refresh open file
+    if (selectedFile) openFile(selectedFile);
+  }, [currentDir, selectedFile, openFile]);
+
   const handleActiveSession = useCallback((session: string | null) => {
     setActiveSession(session);
   }, []);
@@ -429,6 +446,13 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
                     {gitBranch}
                   </span>
                 )}
+                <button
+                  onClick={refreshAll}
+                  className="text-[9px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-auto shrink-0"
+                  title="Refresh files & git status"
+                >
+                  ↻
+                </button>
               </div>
               {gitRepos.find(r => r.name === '.')?.remote && (
                 <div className="text-[9px] text-[var(--text-secondary)] truncate mt-0.5" title={gitRepos.find(r => r.name === '.')!.remote}>
@@ -540,7 +564,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
             </div>
 
             {/* Git actions — bottom of sidebar */}
-            {currentDir && gitChanges.length > 0 && (
+            {currentDir && (gitChanges.length > 0 || gitRepos.length > 0) && (
               <div className="border-t border-[var(--border)] shrink-0 p-2 space-y-1.5">
                 <div className="flex gap-1.5">
                   <input
@@ -552,7 +576,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
                   />
                   <button
                     onClick={() => commitMsg.trim() && gitAction('commit', { message: commitMsg.trim() })}
-                    disabled={gitLoading || !commitMsg.trim()}
+                    disabled={gitLoading || !commitMsg.trim() || gitChanges.length === 0}
                     className="text-[9px] px-2 py-1 bg-[var(--accent)] text-white rounded hover:opacity-90 disabled:opacity-50 shrink-0"
                   >
                     Commit

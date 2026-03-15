@@ -217,6 +217,13 @@ export default function ProjectManager() {
                 )}
                 {gitInfo?.ahead ? <span className="text-[9px] text-green-400">↑{gitInfo.ahead}</span> : null}
                 {gitInfo?.behind ? <span className="text-[9px] text-yellow-400">↓{gitInfo.behind}</span> : null}
+                <button
+                  onClick={() => { fetchGitInfo(selectedProject); fetchTree(selectedProject); if (selectedFile) openFile(selectedFile); }}
+                  className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-auto"
+                  title="Refresh"
+                >
+                  ↻
+                </button>
               </div>
               <div className="text-[9px] text-[var(--text-secondary)] mt-0.5">
                 {selectedProject.path}

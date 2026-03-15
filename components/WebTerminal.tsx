@@ -26,7 +26,7 @@ interface TmuxSession {
 }
 
 type SplitNode =
-  | { type: 'terminal'; id: number; sessionName?: string }
+  | { type: 'terminal'; id: number; sessionName?: string; projectPath?: string }
   | { type: 'split'; id: number; direction: 'horizontal' | 'vertical'; ratio: number; first: SplitNode; second: SplitNode };
 
 interface TabState {
@@ -35,6 +35,7 @@ interface TabState {
   tree: SplitNode;
   ratios: Record<number, number>;
   activeId: number;
+  projectPath?: string;  // If set, auto-run claude --resume in this dir on session create
 }
 
 // ─── Layout persistence ──────────────────────────────────────
@@ -99,8 +100,8 @@ function initNextIdFromTabs(tabs: TabState[]) {
   }
 }
 
-function makeTerminal(sessionName?: string): SplitNode {
-  return { type: 'terminal', id: nextId++, sessionName };
+function makeTerminal(sessionName?: string, projectPath?: string): SplitNode {
+  return { type: 'terminal', id: nextId++, sessionName, projectPath };
 }
 
 function makeSplit(direction: 'horizontal' | 'vertical', first: SplitNode, second: SplitNode): SplitNode {
@@ -178,6 +179,10 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
   const dragTabRef = useRef<number | null>(null);
   const [refreshKeys, setRefreshKeys] = useState<Record<number, number>>({});
   const [tabCodeOpen, setTabCodeOpen] = useState<Record<number, boolean>>({});
+  const [showNewTabModal, setShowNewTabModal] = useState(false);
+  const [projectRoots, setProjectRoots] = useState<string[]>([]);
+  const [allProjects, setAllProjects] = useState<{ name: string; path: string; root: string }[]>([]);
+  const [expandedRoot, setExpandedRoot] = useState<string | null>(null);
 
   // Restore shared state from server after mount
   useEffect(() => {
@@ -191,6 +196,15 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
       }
       setHydrated(true);
     });
+    // Fetch projects and derive roots
+    fetch('/api/projects').then(r => r.json())
+      .then((p: { name: string; path: string; root: string }[]) => {
+        if (!Array.isArray(p)) return;
+        setAllProjects(p);
+        const roots = [...new Set(p.map(proj => proj.root))];
+        setProjectRoots(roots);
+      })
+      .catch(() => {});
   }, []);
 
   // Persist to server on changes (debounced, only after hydration)
@@ -248,10 +262,11 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
 
   // ─── Tab operations ───────────────────────────────────
 
-  const addTab = useCallback(() => {
-    const tree = makeTerminal();
+  const addTab = useCallback((projectPath?: string) => {
+    const tree = makeTerminal(undefined, projectPath);
     const tabNum = tabs.length + 1;
-    const newTab: TabState = { id: nextId++, label: `Terminal ${tabNum}`, tree, ratios: {}, activeId: firstTerminalId(tree) };
+    const label = projectPath ? projectPath.split('/').pop() || `Terminal ${tabNum}` : `Terminal ${tabNum}`;
+    const newTab: TabState = { id: nextId++, label, tree, ratios: {}, activeId: firstTerminalId(tree), projectPath };
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(newTab.id);
   }, [tabs.length]);
@@ -486,9 +501,9 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
             </div>
           ))}
           <button
-            onClick={addTab}
+            onClick={() => setShowNewTabModal(true)}
             className="px-2 py-1 text-[11px] text-gray-500 hover:text-white hover:bg-[#2a2a4a]"
-            title="New terminal tab"
+            title="New tab"
           >
             +
           </button>
@@ -631,6 +646,75 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
         </div>
       )}
 
+      {/* New tab modal */}
+      {showNewTabModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => { setShowNewTabModal(false); setExpandedRoot(null); }}>
+          <div className="bg-[#1a1a2e] border border-[#2a2a4a] rounded-lg shadow-xl w-[350px] max-h-[70vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-[#2a2a4a]">
+              <h3 className="text-sm font-semibold text-white">New Tab</h3>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2">
+              {/* Plain terminal */}
+              <button
+                onClick={() => { addTab(); setShowNewTabModal(false); setExpandedRoot(null); }}
+                className="w-full text-left px-3 py-2 rounded hover:bg-[#2a2a4a] text-[12px] text-gray-300 flex items-center gap-2"
+              >
+                <span className="text-gray-500">▸</span> Terminal
+              </button>
+
+              {/* Project roots */}
+              {projectRoots.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-[#2a2a4a]">
+                  <div className="px-3 py-1 text-[9px] text-gray-500 uppercase">Claude in Project</div>
+                  {projectRoots.map(root => {
+                    const rootName = root.split('/').pop() || root;
+                    const isExpanded = expandedRoot === root;
+                    const rootProjects = allProjects.filter(p => p.root === root);
+                    return (
+                      <div key={root}>
+                        <button
+                          onClick={() => setExpandedRoot(isExpanded ? null : root)}
+                          className="w-full text-left px-3 py-2 rounded hover:bg-[#2a2a4a] text-[12px] text-gray-300 flex items-center gap-2"
+                        >
+                          <span className="text-gray-500 text-[10px] w-3">{isExpanded ? '▾' : '▸'}</span>
+                          <span>{rootName}</span>
+                          <span className="text-[9px] text-gray-600 ml-auto">{rootProjects.length}</span>
+                        </button>
+                        {isExpanded && (
+                          <div className="ml-4">
+                            {rootProjects.map(p => (
+                              <button
+                                key={p.path}
+                                onClick={() => { addTab(p.path); setShowNewTabModal(false); setExpandedRoot(null); }}
+                                className="w-full text-left px-3 py-1.5 rounded hover:bg-[#2a2a4a] text-[11px] text-gray-300 flex items-center gap-2 truncate"
+                                title={p.path}
+                              >
+                                <span className="text-gray-600 text-[10px]">↳</span> {p.name}
+                              </button>
+                            ))}
+                            {rootProjects.length === 0 && (
+                              <div className="px-3 py-1.5 text-[10px] text-gray-600">No projects</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="px-4 py-2 border-t border-[#2a2a4a]">
+              <button
+                onClick={() => { setShowNewTabModal(false); setExpandedRoot(null); }}
+                className="w-full text-center text-[11px] text-gray-500 hover:text-gray-300 py-1"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Close confirmation dialog */}
       {closeConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setCloseConfirm(null)}>
@@ -706,7 +790,7 @@ function PaneRenderer({
   if (node.type === 'terminal') {
     return (
       <div className={`h-full w-full ${activeId === node.id ? 'ring-1 ring-[#7c5bf0]/50 ring-inset' : ''}`} onMouseDown={() => onFocus(node.id)}>
-        <MemoTerminalPane key={`${node.id}-${refreshKeys[node.id] || 0}`} id={node.id} sessionName={node.sessionName} onSessionConnected={onSessionConnected} />
+        <MemoTerminalPane key={`${node.id}-${refreshKeys[node.id] || 0}`} id={node.id} sessionName={node.sessionName} projectPath={node.projectPath} onSessionConnected={onSessionConnected} />
       </div>
     );
   }
@@ -836,15 +920,19 @@ function DraggableSplit({
 const MemoTerminalPane = memo(function TerminalPane({
   id,
   sessionName,
+  projectPath,
   onSessionConnected,
 }: {
   id: number;
   sessionName?: string;
+  projectPath?: string;
   onSessionConnected: (paneId: number, sessionName: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sessionNameRef = useRef(sessionName);
   sessionNameRef.current = sessionName;
+  const projectPathRef = useRef(projectPath);
+  projectPathRef.current = projectPath;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -921,6 +1009,7 @@ const MemoTerminalPane = memo(function TerminalPane({
     let createRetries = 0;
     const MAX_CREATE_RETRIES = 2;
     let reconnectAttempts = 0;
+    let isNewlyCreated = false;
 
     function connect() {
       if (disposed) return;
@@ -942,6 +1031,7 @@ const MemoTerminalPane = memo(function TerminalPane({
             socket.send(JSON.stringify({ type: 'attach', sessionName: sn, cols, rows }));
           } else if (createRetries < MAX_CREATE_RETRIES) {
             createRetries++;
+            isNewlyCreated = true;
             socket.send(JSON.stringify({ type: 'create', cols, rows }));
           } else {
             term.write('\r\n\x1b[91m[failed to create session — check server logs]\x1b[0m\r\n');
@@ -960,6 +1050,16 @@ const MemoTerminalPane = memo(function TerminalPane({
             createRetries = 0;
             reconnectAttempts = 0;
             onSessionConnected(id, msg.sessionName);
+            // Auto-run claude --resume for project tabs on new session
+            if (isNewlyCreated && projectPathRef.current) {
+              isNewlyCreated = false;
+              setTimeout(() => {
+                if (!disposed && ws?.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({ type: 'input', data: `cd "${projectPathRef.current}" && claude --resume\n` }));
+                }
+              }, 300);
+            }
+            isNewlyCreated = false;
             // Force tmux to redraw by toggling size, then send reset
             setTimeout(() => {
               if (disposed || ws?.readyState !== WebSocket.OPEN) return;

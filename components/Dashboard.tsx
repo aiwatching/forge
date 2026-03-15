@@ -43,7 +43,21 @@ export default function Dashboard({ user }: { user: any }) {
   const [usage, setUsage] = useState<UsageSummary[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [onlineCount, setOnlineCount] = useState<{ total: number; remote: number }>({ total: 0, remote: 0 });
   const terminalRef = useRef<WebTerminalHandle>(null);
+
+  // Heartbeat for online user tracking
+  useEffect(() => {
+    const ping = () => {
+      fetch('/api/online', { method: 'POST' })
+        .then(r => r.json())
+        .then(setOnlineCount)
+        .catch(() => {});
+    };
+    ping();
+    const id = setInterval(ping, 15_000); // every 15s
+    return () => clearInterval(id);
+  }, []);
 
   const fetchData = useCallback(async () => {
     const [tasksRes, statusRes, projectsRes] = await Promise.all([
@@ -137,6 +151,15 @@ export default function Dashboard({ user }: { user: any }) {
             </button>
           )}
           <TunnelToggle />
+          {onlineCount.total > 0 && (
+            <span className="text-[10px] text-[var(--text-secondary)] flex items-center gap-1" title={`${onlineCount.total} online${onlineCount.remote > 0 ? `, ${onlineCount.remote} remote` : ''}`}>
+              <span className="text-green-500">●</span>
+              {onlineCount.total}
+              {onlineCount.remote > 0 && (
+                <span className="text-[var(--accent)]">({onlineCount.remote} remote)</span>
+              )}
+            </span>
+          )}
           <button
             onClick={() => setShowSettings(true)}
             className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)]"

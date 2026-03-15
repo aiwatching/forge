@@ -64,11 +64,21 @@ export async function GET(req: Request) {
   if (filePath && rootIdx < docRoots.length) {
     const root = docRoots[rootIdx];
     const fullPath = join(root, filePath);
-    // Security: ensure path doesn't escape root
     if (!fullPath.startsWith(root)) {
       return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
     }
     try {
+      const stat = statSync(fullPath);
+      const size = stat.size;
+      const sizeKB = Math.round(size / 1024);
+      const sizeMB = (size / (1024 * 1024)).toFixed(1);
+
+      if (size > 2_000_000) {
+        return NextResponse.json({ tooLarge: true, size, sizeLabel: `${sizeMB} MB`, message: 'File exceeds 2 MB limit' });
+      }
+      if (size > 200_000) {
+        return NextResponse.json({ large: true, size, sizeLabel: `${sizeKB} KB` });
+      }
       const content = readFileSync(fullPath, 'utf-8');
       return NextResponse.json({ content });
     } catch {

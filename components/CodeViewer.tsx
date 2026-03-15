@@ -178,6 +178,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
   const [content, setContent] = useState<string | null>(null);
   const [language, setLanguage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [fileWarning, setFileWarning] = useState<{ type: 'binary' | 'large' | 'tooLarge'; label: string; fileType?: string } | null>(null);
   const [search, setSearch] = useState('');
   const [diffContent, setDiffContent] = useState<string | null>(null);
   const [diffFile, setDiffFile] = useState<string | null>(null);
@@ -239,15 +240,31 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
   const gitMap: GitStatusMap = new Map(gitChanges.map(g => [g.path, g.status]));
   const repoMap: GitRepoMap = new Map(gitRepos.filter(r => r.name !== '.').map(r => [r.name, { branch: r.branch, remote: r.remote }]));
 
-  const openFile = useCallback(async (path: string) => {
+  const openFile = useCallback(async (path: string, forceLoad?: boolean) => {
     if (!currentDir) return;
     setSelectedFile(path);
     setViewMode('file');
+    setFileWarning(null);
     setLoading(true);
-    const res = await fetch(`/api/code?dir=${encodeURIComponent(currentDir)}&file=${encodeURIComponent(path)}`);
+
+    const url = `/api/code?dir=${encodeURIComponent(currentDir)}&file=${encodeURIComponent(path)}${forceLoad ? '&force=1' : ''}`;
+    const res = await fetch(url);
     const data = await res.json();
-    setContent(data.content || null);
-    setLanguage(data.language || '');
+
+    if (data.binary) {
+      setContent(null);
+      setFileWarning({ type: 'binary', label: data.sizeLabel, fileType: data.fileType });
+    } else if (data.tooLarge) {
+      setContent(null);
+      setFileWarning({ type: 'tooLarge', label: data.sizeLabel });
+    } else if (data.large && !forceLoad) {
+      setContent(null);
+      setFileWarning({ type: 'large', label: data.sizeLabel });
+      setLanguage(data.language || '');
+    } else {
+      setContent(data.content || null);
+      setLanguage(data.language || '');
+    }
     setLoading(false);
   }, [currentDir]);
 
@@ -468,6 +485,38 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
           {loading ? (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-xs text-[var(--text-secondary)]">Loading...</div>
+            </div>
+          ) : fileWarning ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center space-y-3 p-6">
+                {fileWarning.type === 'binary' && (
+                  <>
+                    <div className="text-3xl">🚫</div>
+                    <p className="text-sm text-[var(--text-primary)]">Binary file cannot be displayed</p>
+                    <p className="text-xs text-[var(--text-secondary)]">{fileWarning.fileType?.toUpperCase()} · {fileWarning.label}</p>
+                  </>
+                )}
+                {fileWarning.type === 'tooLarge' && (
+                  <>
+                    <div className="text-3xl">⚠️</div>
+                    <p className="text-sm text-[var(--text-primary)]">File too large to display</p>
+                    <p className="text-xs text-[var(--text-secondary)]">{fileWarning.label} — exceeds 2 MB limit</p>
+                  </>
+                )}
+                {fileWarning.type === 'large' && (
+                  <>
+                    <div className="text-3xl">📄</div>
+                    <p className="text-sm text-[var(--text-primary)]">Large file: {fileWarning.label}</p>
+                    <p className="text-xs text-[var(--text-secondary)]">This file may slow down the browser</p>
+                    <button
+                      onClick={() => selectedFile && openFile(selectedFile, true)}
+                      className="text-xs px-4 py-1.5 bg-[var(--accent)] text-white rounded hover:opacity-90 mt-2"
+                    >
+                      Open anyway
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           ) : viewMode === 'diff' && diffContent ? (
             <div className="flex-1 overflow-auto bg-[var(--bg-primary)]">

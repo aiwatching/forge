@@ -12,8 +12,10 @@ import { loadSettings } from './settings';
 import { notifyTaskComplete, notifyTaskFailed } from './notify';
 import type { Task, TaskLogEntry, TaskStatus, TaskMode, WatchConfig } from '@/src/types';
 
-let runner: ReturnType<typeof setInterval> | null = null;
-let currentTaskId: string | null = null;
+const runnerKey = Symbol.for('mw-task-runner');
+const gRunner = globalThis as any;
+if (!gRunner[runnerKey]) gRunner[runnerKey] = { runner: null, currentTaskId: null };
+const runnerState: { runner: ReturnType<typeof setInterval> | null; currentTaskId: string | null } = gRunner[runnerKey];
 
 // Per-project concurrency: track which projects have a running prompt task
 const runningProjects = new Set<string>();
@@ -180,16 +182,16 @@ export function retryTask(id: string): Task | null {
 // ─── Background Runner ───────────────────────────────────────
 
 export function ensureRunnerStarted() {
-  if (runner) return;
-  runner = setInterval(processNextTask, 3000);
+  if (runnerState.runner) return;
+  runnerState.runner = setInterval(processNextTask, 3000);
   // Also try immediately
   processNextTask();
 }
 
 export function stopRunner() {
-  if (runner) {
-    clearInterval(runner);
-    runner = null;
+  if (runnerState.runner) {
+    clearInterval(runnerState.runner);
+    runnerState.runner = null;
   }
 }
 
@@ -197,7 +199,7 @@ async function processNextTask() {
   // Find all queued tasks ready to run
   const queued = db().prepare(`
     SELECT * FROM tasks WHERE status = 'queued'
-    AND (scheduled_at IS NULL OR scheduled_at <= datetime('now'))
+    AND (scheduled_at IS NULL OR replace(replace(scheduled_at, 'T', ' '), 'Z', '') <= datetime('now'))
     ORDER BY priority DESC, created_at ASC
   `).all() as any[];
 
@@ -215,7 +217,7 @@ async function processNextTask() {
 
     // Run this task
     runningProjects.add(task.projectName);
-    currentTaskId = task.id;
+    runnerState.currentTaskId = task.id;
 
     // Execute async — don't await so we can process tasks for other projects in parallel
     executeTask(task)
@@ -225,7 +227,7 @@ async function processNextTask() {
       })
       .finally(() => {
         runningProjects.delete(task.projectName);
-        if (currentTaskId === task.id) currentTaskId = null;
+        if (runnerState.currentTaskId === task.id) runnerState.currentTaskId = null;
       });
   }
 }

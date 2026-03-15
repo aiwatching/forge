@@ -123,12 +123,39 @@ export async function GET(req: Request) {
     }
     try {
       const stat = statSync(fullPath);
-      if (stat.size > 500_000) {
-        return NextResponse.json({ content: '// File too large to display', language: 'text' });
+      const ext = extname(fullPath).replace('.', '').toLowerCase();
+      const size = stat.size;
+      const sizeKB = Math.round(size / 1024);
+      const sizeMB = (size / (1024 * 1024)).toFixed(1);
+
+      // Binary/unsupported file types
+      const BINARY_EXTS = new Set([
+        'png', 'jpg', 'jpeg', 'gif', 'bmp', 'ico', 'webp', 'svg', 'avif',
+        'mp3', 'mp4', 'wav', 'ogg', 'webm', 'mov', 'avi',
+        'zip', 'gz', 'tar', 'bz2', 'xz', '7z', 'rar',
+        'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+        'exe', 'dll', 'so', 'dylib', 'bin', 'o', 'a',
+        'woff', 'woff2', 'ttf', 'eot', 'otf',
+        'sqlite', 'db', 'sqlite3',
+        'class', 'jar', 'war',
+        'pyc', 'pyo', 'wasm',
+      ]);
+      if (BINARY_EXTS.has(ext)) {
+        return NextResponse.json({ binary: true, fileType: ext, size, sizeLabel: sizeKB > 1024 ? `${sizeMB} MB` : `${sizeKB} KB` });
       }
+
+      const force = searchParams.get('force') === '1';
+
+      // Large file warning (> 200KB needs confirmation, > 2MB blocked)
+      if (size > 2_000_000) {
+        return NextResponse.json({ tooLarge: true, size, sizeLabel: `${sizeMB} MB`, message: 'File exceeds 2 MB limit' });
+      }
+      if (size > 200_000 && !force) {
+        return NextResponse.json({ large: true, size, sizeLabel: `${sizeKB} KB`, language: ext });
+      }
+
       const content = readFileSync(fullPath, 'utf-8');
-      const ext = extname(fullPath).replace('.', '') || 'text';
-      return NextResponse.json({ content, language: ext });
+      return NextResponse.json({ content, language: ext, size });
     } catch {
       return NextResponse.json({ error: 'File not found' }, { status: 404 });
     }

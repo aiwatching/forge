@@ -1,42 +1,51 @@
-# Forge
+<p align="center">
+  <img src="app/icon.svg" width="80" height="80" alt="Forge">
+</p>
 
-> Self-hosted AI workflow platform — web terminal, task orchestration, remote access.
+<h1 align="center">Forge</h1>
 
-Forge is a self-hosted web platform built around [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It provides a browser-based terminal backed by tmux, a task queue for running Claude Code in the background, and one-click remote access via Cloudflare Tunnel — all behind a simple daily-rotating password.
+<p align="center">
+  <strong>Self-hosted Vibe Coding platform — browser terminal, task orchestration, remote access</strong>
+</p>
 
-No API keys required. Forge runs on your existing Claude Code subscription.
+<p align="center">
+  <a href="https://www.npmjs.com/package/@aion0/forge"><img src="https://img.shields.io/npm/v/@aion0/forge" alt="npm"></a>
+  <a href="https://github.com/aiwatching/forge/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@aion0/forge" alt="license"></a>
+  <a href="https://github.com/aiwatching/forge"><img src="https://img.shields.io/github/stars/aiwatching/forge?style=social" alt="stars"></a>
+</p>
+
+<p align="center">
+  <a href="#installation">Install</a> · <a href="#features">Features</a> · <a href="#quick-start">Quick Start</a> · <a href="#telegram-bot">Telegram</a> · <a href="#configuration">Config</a> · <a href="#roadmap">Roadmap</a>
+</p>
+
+---
+
+Forge turns [Claude Code](https://docs.anthropic.com/en/docs/claude-code) into a full web-based vibe coding platform. Open your browser, start coding with AI from anywhere — your iPad, phone, or any device with a browser.
+
+**No API keys required.** Runs on your existing Claude Code CLI subscription. Your code stays on your machine.
 
 ## Features
 
-- **Web Terminal** — Full tmux-backed terminal in the browser. Multiple tabs, persistent sessions that survive page refresh, browser close, and server restart
-- **Task Orchestration** — Submit tasks to Claude Code, queue them by project, track progress with live streaming output
-- **Remote Access** — One-click Cloudflare Tunnel for a secure public URL (zero config, no account needed)
-- **Session Continuity** — Tasks for the same project automatically continue the previous conversation context
-- **YAML Workflows** — Define multi-step flows that chain tasks together
-- **Bot Integration** — Telegram bot for mobile task management and tunnel control (extensible to other platforms)
-- **Session Watcher** — Monitor Claude Code sessions for changes, idle state, keywords, or errors
-- **CLI** — Full-featured command-line interface for task management
-- **Auth** — Auto-generated daily rotating password + optional Google OAuth
-
-## Prerequisites
-
-- **Node.js** >= 20
-- **pnpm** (recommended) or npm
-- **tmux** — for web terminal sessions
-- **Claude Code CLI** — `npm install -g @anthropic-ai/claude-code`
+| Feature | Description |
+|---------|-------------|
+| **Vibe Coding** | Browser-based tmux terminal. Multiple tabs, persistent sessions that survive refresh, browser close, and server restart |
+| **Remote Access** | One-click Cloudflare Tunnel — secure public URL, zero config, no account needed |
+| **Task Queue** | Submit tasks to Claude Code in the background. Live streaming output, cost tracking, session continuity |
+| **Docs Viewer** | Render Obsidian vaults / markdown directories with a dedicated Claude Console |
+| **Project Manager** | Browse projects, view files, git status, commit, push, pull — all from the browser |
+| **Demo Preview** | Preview local dev servers through the tunnel with a dedicated Cloudflare URL |
+| **Telegram Bot** | Submit tasks, check status, control tunnel, take notes — all from your phone |
+| **File Browser** | Code viewer with syntax highlighting, git changes, diff view, multi-repo support |
+| **YAML Workflows** | Define multi-step flows that chain Claude Code tasks together |
+| **CLI** | Full command-line interface for task management |
 
 ## Installation
 
-### From npm
+### npm (recommended)
 
 ```bash
 npm install -g @aion0/forge
-
-# Start the server
 forge-server
-
-# Or in development mode
-forge-server --dev
 ```
 
 ### From source
@@ -48,224 +57,206 @@ pnpm install
 pnpm dev
 ```
 
+### Options
+
+```bash
+forge-server              # Production (auto-builds if needed)
+forge-server --dev        # Development with hot-reload
+forge-server --background # Run in background, logs to ~/.forge/forge.log
+forge-server --stop       # Stop background server
+forge-server --rebuild    # Force rebuild
+```
+
+## Prerequisites
+
+- **Node.js** >= 20
+- **tmux** — `brew install tmux` (macOS) / `apt install tmux` (Linux)
+- **Claude Code CLI** — `npm install -g @anthropic-ai/claude-code`
+
 ## Quick Start
 
-### 1. Log in
+1. **Start Forge**
 
-Open `http://localhost:3000`. A login password is auto-generated and printed in the console:
+   ```bash
+   forge-server
+   ```
 
-```
-[init] Login password: a7x9k2 (valid today)
-```
+2. **Open browser** → `http://localhost:3000`
 
-The password rotates daily. Forgot it? Run:
+3. **Log in** — password is auto-generated and printed in the console:
 
-```bash
-forge password
-```
+   ```
+   [init] Login password: a7x9k2 (valid today)
+   ```
 
-### 4. Configure projects
+   Forgot it? Run `forge password`
 
-Open **Settings** (gear icon) and add your project root directories (e.g. `~/Projects`). Forge will scan for git repositories automatically.
+4. **Configure projects** — Settings → add your project directories
 
-## Web Terminal
+5. **Start vibe coding** — open a terminal tab, run `claude`, and go
 
-The core feature. A browser-based terminal powered by tmux:
+## Remote Access
 
-- **Persistent** — Sessions survive page refresh, browser close, and server restart
-- **Multi-tab** — Create, rename, and manage multiple terminal tabs
-- **Remote-ready** — Access your terminal from anywhere via Cloudflare Tunnel
-- **Large scrollback** — 50,000 lines with mouse support
+Access Forge from anywhere — your phone, iPad, or another computer:
 
-The terminal server runs on `localhost:3001` and is auto-proxied through the main app for remote access.
+1. Click the **tunnel button** in the header
+2. Forge auto-downloads `cloudflared` and creates a temporary public URL
+3. Open the URL on any device — protected by the daily login password
 
-## Remote Access (Cloudflare Tunnel)
+> The tunnel URL changes each time. Use the Telegram `/tunnel_password` command to get it on your phone.
 
-Access Forge from anywhere without port forwarding or DNS config:
+## Telegram Bot
 
-1. Click the **tunnel icon** in the header bar, or go to **Settings > Remote Access**
-2. Click **Start** — Forge auto-downloads `cloudflared` and creates a temporary public URL
-3. The URL is protected by the daily login password
-
-Enable **Auto-start** in Settings to start the tunnel on every server boot.
-
-> The tunnel URL changes each time. Use the Telegram bot `/tunnel_password` command to get the current URL and password on your phone.
-
-## Task Orchestration
-
-Submit AI coding tasks that run in the background:
-
-```bash
-# Submit a task
-forge task my-app "Fix the login bug in auth.ts"
-
-# Force a fresh session (ignore previous context)
-forge task my-app "Refactor the API layer" --new
-
-# List tasks
-forge tasks              # all
-forge tasks running      # filter by status
-
-# Watch task output live
-forge watch <task-id>
-
-# Task details (result, git diff, cost)
-forge status <task-id>
-
-# Cancel / retry
-forge cancel <task-id>
-forge retry <task-id>
-```
-
-**All CLI shortcuts:** `t`=task, `r`=run, `ls`=tasks, `w`=watch, `l`=log, `s`=status, `f`=flows, `p`=projects, `pw`=password
-
-## YAML Workflows
-
-Define multi-step flows in `~/.forge/flows/`:
-
-```yaml
-# ~/.forge/flows/daily-review.yaml
-name: daily-review
-steps:
-  - project: my-app
-    prompt: "Review open TODOs and suggest fixes"
-  - project: my-api
-    prompt: "Check for any failing tests and fix them"
-```
-
-Run with `forge run daily-review`.
-
-## Bot Integration
-
-Forge ships with a Telegram bot for mobile-friendly control. The bot system is designed to be extensible to other platforms in the future.
-
-### Telegram Setup
-
-1. Create a bot via [@BotFather](https://t.me/botfather)
-2. In **Settings**, add your **Bot Token** and **Chat ID**
-3. Optionally set a **Tunnel Password** for remote access control
-
-### Commands
+Control Forge from your phone. Create a bot via [@BotFather](https://t.me/botfather), add the token in Settings.
 
 | Command | Description |
 |---------|-------------|
+| `/task` | Create a task (interactive project picker) |
 | `/tasks` | List tasks with quick-action numbers |
-| `/tasks running` | Filter by status |
-| `/sessions` | Browse Claude Code sessions |
-| `/watch <project>` | Monitor a session for changes |
-| `/tunnel start <pw>` | Start Cloudflare Tunnel |
-| `/tunnel stop <pw>` | Stop tunnel |
+| `/peek` | AI summary of a Claude session |
+| `/docs` | Docs session summary or file search |
+| `/note` | Quick note — sent to Docs Claude |
+| `/tunnel_start` | Start Cloudflare Tunnel |
+| `/tunnel_stop` | Stop tunnel |
 | `/tunnel_password <pw>` | Get login password + tunnel URL |
-| `/help` | Show all commands |
 
-Password-protected commands auto-delete your message to keep credentials safe.
+Whitelist-protected — only configured Chat IDs can interact with the bot.
+
+## CLI
+
+```bash
+forge task <project> <prompt>   # Submit a task
+forge tasks [status]            # List tasks
+forge watch <id>                # Live stream output
+forge status <id>               # Task details + result
+forge cancel <id>               # Cancel a task
+forge retry <id>                # Retry a failed task
+forge run <flow-name>           # Run a YAML workflow
+forge projects                  # List projects
+forge password                  # Show login password
+```
+
+Shortcuts: `t`=task, `ls`=tasks, `w`=watch, `s`=status, `f`=flows, `p`=projects, `pw`=password
 
 ## Configuration
 
-All config lives in `~/.forge/`:
+All data lives in `~/.forge/`:
 
 ```
 ~/.forge/
-  .env.local           # Environment variables (AUTH_SECRET, API keys, etc.)
-  settings.yaml        # Main configuration
-  password.json        # Daily auto-generated login password
-  data.db              # SQLite database (tasks, sessions)
-  terminal-state.json  # Terminal tab layout
-  flows/               # YAML workflow definitions
-  bin/                 # Auto-downloaded binaries (cloudflared)
+├── .env.local            # Environment variables (optional)
+├── settings.yaml         # Main configuration
+├── password.json         # Daily auto-generated password
+├── data.db               # SQLite database
+├── terminal-state.json   # Terminal tab layout
+├── preview.json          # Demo preview config
+├── flows/                # YAML workflow definitions
+└── bin/                  # Auto-downloaded binaries
 ```
 
-### .env.local (optional)
+<details>
+<summary><strong>settings.yaml</strong></summary>
+
+```yaml
+projectRoots:
+  - ~/Projects
+docRoots:
+  - ~/Documents/obsidian-vault
+claudePath: claude
+tunnelAutoStart: false
+telegramBotToken: ""
+telegramChatId: ""              # Comma-separated for multiple users
+telegramTunnelPassword: ""
+notifyOnComplete: true
+notifyOnFailure: true
+```
+
+</details>
+
+<details>
+<summary><strong>.env.local</strong> (optional)</summary>
 
 ```env
-# Fixed auth secret (optional — auto-generated if not set)
+# Fixed auth secret (auto-generated if not set)
 AUTH_SECRET=<random-string>
 
 # Optional: AI provider API keys for multi-model chat
 # ANTHROPIC_API_KEY=sk-ant-...
 # OPENAI_API_KEY=sk-...
-# GOOGLE_GENERATIVE_AI_API_KEY=AI...
 ```
 
-### settings.yaml
-
-```yaml
-# Project directories to scan
-projectRoots:
-  - ~/Projects
-  - ~/Work
-
-# Claude Code binary path (default: claude)
-claudePath: claude
-
-# Cloudflare Tunnel
-tunnelAutoStart: false              # Auto-start on server boot
-
-# Telegram bot (optional)
-telegramBotToken: ""                # Bot API token from @BotFather
-telegramChatId: ""                  # Your chat ID
-telegramTunnelPassword: ""          # Password for tunnel commands
-
-# Task notifications (optional, requires Telegram)
-notifyOnComplete: true
-notifyOnFailure: true
-```
+</details>
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│  Web Dashboard (Next.js + React)            │
-│  ┌──────────┐ ┌──────────┐ ┌─────────────┐ │
-│  │  Tasks   │ │ Sessions │ │  Terminal   │ │
-│  └──────────┘ └──────────┘ └─────────────┘ │
-├─────────────────────────────────────────────┤
-│  API Layer (Next.js Route Handlers)         │
-├──────────┬──────────┬───────────────────────┤
-│  Claude  │  Task    │  Bot Integration      │
-│  Code    │  Runner  │  (Telegram, ...)      │
-│  Process │  (Queue) │                       │
-├──────────┴──────────┴───────────────────────┤
-│  SQLite (better-sqlite3)                    │
-├─────────────────────────────────────────────┤
-│  Terminal Server (node-pty + tmux + WS)     │
-├─────────────────────────────────────────────┤
-│  Cloudflare Tunnel (optional)               │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│  Web Dashboard (Next.js 16 + React 19)           │
+│  ┌─────────┐ ┌──────┐ ┌────────┐ ┌───────────┐  │
+│  │  Vibe   │ │ Docs │ │Projects│ │Demo       │  │
+│  │ Coding  │ │      │ │        │ │Preview    │  │
+│  └─────────┘ └──────┘ └────────┘ └───────────┘  │
+├──────────────────────────────────────────────────┤
+│  API Layer (Next.js Route Handlers)              │
+├───────────┬───────────┬──────────────────────────┤
+│  Claude   │  Task     │  Telegram Bot            │
+│  Code     │  Runner   │  + Notifications         │
+│  Process  │  (Queue)  │                          │
+├───────────┴───────────┴──────────────────────────┤
+│  SQLite · Terminal Server · Cloudflare Tunnel    │
+└──────────────────────────────────────────────────┘
 ```
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Next.js 16, React 19, Tailwind CSS 4 |
-| Backend | Next.js Route Handlers, SQLite |
-| Terminal | xterm.js, node-pty, tmux, WebSocket |
-| Auth | NextAuth v5 |
-| Tunnel | Cloudflare (cloudflared) |
-| Bot | Telegram Bot API (extensible) |
+| Frontend | Next.js 16, React 19, Tailwind CSS 4, xterm.js |
+| Backend | Next.js Route Handlers, SQLite (better-sqlite3) |
+| Terminal | node-pty, tmux, WebSocket |
+| Auth | NextAuth v5 (daily rotating password + OAuth) |
+| Tunnel | Cloudflare cloudflared (zero-config) |
+| Bot | Telegram Bot API |
 
 ## Troubleshooting
 
-### macOS: "fork failed: Device not configured"
+<details>
+<summary><strong>macOS: "fork failed: Device not configured"</strong></summary>
 
-This means the system ran out of pseudo-terminal (PTY) devices. macOS defaults to 511, which can be tight when running IDEs and many terminal sessions. Increase the limit:
+PTY device limit exhausted. Increase it:
 
 ```bash
-# Temporary (until reboot)
 sudo sysctl kern.tty.ptmx_max=2048
 
 # Permanent
 echo 'kern.tty.ptmx_max=2048' | sudo tee -a /etc/sysctl.conf
 ```
 
+</details>
+
+<details>
+<summary><strong>Session cookie invalid after restart</strong></summary>
+
+Fix the AUTH_SECRET so it persists:
+
+```bash
+echo "AUTH_SECRET=$(openssl rand -hex 32)" >> ~/.forge/.env.local
+```
+
+</details>
+
 ## Roadmap
 
-- [ ] **Multi-Agent Workflow** — DAG-based pipelines where multiple Claude Code instances collaborate, passing outputs between nodes with conditional routing and parallel execution. See [docs/roadmap-multi-agent-workflow.md](docs/roadmap-multi-agent-workflow.md).
+- [ ] **Multi-Agent Workflow** — DAG-based pipelines where multiple Claude Code instances collaborate ([design doc](docs/roadmap-multi-agent-workflow.md))
 - [ ] Pipeline UI — DAG visualization with real-time node status
-- [ ] Additional bot platforms — Discord, Slack, etc.
-- [ ] Multi-model chat with API keys (Anthropic, OpenAI, Google, xAI)
+- [ ] Additional bot platforms — Discord, Slack
+- [ ] Excalidraw rendering in Docs viewer
+- [ ] Multi-model chat (Anthropic, OpenAI, Google, xAI)
+
+## Contributing
+
+Contributions welcome! Please open an issue first to discuss what you'd like to change.
 
 ## License
 
-MIT
+[MIT](LICENSE)

@@ -174,10 +174,12 @@ export async function GET(req: Request) {
   }
   const gitRepos: GitRepo[] = [];
 
+  const gitOpts = { encoding: 'utf-8' as const, timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] as any };
+
   function scanGitStatus(dir: string, repoName: string, pathPrefix: string) {
     try {
-      const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: dir, encoding: 'utf-8', timeout: 3000 }).trim();
-      const statusOut = execSync('git status --porcelain -u', { cwd: dir, encoding: 'utf-8', timeout: 5000 });
+      const branch = execSync('git rev-parse --abbrev-ref HEAD', { ...gitOpts, cwd: dir, timeout: 3000 }).toString().trim();
+      const statusOut = execSync('git status --porcelain -u', { ...gitOpts, cwd: dir }).toString();
       const changes = statusOut.replace(/\n$/, '').split('\n').filter(Boolean)
         .map(line => {
           if (line.length < 4) return null;
@@ -188,7 +190,7 @@ export async function GET(req: Request) {
         })
         .filter((g): g is { status: string; path: string } => g !== null && !!g.path && !g.path.includes(' -> '));
       let remote = '';
-      try { remote = execSync('git remote get-url origin', { cwd: dir, encoding: 'utf-8', timeout: 2000 }).trim(); } catch {}
+      try { remote = execSync('git remote get-url origin', { ...gitOpts, cwd: dir, timeout: 2000 }).toString().trim(); } catch {}
       if (branch || changes.length > 0) {
         gitRepos.push({ name: repoName, branch, remote, changes });
       }

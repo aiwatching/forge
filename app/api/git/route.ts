@@ -12,7 +12,7 @@ function isUnderProjectRoot(dir: string): boolean {
 }
 
 function git(cmd: string, cwd: string): string {
-  return execSync(`git ${cmd}`, { cwd, encoding: 'utf-8', timeout: 15000 }).trim();
+  return execSync(`git ${cmd}`, { cwd, encoding: 'utf-8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'] }).toString().trim();
 }
 
 // GET /api/git?dir=<path> — git status for a project
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const branch = git('rev-parse --abbrev-ref HEAD', dir);
-    const statusRaw = execSync('git status --porcelain -u', { cwd: dir, encoding: 'utf-8', timeout: 15000 });
+    const statusRaw = execSync('git status --porcelain -u', { cwd: dir, encoding: 'utf-8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'] }).toString();
     const changes = statusRaw.replace(/\n$/, '').split('\n').filter(Boolean).map(line => ({
       status: line.substring(0, 2).trim() || 'M',
       path: line.substring(3).replace(/\/$/, ''),

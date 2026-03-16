@@ -226,6 +226,58 @@ export function startPipeline(workflowName: string, input: Record<string, string
   return pipeline;
 }
 
+// ─── Recovery: check for stuck pipelines ──────────────────
+
+function recoverStuckPipelines() {
+  const pipelines = listPipelines().filter(p => p.status === 'running');
+  for (const pipeline of pipelines) {
+    const workflow = getWorkflow(pipeline.workflowName);
+    if (!workflow) continue;
+
+    let changed = false;
+    for (const [nodeId, node] of Object.entries(pipeline.nodes)) {
+      if (node.status === 'running' && node.taskId) {
+        const task = getTask(node.taskId);
+        if (!task) {
+          // Task gone — mark node as done (task completed and was cleaned up)
+          node.status = 'done';
+          node.completedAt = new Date().toISOString();
+          changed = true;
+        } else if (task.status === 'done') {
+          // Extract outputs
+          const nodeDef = workflow.nodes[nodeId];
+          if (nodeDef) {
+            for (const outputDef of nodeDef.outputs) {
+              if (outputDef.extract === 'result') node.outputs[outputDef.name] = task.resultSummary || '';
+              else if (outputDef.extract === 'git_diff') node.outputs[outputDef.name] = task.gitDiff || '';
+            }
+          }
+          node.status = 'done';
+          node.completedAt = new Date().toISOString();
+          changed = true;
+        } else if (task.status === 'failed' || task.status === 'cancelled') {
+          node.status = 'failed';
+          node.error = task.error || 'Task failed';
+          node.completedAt = new Date().toISOString();
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) {
+      savePipeline(pipeline);
+      // Re-setup listener and schedule next nodes
+      setupTaskListener(pipeline.id);
+      scheduleReadyNodes(pipeline, workflow);
+    }
+  }
+}
+
+// Run recovery every 30 seconds
+setInterval(recoverStuckPipelines, 30_000);
+// Also run once on load
+setTimeout(recoverStuckPipelines, 5000);
+
 export function cancelPipeline(id: string): boolean {
   const pipeline = getPipeline(id);
   if (!pipeline || pipeline.status !== 'running') return false;

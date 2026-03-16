@@ -26,7 +26,5 @@ export async function register() {
     const { getPassword } = await import('./lib/password');
     const password = getPassword();
     process.env.MW_PASSWORD = password;
-    console.log(`[init] Login password: ${password}`);
-    console.log('[init] Forgot password? Run: forge password');
   }
 }

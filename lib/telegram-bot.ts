@@ -1,5 +1,5 @@
 /**
- * Telegram Bot — remote interface for My Workflow.
+ * Telegram Bot — remote interface for Forge.
  *
  * Optimized for mobile:
  * - /tasks shows numbered list, reply with number to see details

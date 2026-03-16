@@ -17,7 +17,8 @@ else
   echo "[forge] Installing from npm..."
   rm -rf "$(npm root -g)/@aion0/forge" 2>/dev/null || true
   npm cache clean --force 2>/dev/null || true
-  npm install -g @aion0/forge
+  # Install from /tmp to avoid pnpm node_modules conflict
+  (cd /tmp && npm install -g @aion0/forge)
   echo "[forge] Building..."
   cd "$(npm root -g)/@aion0/forge" && npx next build && cd -
 fi

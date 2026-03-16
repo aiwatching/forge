@@ -1,7 +1,7 @@
 /**
  * Auto-generated login password.
  * Rotates daily. Saved to ~/.forge/password.json with date.
- * CLI can read it via `mw password`.
+ * CLI can read it via `forge password`.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';

@@ -16,6 +16,22 @@ export async function GET(req: Request) {
     return NextResponse.json(listWorkflows());
   }
 
+  if (type === 'workflow-yaml') {
+    const name = searchParams.get('name');
+    if (!name) return NextResponse.json({ error: 'name required' }, { status: 400 });
+    try {
+      const { readFileSync, existsSync } = await import('node:fs');
+      const filePath = join(FLOWS_DIR, `${name}.yaml`);
+      const altPath = join(FLOWS_DIR, `${name}.yml`);
+      const path = existsSync(filePath) ? filePath : existsSync(altPath) ? altPath : null;
+      if (!path) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      const yaml = readFileSync(path, 'utf-8');
+      return NextResponse.json({ yaml });
+    } catch {
+      return NextResponse.json({ error: 'Failed to read' }, { status: 500 });
+    }
+  }
+
   return NextResponse.json(listPipelines().sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
 }
 

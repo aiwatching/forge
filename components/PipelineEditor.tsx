@@ -168,7 +168,7 @@ export default function PipelineEditor({ onSave, onClose, initialYaml }: {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<NodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [editingNode, setEditingNode] = useState<{ id: string; project: string; prompt: string; outputs: { name: string; extract: string }[] } | null>(null);
-  const [workflowName, setWorkflowName] = useState('my-workflow');
+  const [workflowName, setWorkflowName] = useState('');
   const [workflowDesc, setWorkflowDesc] = useState('');
   const [varsProject, setVarsProject] = useState('');
   const [projects, setProjects] = useState<{ name: string; root: string }[]>([]);

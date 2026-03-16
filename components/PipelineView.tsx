@@ -69,6 +69,7 @@ export default function PipelineView() {
   const [inputValues, setInputValues] = useState<Record<string, string>>({});
   const [creating, setCreating] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
+  const [editorYaml, setEditorYaml] = useState<string | undefined>(undefined);
 
   const fetchData = useCallback(async () => {
     const [pRes, wRes] = await Promise.all([
@@ -150,12 +151,25 @@ export default function PipelineView() {
       <aside className="w-72 border-r border-[var(--border)] flex flex-col shrink-0">
         <div className="px-3 py-2 border-b border-[var(--border)] flex items-center justify-between">
           <span className="text-[11px] font-semibold text-[var(--text-primary)]">Pipelines</span>
-          <button
-            onClick={() => setShowEditor(true)}
-            className="text-[10px] px-2 py-0.5 rounded text-green-400 hover:bg-green-400/10"
+          <select
+            onChange={async (e) => {
+              const name = e.target.value;
+              if (!name) { setEditorYaml(undefined); setShowEditor(true); return; }
+              try {
+                const res = await fetch(`/api/pipelines?type=workflow-yaml&name=${encodeURIComponent(name)}`);
+                const data = await res.json();
+                setEditorYaml(data.yaml || undefined);
+              } catch { setEditorYaml(undefined); }
+              setShowEditor(true);
+              e.target.value = '';
+            }}
+            className="text-[10px] px-1 py-0.5 rounded text-green-400 bg-transparent hover:bg-green-400/10 cursor-pointer"
+            defaultValue=""
           >
-            Editor
-          </button>
+            <option value="">Editor ▾</option>
+            <option value="">+ New workflow</option>
+            {workflows.map(w => <option key={w.name} value={w.name}>{w.name}</option>)}
+          </select>
           <button
             onClick={() => setShowCreate(v => !v)}
             className={`text-[10px] px-2 py-0.5 rounded ${showCreate ? 'text-white bg-[var(--accent)]' : 'text-[var(--accent)] hover:bg-[var(--accent)]/10'}`}
@@ -416,6 +430,7 @@ nodes:
       {showEditor && (
         <Suspense fallback={null}>
           <PipelineEditor
+            initialYaml={editorYaml}
             onSave={async (yaml) => {
               // Save YAML to ~/.forge/flows/
               await fetch('/api/pipelines', {

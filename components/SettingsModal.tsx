@@ -216,9 +216,12 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           <input
             value={settings.telegramChatId}
             onChange={e => setSettings({ ...settings, telegramChatId: e.target.value })}
-            placeholder="Chat ID (your numeric user ID)"
+            placeholder="Chat ID (comma-separated for multiple)"
             className="w-full px-2 py-1.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]"
           />
+          <p className="text-[9px] text-[var(--text-secondary)]">
+            Allowed user IDs (whitelist). Multiple IDs separated by commas. Only these users can interact with the bot.
+          </p>
           <div className="flex items-center gap-4">
             <label className="flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)]">
               <input

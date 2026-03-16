@@ -115,6 +115,14 @@ async function poll() {
 
 async function handleMessage(msg: any) {
   const chatId = msg.chat.id;
+
+  // Whitelist check — only allow configured chat IDs, block all if not configured
+  const settings = loadSettings();
+  const allowedIds = settings.telegramChatId.split(',').map((s: string) => s.trim()).filter(Boolean);
+  if (allowedIds.length === 0 || !allowedIds.includes(String(chatId))) {
+    return;
+  }
+
   // Message received (logged silently)
   const text: string = msg.text.trim();
   const replyTo = msg.reply_to_message?.message_id;

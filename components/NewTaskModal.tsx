@@ -155,7 +155,7 @@ export default function NewTaskModal({
               className="w-full px-3 py-2 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
             >
               {projects.map(p => (
-                <option key={p.name} value={p.name}>
+                <option key={`${p.name}-${p.path}`} value={p.name}>
                   {p.name} {p.language ? `(${p.language})` : ''}
                 </option>
               ))}

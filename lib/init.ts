@@ -59,16 +59,16 @@ let terminalChild: ReturnType<typeof spawn> | null = null;
 function startTerminalProcess() {
   if (terminalChild) return;
 
-  // Check if port 3001 is already in use
+  const termPort = Number(process.env.TERMINAL_PORT) || 3001;
+
+  // Check if port is already in use
   const net = require('node:net');
   const tester = net.createServer();
   tester.once('error', () => {
-    // Port in use — terminal server already running
-    console.log('[terminal] Port 3001 already in use, skipping');
+    console.log(`[terminal] Port ${termPort} already in use, skipping`);
   });
   tester.once('listening', () => {
     tester.close();
-    // Port free — start terminal server
     const script = join(process.cwd(), 'lib', 'terminal-standalone.ts');
     terminalChild = spawn('npx', ['tsx', script], {
       stdio: ['ignore', 'inherit', 'inherit'],
@@ -78,5 +78,5 @@ function startTerminalProcess() {
     terminalChild.on('exit', () => { terminalChild = null; });
     console.log('[terminal] Started standalone server (pid:', terminalChild.pid, ')');
   });
-  tester.listen(3001);
+  tester.listen(termPort);
 }

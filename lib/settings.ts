@@ -3,7 +3,8 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import YAML from 'yaml';
 
-const SETTINGS_FILE = join(homedir(), '.forge', 'settings.yaml');
+const DATA_DIR = process.env.FORGE_DATA_DIR || join(homedir(), '.forge');
+const SETTINGS_FILE = join(DATA_DIR, 'settings.yaml');
 
 export interface Settings {
   projectRoots: string[];       // Multiple project directories

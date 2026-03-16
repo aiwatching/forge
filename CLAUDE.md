@@ -19,11 +19,15 @@ npm install -g /Users/zliu/IdeaProjects/my-workflow
 npm install -g @aion0/forge
 
 # Run via npm global install
-forge-server              # foreground (auto-builds if needed)
-forge-server --dev        # dev mode
-forge-server --background # background, logs to ~/.forge/forge.log
-forge-server --stop       # stop background server
-forge-server --rebuild    # force rebuild
+forge-server                          # foreground (default port 3000)
+forge-server --dev                    # dev mode
+forge-server --background             # background, logs to ~/.forge/forge.log
+forge-server --stop                   # stop background server
+forge-server --restart                # stop + start (safe for remote)
+forge-server --rebuild                # force rebuild
+forge-server --port 4000              # custom web port
+forge-server --terminal-port 4001     # custom terminal port
+forge-server --dir ~/.forge-staging   # custom data directory
 
 # CLI
 forge                     # help

@@ -91,7 +91,7 @@ export default function Dashboard({ user }: { user: any }) {
   return (
     <div className="h-screen flex flex-col">
       {/* Top bar */}
-      <header className="h-10 border-b border-[var(--border)] flex items-center justify-between px-4 shrink-0">
+      <header className="h-12 border-b-2 border-[var(--border)] flex items-center justify-between px-4 shrink-0 bg-[var(--bg-secondary)]">
         <div className="flex items-center gap-4">
           <span className="text-sm font-bold text-[var(--accent)]">Forge</span>
 

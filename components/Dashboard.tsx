@@ -16,6 +16,7 @@ const DocsViewer = lazy(() => import('./DocsViewer'));
 const CodeViewer = lazy(() => import('./CodeViewer'));
 const ProjectManager = lazy(() => import('./ProjectManager'));
 const PreviewPanel = lazy(() => import('./PreviewPanel'));
+const PipelineView = lazy(() => import('./PipelineView'));
 
 interface UsageSummary {
   provider: string;
@@ -38,7 +39,7 @@ interface ProjectInfo {
 }
 
 export default function Dashboard({ user }: { user: any }) {
-  const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal' | 'docs' | 'projects' | 'preview'>('terminal');
+  const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal' | 'docs' | 'projects' | 'preview' | 'pipelines'>('terminal');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
@@ -135,6 +136,16 @@ export default function Dashboard({ user }: { user: any }) {
               }`}
             >
               Tasks
+            </button>
+            <button
+              onClick={() => setViewMode('pipelines')}
+              className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
+                viewMode === 'pipelines'
+                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              Pipelines
             </button>
             <button
               onClick={() => setViewMode('sessions')}
@@ -307,6 +318,13 @@ export default function Dashboard({ user }: { user: any }) {
         {viewMode === 'projects' && (
           <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
             <ProjectManager />
+          </Suspense>
+        )}
+
+        {/* Pipelines */}
+        {viewMode === 'pipelines' && (
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
+            <PipelineView />
           </Suspense>
         )}
 

@@ -324,7 +324,7 @@ export default function Dashboard({ user }: { user: any }) {
         {/* Pipelines */}
         {viewMode === 'pipelines' && (
           <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
-            <PipelineView />
+            <PipelineView onViewTask={(taskId) => { setViewMode('tasks'); setActiveTaskId(taskId); }} />
           </Suspense>
         )}
 

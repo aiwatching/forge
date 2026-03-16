@@ -60,7 +60,7 @@ const STATUS_COLOR: Record<string, string> = {
   skipped: 'text-gray-500',
 };
 
-export default function PipelineView() {
+export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: string) => void }) {
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [selectedPipeline, setSelectedPipeline] = useState<Pipeline | null>(null);
@@ -336,7 +336,12 @@ export default function PipelineView() {
                         <span className={STATUS_COLOR[node.status]}>{STATUS_ICON[node.status]}</span>
                         <span className="text-xs font-semibold text-[var(--text-primary)]">{nodeId}</span>
                         {node.taskId && (
-                          <span className="text-[9px] text-[var(--text-secondary)] font-mono">task:{node.taskId}</span>
+                          <button
+                            onClick={() => onViewTask?.(node.taskId!)}
+                            className="text-[9px] text-[var(--accent)] font-mono hover:underline"
+                          >
+                            task:{node.taskId}
+                          </button>
                         )}
                         {node.iterations > 1 && (
                           <span className="text-[9px] text-yellow-400">iter {node.iterations}</span>

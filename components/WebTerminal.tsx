@@ -429,7 +429,7 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
   const detachedCount = tmuxSessions.filter(s => !usedSessions.includes(s.name)).length;
 
   return (
-    <div className="h-full w-full flex-1 flex flex-col bg-[#1a1a2e]">
+    <div className="h-full w-full flex-1 flex flex-col bg-[#1a1a2e] overflow-hidden">
       {/* Tab bar + toolbar */}
       <div className="flex items-center bg-[#12122a] border-b border-[#2a2a4a] shrink-0">
         {/* Tabs */}

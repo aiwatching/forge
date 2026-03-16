@@ -394,7 +394,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
   }, []);
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
       {/* Task completion notification */}
       {taskNotification && (
         <div className="shrink-0 px-3 py-1.5 bg-green-900/30 border-b border-green-800/50 flex items-center gap-2 text-xs">
@@ -431,7 +431,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
       )}
 
       {/* File browser + code viewer — bottom */}
-      {codeOpen && <div className="flex-1 flex min-h-0">
+      {codeOpen && <div className="flex-1 flex min-h-0 min-w-0 overflow-hidden">
         {/* Sidebar */}
         {sidebarOpen && (
           <aside className="w-56 border-r border-[var(--border)] flex flex-col shrink-0">
@@ -609,7 +609,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
         )}
 
         {/* Code viewer */}
-        <main className="flex-1 flex flex-col min-w-0">
+        <main className="flex-1 flex flex-col min-w-0 overflow-hidden" style={{ width: 0 }}>
           <div className="px-3 py-1.5 border-b border-[var(--border)] shrink-0 flex items-center gap-2">
             <button
               onClick={() => setSidebarOpen(v => !v)}
@@ -672,7 +672,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
             </div>
           ) : viewMode === 'diff' && diffContent ? (
             <div className="flex-1 overflow-auto bg-[var(--bg-primary)]">
-              <pre className="p-4 text-[12px] leading-[1.5] font-mono whitespace-pre" style={{ fontFamily: 'Menlo, Monaco, "Courier New", monospace', tabSize: 2 }}>
+              <pre className="p-4 text-[12px] leading-[1.5] font-mono whitespace-pre" style={{ fontFamily: 'Menlo, Monaco, "Courier New", monospace', tabSize: 2, overflow: 'auto', maxWidth: 0, minWidth: '100%' }}>
                 {diffContent.split('\n').map((line, i) => {
                   const color = line.startsWith('+') ? 'text-green-400 bg-green-900/20'
                     : line.startsWith('-') ? 'text-red-400 bg-red-900/20'
@@ -689,11 +689,11 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
             </div>
           ) : selectedFile && content !== null ? (
             <div className="flex-1 overflow-auto bg-[var(--bg-primary)]">
-              <pre className="p-4 text-[12px] leading-[1.5] font-mono text-[var(--text-primary)] whitespace-pre" style={{ fontFamily: 'Menlo, Monaco, "Courier New", monospace', tabSize: 2 }}>
+              <pre className="p-4 text-[12px] leading-[1.5] font-mono text-[var(--text-primary)] whitespace-pre" style={{ fontFamily: 'Menlo, Monaco, "Courier New", monospace', tabSize: 2, overflow: 'auto', maxWidth: 0, minWidth: '100%' }}>
                 {content.split('\n').map((line, i) => (
                   <div key={i} className="flex hover:bg-[var(--bg-tertiary)]/50">
                     <span className="select-none text-[var(--text-secondary)]/40 text-right pr-4 w-10 shrink-0">{i + 1}</span>
-                    <span className="flex-1">{highlightLine(line, language)}</span>
+                    <span className="whitespace-pre">{highlightLine(line, language)}</span>
                   </div>
                 ))}
               </pre>

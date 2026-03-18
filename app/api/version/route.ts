@@ -16,8 +16,8 @@ const CURRENT_VERSION = (() => {
 let cachedLatest: { version: string; checkedAt: number } | null = null;
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
-async function getLatestVersion(): Promise<string> {
-  if (cachedLatest && Date.now() - cachedLatest.checkedAt < CACHE_TTL) {
+async function getLatestVersion(force = false): Promise<string> {
+  if (!force && cachedLatest && Date.now() - cachedLatest.checkedAt < CACHE_TTL) {
     return cachedLatest.version;
   }
   try {
@@ -47,9 +47,11 @@ function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const force = searchParams.has('force');
   const current = CURRENT_VERSION;
-  const latest = await getLatestVersion();
+  const latest = await getLatestVersion(force);
   const hasUpdate = latest && compareVersions(current, latest) < 0;
 
   return NextResponse.json({

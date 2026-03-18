@@ -127,6 +127,19 @@ export default function Dashboard({ user }: { user: any }) {
                   {upgrading ? 'Upgrading...' : `Update v${versionInfo.latest}`}
                 </button>
               )}
+              {!versionInfo.hasUpdate && !upgradeResult && (
+                <button
+                  onClick={async () => {
+                    const res = await fetch('/api/version?force=1');
+                    const data = await res.json();
+                    setVersionInfo(data);
+                  }}
+                  className="text-[9px] px-1.5 py-0.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  title="Check for updates"
+                >
+                  ↻
+                </button>
+              )}
               {upgradeResult && (
                 <span className="text-[9px] text-[var(--green)] max-w-[200px] truncate" title={upgradeResult}>
                   {upgradeResult}
@@ -188,16 +201,6 @@ export default function Dashboard({ user }: { user: any }) {
               Pipelines
             </button>
             <button
-              onClick={() => setViewMode('sessions')}
-              className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
-                viewMode === 'sessions'
-                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              Sessions
-            </button>
-            <button
               onClick={() => setViewMode('preview')}
               className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
                 viewMode === 'preview'
@@ -234,6 +237,12 @@ export default function Dashboard({ user }: { user: any }) {
               )}
             </span>
           )}
+          <button
+            onClick={() => setViewMode('sessions')}
+            className={`text-xs ${viewMode === 'sessions' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+          >
+            System Status
+          </button>
           <button
             onClick={() => setShowSettings(true)}
             className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)]"

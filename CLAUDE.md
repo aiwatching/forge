@@ -1,50 +1,54 @@
 ## Project: Forge (@aion0/forge)
 
-### Dev Commands
+### Scripts
 ```bash
-# Development (hot-reload)
-pnpm dev
+# ── Start ──
+./start.sh              # production (kill old processes → build → start)
+./start.sh dev           # development (hot-reload)
+forge-server             # production via npm link/install
+forge-server --dev       # dev mode
+forge-server --background  # background, logs to ~/.forge/forge.log
+forge-server --stop      # stop background server
+forge-server --restart   # stop + start (safe for remote)
+forge-server --rebuild   # force rebuild
+forge-server --port 4000 --terminal-port 4001 --dir ~/.forge-staging
+forge-server --reset-terminal  # kill terminal server (loses tmux attach)
+forge-server --version   # show version
 
-# Production (local)
-pnpm build && pnpm start
+# ── Test ──
+./dev-test.sh            # test instance (port 4000, data ~/.forge-test)
 
-# Publish to npm (bump version in package.json first)
-npm login
-npm publish --access public --otp=<code>
+# ── Install ──
+./install.sh             # install from npm
+./install.sh --local     # install from local source (npm link + build)
 
-# Install globally from local source (for testing)
-npm install -g /Users/zliu/IdeaProjects/my-workflow
+# ── Publish ──
+./publish.sh             # bump patch version, commit, tag
+./publish.sh minor       # bump minor
+./publish.sh 1.0.0       # explicit version
+npm login && npm publish --access public --otp=<code>
 
-# Install from npm
-npm install -g @aion0/forge
+# ── Monitor ──
+./check-forge-status.sh  # show process status + tmux sessions
 
-# Run via npm global install
-forge-server                          # foreground (default port 3000)
-forge-server --dev                    # dev mode
-forge-server --background             # background, logs to ~/.forge/forge.log
-forge-server --stop                   # stop background server
-forge-server --restart                # stop + start (safe for remote)
-forge-server --rebuild                # force rebuild
-forge-server --port 4000              # custom web port
-forge-server --terminal-port 4001     # custom terminal port
-forge-server --dir ~/.forge-staging   # custom data directory
-
-# CLI
-forge                     # help
-forge password            # show today's login password
-forge tasks               # list tasks
+# ── CLI ──
+forge                    # help
+forge --version          # show version
+forge password           # show today's login password
+forge tasks              # list tasks
 forge task <project> "prompt"  # submit task
-
-# Terminal server runs on port 3001 (auto-started by Next.js)
-# Data directory: ~/.forge/
-# Config: ~/.forge/settings.yaml
-# Env: ~/.forge/.env.local
+forge watch <id>         # live stream task output
 ```
 
 ### Key Paths
 - Data: `~/.forge/` (settings, db, password, terminal-state, flows, bin)
 - npm package: `@aion0/forge`
 - GitHub: `github.com/aiwatching/forge`
+
+### Architecture
+- `forge-server.mjs` starts: Next.js + terminal-standalone + telegram-standalone
+- `pnpm dev` / `start.sh dev` starts: Next.js (init.ts spawns terminal + telegram)
+- `FORGE_EXTERNAL_SERVICES=1` → init.ts skips spawning (forge-server manages them)
 
 ## Obsidian Vault
 Location: /Users/zliu/MyDocuments/obsidian-project/Projects/Bastion

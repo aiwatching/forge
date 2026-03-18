@@ -25,5 +25,5 @@ fi
 
 echo ""
 echo "[forge] Done."
-forge-server --version
-echo "Run: forge-server"
+forge --version
+echo "Run: forge server start"

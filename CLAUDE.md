@@ -5,15 +5,15 @@
 # ── Start ──
 ./start.sh              # production (kill old processes → build → start)
 ./start.sh dev           # development (hot-reload)
-forge-server             # production via npm link/install
-forge-server --dev       # dev mode
-forge-server --background  # background, logs to ~/.forge/forge.log
-forge-server --stop      # stop background server
-forge-server --restart   # stop + start (safe for remote)
-forge-server --rebuild   # force rebuild
-forge-server --port 4000 --terminal-port 4001 --dir ~/.forge-staging
-forge-server --reset-terminal  # kill terminal server (loses tmux attach)
-forge-server --version   # show version
+forge server start              # production via npm link/install
+forge server start --dev        # dev mode
+forge server start --background # background, logs to ~/.forge/forge.log
+forge server stop               # stop background server
+forge server restart            # stop + start (safe for remote)
+forge server rebuild            # force rebuild
+forge server start --port 4000 --terminal-port 4001 --dir ~/.forge-staging
+forge server start --reset-terminal  # kill terminal server (loses tmux attach)
+forge --version                 # show version
 
 # ── Test ──
 ./dev-test.sh            # test instance (port 4000, data ~/.forge-test)

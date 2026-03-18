@@ -29,6 +29,167 @@ function SecretInput({ value, onChange, placeholder, className }: {
   );
 }
 
+// ─── Secret Change Dialog ──────────────────────────────────────
+
+function SecretChangeDialog({ field, label, isSet, onSave, onClose }: {
+  field: string;
+  label: string;
+  isSet: boolean;
+  onSave: (field: string, oldValue: string, newValue: string) => Promise<string | null>;
+  onClose: () => void;
+}) {
+  const [mode, setMode] = useState<'change' | 'clear'>('change');
+  const [oldValue, setOldValue] = useState('');
+  const [newValue, setNewValue] = useState('');
+  const [confirmValue, setConfirmValue] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const canSave = mode === 'clear'
+    ? (isSet && oldValue.length > 0)
+    : ((!isSet || oldValue.length > 0) && newValue.length > 0 && newValue === confirmValue);
+
+  const handleSave = async () => {
+    if (mode === 'change' && newValue !== confirmValue) {
+      setError('New values do not match');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    const err = await onSave(field, oldValue, mode === 'clear' ? '' : newValue);
+    setSaving(false);
+    if (err) {
+      setError(err);
+    } else {
+      onClose();
+    }
+  };
+
+  const inputClass = "w-full px-2 py-1.5 pr-8 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]";
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]" onClick={onClose}>
+      <div
+        className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg w-[380px] p-4 space-y-3"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold">{isSet ? `Change ${label}` : `Set ${label}`}</h3>
+          {isSet && (
+            <div className="flex bg-[var(--bg-tertiary)] rounded p-0.5">
+              <button
+                onClick={() => { setMode('change'); setError(''); }}
+                className={`text-[10px] px-2 py-0.5 rounded ${mode === 'change' ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)]'}`}
+              >
+                Change
+              </button>
+              <button
+                onClick={() => { setMode('clear'); setError(''); }}
+                className={`text-[10px] px-2 py-0.5 rounded ${mode === 'clear' ? 'bg-[var(--red)] text-white shadow-sm' : 'text-[var(--text-secondary)]'}`}
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
+
+        {isSet && (
+          <div className="space-y-1">
+            <label className="text-[10px] text-[var(--text-secondary)]">Current value</label>
+            <SecretInput
+              value={oldValue}
+              onChange={v => { setOldValue(v); setError(''); }}
+              placeholder="Enter current value to verify"
+              className={inputClass}
+            />
+          </div>
+        )}
+
+        {mode === 'change' && (
+          <>
+            <div className="space-y-1">
+              <label className="text-[10px] text-[var(--text-secondary)]">New value</label>
+              <SecretInput
+                value={newValue}
+                onChange={v => { setNewValue(v); setError(''); }}
+                placeholder="Enter new value"
+                className={inputClass}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] text-[var(--text-secondary)]">Confirm new value</label>
+              <SecretInput
+                value={confirmValue}
+                onChange={v => { setConfirmValue(v); setError(''); }}
+                placeholder="Re-enter new value"
+                className={inputClass}
+              />
+              {confirmValue && newValue !== confirmValue && (
+                <p className="text-[9px] text-[var(--red)]">Values do not match</p>
+              )}
+            </div>
+          </>
+        )}
+
+        {mode === 'clear' && (
+          <p className="text-[10px] text-[var(--text-secondary)]">
+            Enter the current value to verify, then click Clear to remove it.
+          </p>
+        )}
+
+        {error && <p className="text-[10px] text-[var(--red)]">{error}</p>}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={!canSave || saving}
+            className={`px-3 py-1.5 text-xs text-white rounded hover:opacity-90 disabled:opacity-50 ${mode === 'clear' ? 'bg-[var(--red)]' : 'bg-[var(--accent)]'}`}
+          >
+            {saving ? 'Saving...' : mode === 'clear' ? 'Clear' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Secret Field Display ──────────────────────────────────────
+
+function SecretField({ label, description, isSet, onEdit }: {
+  label: string;
+  description?: string;
+  isSet: boolean;
+  onEdit: () => void;
+}) {
+  return (
+    <div className="space-y-1">
+      {description && (
+        <label className="text-[10px] text-[var(--text-secondary)]">{description}</label>
+      )}
+      <div className="flex items-center gap-2">
+        <div className="flex-1 px-2 py-1.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs font-mono text-[var(--text-secondary)]">
+          {isSet ? '••••••••' : <span className="italic">Not set</span>}
+        </div>
+        <button
+          onClick={onEdit}
+          className="text-[10px] px-2 py-1 border border-[var(--accent)] text-[var(--accent)] rounded hover:bg-[var(--accent)] hover:text-white transition-colors"
+        >
+          {isSet ? 'Change' : 'Set'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Settings Modal ────────────────────────────────────────────
+
 interface Settings {
   projectRoots: string[];
   docRoots: string[];
@@ -43,6 +204,7 @@ interface Settings {
   pipelineModel: string;
   telegramModel: string;
   skipPermissions: boolean;
+  _secretStatus?: Record<string, boolean>;
 }
 
 interface TunnelStatus {
@@ -69,6 +231,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     telegramModel: 'sonnet',
     skipPermissions: false,
   });
+  const [secretStatus, setSecretStatus] = useState<Record<string, boolean>>({});
   const [newRoot, setNewRoot] = useState('');
   const [newDocRoot, setNewDocRoot] = useState('');
   const [saved, setSaved] = useState(false);
@@ -77,15 +240,25 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   });
   const [tunnelLoading, setTunnelLoading] = useState(false);
   const [confirmStopTunnel, setConfirmStopTunnel] = useState(false);
+  const [editingSecret, setEditingSecret] = useState<{ field: string; label: string } | null>(null);
 
   const refreshTunnel = useCallback(() => {
     fetch('/api/tunnel').then(r => r.json()).then(setTunnel).catch(() => {});
   }, []);
 
+  const fetchSettings = useCallback(() => {
+    fetch('/api/settings').then(r => r.json()).then((data: Settings) => {
+      const status = data._secretStatus || {};
+      delete data._secretStatus;
+      setSettings(data);
+      setSecretStatus(status);
+    });
+  }, []);
+
   useEffect(() => {
-    fetch('/api/settings').then(r => r.json()).then(setSettings);
+    fetchSettings();
     refreshTunnel();
-  }, [refreshTunnel]);
+  }, [fetchSettings, refreshTunnel]);
 
   // Poll tunnel status while starting
   useEffect(() => {
@@ -102,6 +275,19 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const saveSecret = async (field: string, oldValue: string, newValue: string): Promise<string | null> => {
+    const res = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ _secretUpdate: { field, oldValue, newValue } }),
+    });
+    const data = await res.json();
+    if (!data.ok) return data.error || 'Failed to save';
+    // Refresh status
+    setSecretStatus(prev => ({ ...prev, [field]: !!newValue }));
+    return null;
   };
 
   const addRoot = () => {
@@ -242,12 +428,15 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           <p className="text-[10px] text-[var(--text-secondary)]">
             Get notified when tasks complete or fail. Create a bot via @BotFather, then send /start to it and use the test button below to get your chat ID.
           </p>
-          <SecretInput
-            value={settings.telegramBotToken}
-            onChange={v => setSettings({ ...settings, telegramBotToken: v })}
-            placeholder="Bot token (from @BotFather)"
-            className="w-full px-2 py-1.5 pr-8 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]"
+
+          <SecretField
+            label="Bot Token"
+            description="Telegram Bot API token (from @BotFather)"
+            isSet={!!secretStatus.telegramBotToken}
+            onEdit={() => setEditingSecret({ field: 'telegramBotToken', label: 'Bot Token' })}
+
           />
+
           <input
             value={settings.telegramChatId}
             onChange={e => setSettings({ ...settings, telegramChatId: e.target.value })}
@@ -276,7 +465,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               />
               Notify on failure
             </label>
-            {settings.telegramBotToken && settings.telegramChatId && (
+            {secretStatus.telegramBotToken && settings.telegramChatId && (
               <button
                 type="button"
                 onClick={async () => {
@@ -487,17 +676,13 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             Auto-start tunnel on server startup
           </label>
 
-          <div className="space-y-1">
-            <label className="text-[10px] text-[var(--text-secondary)]">
-              Telegram tunnel password (for /tunnel_password command)
-            </label>
-            <SecretInput
-              value={settings.telegramTunnelPassword}
-              onChange={v => setSettings({ ...settings, telegramTunnelPassword: v })}
-              placeholder="Set a password to get login credentials via Telegram"
-              className="w-full px-2 py-1.5 pr-8 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]"
-            />
-          </div>
+          <SecretField
+            label="Tunnel Password"
+            description="Telegram tunnel password (for /tunnel_password command)"
+            isSet={!!secretStatus.telegramTunnelPassword}
+            onEdit={() => setEditingSecret({ field: 'telegramTunnelPassword', label: 'Tunnel Password' })}
+
+          />
         </div>
 
         {/* Actions */}
@@ -521,6 +706,17 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
       </div>
+
+      {/* Secret Change Dialog */}
+      {editingSecret && (
+        <SecretChangeDialog
+          field={editingSecret.field}
+          label={editingSecret.label}
+          isSet={!!secretStatus[editingSecret.field]}
+          onSave={saveSecret}
+          onClose={() => setEditingSecret(null)}
+        />
+      )}
     </div>
   );
 }

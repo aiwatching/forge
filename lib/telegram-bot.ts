@@ -1182,6 +1182,7 @@ async function sendNoteToDocsClaude(chatId: number, content: string) {
   const { join } = require('path');
   const { homedir } = require('os');
   const SESSION_NAME = 'mw-docs-claude';
+  const docRoot = docRoots[0];
 
   // Check if the docs tmux session exists
   let sessionExists = false;
@@ -1190,9 +1191,22 @@ async function sendNoteToDocsClaude(chatId: number, content: string) {
     sessionExists = true;
   } catch {}
 
+  // Auto-create session if it doesn't exist
   if (!sessionExists) {
-    await send(chatId, '⚠️ Docs Claude session not running. Open the Docs tab first to start it.');
-    return;
+    try {
+      execSync(`tmux new-session -d -s ${SESSION_NAME} -x 120 -y 30`, { timeout: 5000 });
+      // Wait for shell to initialize
+      await new Promise(r => setTimeout(r, 500));
+      // cd to doc root and start claude
+      const sf = settings.skipPermissions ? ' --dangerously-skip-permissions' : '';
+      spawnSync('tmux', ['send-keys', '-t', SESSION_NAME, `cd "${docRoot}" && claude --resume${sf}`, 'Enter'], { timeout: 5000 });
+      // Wait for Claude to start up
+      await new Promise(r => setTimeout(r, 3000));
+      await send(chatId, '🚀 Auto-started Docs Claude session.');
+    } catch (err) {
+      await send(chatId, '❌ Failed to create Docs Claude session.');
+      return;
+    }
   }
 
   // Check if Claude is the active process (not shell)
@@ -1201,9 +1215,17 @@ async function sendNoteToDocsClaude(chatId: number, content: string) {
     paneCmd = execSync(`tmux display-message -p -t ${SESSION_NAME} '#{pane_current_command}'`, { encoding: 'utf-8', timeout: 2000 }).trim();
   } catch {}
 
+  // If Claude is not running, start it
   if (paneCmd === 'zsh' || paneCmd === 'bash' || paneCmd === 'fish' || !paneCmd) {
-    await send(chatId, '⚠️ Claude is not running in the Docs session. Open the Docs tab and start Claude first.');
-    return;
+    try {
+      const sf = settings.skipPermissions ? ' --dangerously-skip-permissions' : '';
+      spawnSync('tmux', ['send-keys', '-t', SESSION_NAME, `cd "${docRoot}" && claude --resume${sf}`, 'Enter'], { timeout: 5000 });
+      await new Promise(r => setTimeout(r, 3000));
+      await send(chatId, '🚀 Auto-started Claude in Docs session.');
+    } catch {
+      await send(chatId, '❌ Failed to start Claude in Docs session.');
+      return;
+    }
   }
 
   // Write content to a temp file, then use tmux to send a prompt referencing it

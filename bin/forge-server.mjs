@@ -195,7 +195,7 @@ function startBackground() {
   console.log(`[forge] Terminal: ws://localhost:${terminalPort}`);
   console.log(`[forge] Data: ${DATA_DIR}`);
   console.log(`[forge] Log: ${LOG_FILE}`);
-  console.log(`[forge] Stop: forge-server --stop${DATA_DIR !== join(homedir(), '.forge') ? ` --dir ${DATA_DIR}` : ''}`);
+  console.log(`[forge] Stop: forge server stop`);
 }
 
 // ── Stop ──

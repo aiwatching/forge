@@ -104,6 +104,8 @@ if (resetTerminal) {
 }
 
 // ── Kill orphan standalone processes ──
+const protectedPids = new Set();
+
 function cleanupOrphans() {
   try {
     const out = execSync("ps aux | grep -E 'telegram-standalone|terminal-standalone|next-server|next start|next dev' | grep -v grep | awk '{print $2}'", {
@@ -112,14 +114,17 @@ function cleanupOrphans() {
     if (out) {
       const myPid = String(process.pid);
       for (const pid of out.split('\n').filter(Boolean)) {
-        if (pid.trim() === myPid) continue; // don't kill ourselves
-        try { process.kill(parseInt(pid), 'SIGTERM'); } catch {}
+        const p = pid.trim();
+        if (p === myPid) continue;
+        if (protectedPids.has(p)) continue; // don't kill processes we just started
+        try { process.kill(parseInt(p), 'SIGTERM'); } catch {}
       }
-      // Force kill any remaining
       setTimeout(() => {
         for (const pid of out.split('\n').filter(Boolean)) {
-          if (pid.trim() === myPid) continue;
-          try { process.kill(parseInt(pid), 'SIGKILL'); } catch {}
+          const p = pid.trim();
+          if (p === myPid) continue;
+          if (protectedPids.has(p)) continue;
+          try { process.kill(parseInt(p), 'SIGKILL'); } catch {}
         }
       }, 2000);
       console.log('[forge] Cleaned up orphan processes');
@@ -187,7 +192,8 @@ function startBackground() {
   }
 
   const logFd = openSync(LOG_FILE, 'a');
-  const child = spawn('npx', ['next', 'start', '-p', String(webPort)], {
+  const nextBin = join(ROOT, 'node_modules', '.bin', 'next');
+  const child = spawn(nextBin, ['start', '-p', String(webPort)], {
     cwd: ROOT,
     stdio: ['ignore', logFd, logFd],
     env: { ...process.env, FORGE_EXTERNAL_SERVICES: '1' },
@@ -195,9 +201,10 @@ function startBackground() {
   });
 
   writeFileSync(PID_FILE, String(child.pid));
+  protectedPids.add(String(child.pid));
   child.unref();
 
-  // Start services in background too
+  // Start services in background too (cleanupOrphans will skip protectedPids)
   startServices();
 
   console.log(`[forge] Started in background (pid ${child.pid})`);
@@ -217,8 +224,18 @@ if (isStop) {
 // ── Restart ──
 if (isRestart) {
   stopServer();
-  // Brief delay to let port release
-  await new Promise(r => setTimeout(r, 1500));
+  // Wait for port to fully release
+  const net = await import('node:net');
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    const free = await new Promise(resolve => {
+      const s = net.createServer();
+      s.once('error', () => resolve(false));
+      s.once('listening', () => { s.close(); resolve(true); });
+      s.listen(webPort);
+    });
+    if (free) break;
+  }
   startBackground();
   process.exit(0);
 }

@@ -480,8 +480,20 @@ async function main() {
       } else {
         console.log('[forge] Upgrading from npm...');
         try {
-          execSync('cd /tmp && npm install -g @aion0/forge', { stdio: 'inherit' });
-          console.log('[forge] Upgraded. Run: forge server restart');
+          const { homedir } = await import('node:os');
+          execSync('npm install -g @aion0/forge@latest --prefer-online', {
+            stdio: 'inherit',
+            cwd: homedir(),
+          });
+          // Show installed version
+          try {
+            const { readFileSync } = await import('node:fs');
+            const globalRoot = execSync('npm root -g', { encoding: 'utf-8', cwd: homedir() }).trim();
+            const pkg = JSON.parse(readFileSync(join(globalRoot, '@aion0', 'forge', 'package.json'), 'utf-8'));
+            console.log(`[forge] Upgraded to v${pkg.version}. Run: forge server restart`);
+          } catch {
+            console.log('[forge] Upgraded. Run: forge server restart');
+          }
         } catch {
           console.log('[forge] Upgrade failed');
         }

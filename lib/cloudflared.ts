@@ -4,7 +4,7 @@
  */
 
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, chmodSync, createWriteStream, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, chmodSync, createWriteStream, unlinkSync, writeFileSync, readFileSync } from 'node:fs';
 import { homedir, platform, arch } from 'node:os';
 import { join } from 'node:path';
 import https from 'node:https';
@@ -105,6 +105,23 @@ if (!gAny[stateKey]) {
 const state: TunnelState = gAny[stateKey];
 
 const MAX_LOG_LINES = 100;
+const TUNNEL_STATE_FILE = join(homedir(), '.forge', 'tunnel-state.json');
+
+function saveTunnelState() {
+  try {
+    writeFileSync(TUNNEL_STATE_FILE, JSON.stringify({
+      url: state.url, status: state.status, error: state.error, pid: state.process?.pid || null,
+    }));
+  } catch {}
+}
+
+function loadTunnelState(): { url: string | null; status: string; error: string | null; pid: number | null } {
+  try {
+    return JSON.parse(readFileSync(TUNNEL_STATE_FILE, 'utf-8'));
+  } catch {
+    return { url: null, status: 'stopped', error: null, pid: null };
+  }
+}
 
 function pushLog(line: string) {
   state.log.push(line);
@@ -112,9 +129,25 @@ function pushLog(line: string) {
 }
 
 export async function startTunnel(localPort: number = 3000): Promise<{ url?: string; error?: string }> {
+  // Check if this worker already has a process
   if (state.process) {
     return state.url ? { url: state.url } : { error: 'Tunnel is starting...' };
   }
+
+  // Check if another process already has a tunnel running
+  const saved = loadTunnelState();
+  if (saved.pid && saved.status === 'running' && saved.url) {
+    try { process.kill(saved.pid, 0); return { url: saved.url }; } catch {}
+  }
+
+  // Kill ALL existing cloudflared processes to prevent duplicates
+  try {
+    const { execSync } = require('node:child_process');
+    const pids = execSync("pgrep -f 'cloudflared tunnel'", { encoding: 'utf-8', timeout: 3000, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    for (const pid of pids.split('\n').filter(Boolean)) {
+      try { process.kill(parseInt(pid), 'SIGTERM'); } catch {}
+    }
+  } catch {}
 
   state.status = 'starting';
   state.url = null;
@@ -149,6 +182,7 @@ export async function startTunnel(localPort: number = 3000): Promise<{ url?: str
         if (urlMatch && !state.url) {
           state.url = urlMatch[1];
           state.status = 'running';
+          saveTunnelState();
           console.log(`[cloudflared] Tunnel URL: ${state.url}`);
           startHealthCheck();
           if (!resolved) {
@@ -178,6 +212,7 @@ export async function startTunnel(localPort: number = 3000): Promise<{ url?: str
         state.status = 'stopped';
       }
       state.url = null;
+      saveTunnelState();
       pushLog(`[exit] cloudflared exited with code ${code}`);
       if (!resolved) {
         resolved = true;
@@ -204,16 +239,40 @@ export function stopTunnel() {
     state.process.kill('SIGTERM');
     state.process = null;
   }
+  // Also kill by saved PID in case another worker started it
+  const saved = loadTunnelState();
+  if (saved.pid) {
+    try { process.kill(saved.pid, 'SIGTERM'); } catch {}
+  }
   state.url = null;
   state.status = 'stopped';
   state.error = null;
+  saveTunnelState();
 }
 
 export function getTunnelStatus() {
+  // If this worker has the process, use in-memory state
+  if (state.process) {
+    return {
+      status: state.status,
+      url: state.url,
+      error: state.error,
+      installed: isInstalled(),
+      log: state.log.slice(-20),
+    };
+  }
+  // Otherwise read from file (another worker may have started it)
+  const saved = loadTunnelState();
+  if (saved.pid && saved.status === 'running') {
+    try { process.kill(saved.pid, 0); } catch {
+      // Process dead — clear stale state
+      return { status: 'stopped' as const, url: null, error: null, installed: isInstalled(), log: [] };
+    }
+  }
   return {
-    status: state.status,
-    url: state.url,
-    error: state.error,
+    status: (saved.status || 'stopped') as TunnelState['status'],
+    url: saved.url,
+    error: saved.error,
     installed: isInstalled(),
     log: state.log.slice(-20),
   };

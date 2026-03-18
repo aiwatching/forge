@@ -1,6 +1,7 @@
 /**
- * Server-side initialization — called once on first API request.
- * Starts background services: task runner, Telegram bot.
+ * Server-side initialization — called once on first API request per worker.
+ * When FORGE_EXTERNAL_SERVICES=1 (set by forge-server), telegram/terminal/tunnel
+ * are managed externally — only task runner starts here.
  */
 
 import { ensureRunnerStarted } from './task-manager';
@@ -19,24 +20,30 @@ export function ensureInitialized() {
   if (gInit[initKey]) return;
   gInit[initKey] = true;
 
-  // Display login password (auto-generated, rotates daily)
+  // Task runner is safe in every worker (DB-level coordination)
+  ensureRunnerStarted();
+
+  // Session watcher is safe (file-based, idempotent)
+  startWatcherLoop();
+
+  // If services are managed externally (forge-server), skip
+  if (process.env.FORGE_EXTERNAL_SERVICES === '1') {
+    // Password display only once
+    const password = getPassword();
+    console.log(`[init] Login password: ${password} (valid today)`);
+    console.log('[init] Forgot? Run: forge password');
+    return;
+  }
+
+  // Standalone mode (pnpm dev without forge-server) — start everything here
   const password = getPassword();
   console.log(`[init] Login password: ${password} (valid today)`);
   console.log('[init] Forgot? Run: forge password');
 
-  // Start background task runner
-  ensureRunnerStarted();
-
-  // Start Telegram bot if configured
-  startTelegramBot();
-
-  // Start terminal WebSocket server as separate process (node-pty needs native module)
+  startTelegramBot(); // registers task event listener only
   startTerminalProcess();
+  startTelegramProcess(); // spawns telegram-standalone
 
-  // Start session watcher loop
-  startWatcherLoop();
-
-  // Auto-start tunnel if configured
   const settings = loadSettings();
   if (settings.tunnelAutoStart) {
     startTunnel().then(result => {
@@ -54,6 +61,23 @@ export function restartTelegramBot() {
   startTelegramBot();
 }
 
+let telegramChild: ReturnType<typeof spawn> | null = null;
+
+function startTelegramProcess() {
+  if (telegramChild) return;
+  const settings = loadSettings();
+  if (!settings.telegramBotToken || !settings.telegramChatId) return;
+
+  const script = join(process.cwd(), 'lib', 'telegram-standalone.ts');
+  telegramChild = spawn('npx', ['tsx', script], {
+    stdio: ['ignore', 'inherit', 'inherit'],
+    env: { ...process.env, PORT: String(process.env.PORT || 3000) },
+    detached: false,
+  });
+  telegramChild.on('exit', () => { telegramChild = null; });
+  console.log('[telegram] Started standalone (pid:', telegramChild.pid, ')');
+}
+
 let terminalChild: ReturnType<typeof spawn> | null = null;
 
 function startTerminalProcess() {
@@ -61,11 +85,9 @@ function startTerminalProcess() {
 
   const termPort = Number(process.env.TERMINAL_PORT) || 3001;
 
-  // Check if port is already in use — kill stale process if needed
   const net = require('node:net');
   const tester = net.createServer();
   tester.once('error', () => {
-    // Port in use — terminal server already running, reuse it
     console.log(`[terminal] Port ${termPort} already in use, reusing existing`);
   });
   tester.once('listening', () => {

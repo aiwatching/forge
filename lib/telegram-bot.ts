@@ -45,31 +45,22 @@ const logBuffers = new Map<string, { entries: string[]; timer: ReturnType<typeof
 
 // ─── Start/Stop ──────────────────────────────────────────────
 
+// telegram-standalone process is managed by forge-server.mjs
+
 export function startTelegramBot() {
   const settings = loadSettings();
   if (!settings.telegramBotToken || !settings.telegramChatId) return;
 
-  // Kill any existing poll loop (handles hot-reload creating duplicates)
-  if (botState.polling) {
-    botState.pollGeneration++;
-    if (botState.pollTimer) { clearTimeout(botState.pollTimer); botState.pollTimer = null; }
-    botState.pollActive = false;
-  }
-
-  botState.polling = true;
-  console.log('[telegram] Bot started');
-
   // Set bot command menu
   setBotCommands(settings.telegramBotToken);
 
-  // Listen for task events → stream to Telegram (only once)
+  // Listen for task events → stream to Telegram (only once per worker)
   if (!botState.taskListenerAttached) {
     botState.taskListenerAttached = true;
     onTaskEvent((taskId, event, data) => {
       const settings = loadSettings();
       if (!settings.telegramBotToken || !settings.telegramChatId) return;
 
-      // Skip pipeline tasks — they have their own notification
       try {
         const { pipelineTaskIds } = require('./pipeline');
         if (pipelineTaskIds.has(taskId)) return;
@@ -85,74 +76,19 @@ export function startTelegramBot() {
     });
   }
 
-  // Skip stale updates on startup — set offset to -1 to get only new messages
-  if (botState.lastUpdateId === 0) {
-    fetch(`https://api.telegram.org/bot${settings.telegramBotToken}/getUpdates?offset=-1`)
-      .then(r => r.json())
-      .then(data => {
-        if (data.ok && data.result?.length > 0) {
-          botState.lastUpdateId = data.result[data.result.length - 1].update_id;
-        }
-        poll();
-      })
-      .catch(() => poll());
-  } else {
-    poll();
-  }
+  // Note: telegram-standalone process is started by forge-server.mjs, not here.
+  // This function only sets up the task event listener and bot commands.
 }
 
 export function stopTelegramBot() {
-  botState.polling = false;
-  botState.pollActive = false;
-  if (botState.pollTimer) { clearTimeout(botState.pollTimer); botState.pollTimer = null; }
-}
-
-// ─── Polling ─────────────────────────────────────────────────
-
-function schedulePoll(delay: number = 1000) {
-  if (botState.pollTimer) clearTimeout(botState.pollTimer);
-  botState.pollTimer = setTimeout(poll, delay);
-}
-
-async function poll() {
-  const myGeneration = botState.pollGeneration;
-
-  // Prevent concurrent polls
-  if (!botState.polling || botState.pollActive) return;
-  botState.pollActive = true;
-
-  try {
-    const settings = loadSettings();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 35000);
-
-    const url = `https://api.telegram.org/bot${settings.telegramBotToken}/getUpdates?offset=${botState.lastUpdateId + 1}&timeout=30`;
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeout);
-
-    const data = await res.json();
-
-    if (data.ok && data.result && data.result.length > 0) {
-      console.log(`[telegram] Poll got ${data.result.length} updates, lastId=${botState.lastUpdateId}`);
-      for (const update of data.result) {
-        if (update.update_id <= botState.lastUpdateId) continue;
-        botState.lastUpdateId = update.update_id;
-        if (update.message?.text) {
-          console.log(`[telegram] Processing msg ${update.message.message_id}: ${update.message.text.slice(0, 30)}`);
-          await handleMessage(update.message);
-        }
-      }
-    }
-  } catch {
-    // Network errors during sleep/wake — silent
-  }
-
-  botState.pollActive = false;
-  // Only continue polling if this is still the current generation
-  if (botState.polling && myGeneration === botState.pollGeneration) schedulePoll(1000);
+  // telegram-standalone is managed by forge-server.mjs
+  // This is a no-op now, kept for API compatibility
 }
 
 // ─── Message Handler ─────────────────────────────────────────
+
+// Exported for API route — called by telegram-standalone via /api/telegram
+export async function handleTelegramMessage(msg: any) { return handleMessage(msg); }
 
 async function handleMessage(msg: any) {
   const chatId = msg.chat.id;

@@ -11,9 +11,13 @@ export default function LoginPage() {
     e.preventDefault();
     const result = await signIn('credentials', {
       password,
-      callbackUrl: window.location.origin + '/',
-    }) as { error?: string } | undefined;
-    if (result?.error) setError('Wrong password');
+      redirect: false,
+    }) as { error?: string; ok?: boolean } | undefined;
+    if (result?.error) {
+      setError('Wrong password');
+    } else if (result?.ok) {
+      window.location.href = window.location.origin + '/';
+    }
   };
 
   return (

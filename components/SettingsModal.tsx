@@ -2,6 +2,33 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
+function SecretInput({ value, onChange, placeholder, className }: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        type={show ? 'text' : 'password'}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={className}
+      />
+      <button
+        type="button"
+        onClick={() => setShow(v => !v)}
+        className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+      >
+        {show ? '🙈' : '👁'}
+      </button>
+    </div>
+  );
+}
+
 interface Settings {
   projectRoots: string[];
   docRoots: string[];
@@ -213,11 +240,11 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           <p className="text-[10px] text-[var(--text-secondary)]">
             Get notified when tasks complete or fail. Create a bot via @BotFather, then send /start to it and use the test button below to get your chat ID.
           </p>
-          <input
+          <SecretInput
             value={settings.telegramBotToken}
-            onChange={e => setSettings({ ...settings, telegramBotToken: e.target.value })}
+            onChange={v => setSettings({ ...settings, telegramBotToken: v })}
             placeholder="Bot token (from @BotFather)"
-            className="w-full px-2 py-1.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]"
+            className="w-full px-2 py-1.5 pr-8 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]"
           />
           <input
             value={settings.telegramChatId}
@@ -446,11 +473,11 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             <label className="text-[10px] text-[var(--text-secondary)]">
               Telegram tunnel password (for /tunnel_password command)
             </label>
-            <input
+            <SecretInput
               value={settings.telegramTunnelPassword}
-              onChange={e => setSettings({ ...settings, telegramTunnelPassword: e.target.value })}
+              onChange={v => setSettings({ ...settings, telegramTunnelPassword: v })}
               placeholder="Set a password to get login credentials via Telegram"
-              className="w-full px-2 py-1.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]"
+              className="w-full px-2 py-1.5 pr-8 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]"
             />
           </div>
         </div>

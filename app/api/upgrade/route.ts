@@ -1,39 +1,40 @@
 import { NextResponse } from 'next/server';
 import { join } from 'node:path';
-import { lstatSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 
 export async function POST() {
   try {
-    // Check if installed via npm link (symlink = local dev)
-    let isLinked = false;
-    try { isLinked = lstatSync(join(process.cwd())).isSymbolicLink(); } catch {}
+    // Run upgrade with cache bypass
+    const output = execSync(
+      'cd /tmp && npm install -g @aion0/forge@latest --prefer-online 2>&1',
+      { encoding: 'utf-8', timeout: 120000 }
+    );
 
-    if (isLinked) {
-      return NextResponse.json({
-        ok: false,
-        error: 'Local dev install (npm link). Run: git pull && pnpm install && pnpm build',
-      });
-    }
-
-    // Upgrade from npm
-    execSync('cd /tmp && npm install -g @aion0/forge', { timeout: 120000 });
-
-    // Install devDependencies for build (npm -g doesn't install them)
+    // Verify the installed version
     const pkgRoot = execSync('npm root -g', { encoding: 'utf-8', timeout: 5000 }).trim();
     const forgeRoot = join(pkgRoot, '@aion0', 'forge');
+
+    // Install devDependencies for build (npm -g doesn't install them)
     try {
-      execSync('npm install --include=dev', { cwd: forgeRoot, timeout: 120000 });
+      execSync('npm install --include=dev 2>&1', { cwd: forgeRoot, timeout: 120000 });
+    } catch {}
+
+    // Read installed version
+    let installedVersion = '';
+    try {
+      const pkg = JSON.parse(require('fs').readFileSync(join(forgeRoot, 'package.json'), 'utf-8'));
+      installedVersion = pkg.version;
     } catch {}
 
     return NextResponse.json({
       ok: true,
-      message: 'Upgraded. Restart server to apply.',
+      message: `Upgraded to v${installedVersion}. Restart server to apply.`,
     });
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({
       ok: false,
-      error: `Upgrade failed: ${e instanceof Error ? e.message : String(e)}`,
+      error: `Upgrade failed: ${msg.slice(0, 200)}`,
     });
   }
 }

@@ -122,7 +122,7 @@ export default function Dashboard({ user }: { user: any }) {
                     setUpgrading(false);
                   }}
                   className="text-[9px] px-1.5 py-0.5 bg-[var(--accent)] text-white rounded hover:opacity-90 disabled:opacity-50"
-                  title={`Update to v${versionInfo.latest}`}
+                  title={`Update to v${versionInfo.latest}\nOr run: forge upgrade`}
                 >
                   {upgrading ? 'Upgrading...' : `Update v${versionInfo.latest}`}
                 </button>
@@ -134,7 +134,7 @@ export default function Dashboard({ user }: { user: any }) {
                     const data = await res.json();
                     setVersionInfo(data);
                   }}
-                  className="text-[9px] px-1.5 py-0.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  className="text-[9px] px-1 py-0.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                   title="Check for updates"
                 >
                   ↻
@@ -241,7 +241,7 @@ export default function Dashboard({ user }: { user: any }) {
             onClick={() => setViewMode('sessions')}
             className={`text-xs ${viewMode === 'sessions' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
           >
-            System Status
+            Monitor
           </button>
           <button
             onClick={() => setShowSettings(true)}

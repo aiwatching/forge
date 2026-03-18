@@ -64,7 +64,6 @@ export default function SessionView({
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Map<string, Set<string>>>(new Map());
   const [monitor, setMonitor] = useState<MonitorData | null>(null);
-  const [monitorOpen, setMonitorOpen] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Load cached sessions tree
@@ -348,51 +347,41 @@ export default function SessionView({
           </div>
         )}
 
-        {/* Monitor */}
+        {/* Monitor — always visible */}
         {monitor && (
-          <div className="border-b border-[var(--border)]">
-            <button
-              onClick={() => setMonitorOpen(v => !v)}
-              className="w-full flex items-center gap-1.5 px-2 py-1.5 hover:bg-[var(--bg-tertiary)] transition-colors"
-            >
-              <span className="text-[10px] text-[var(--text-secondary)]">{monitorOpen ? '▼' : '▶'}</span>
-              <span className="text-[9px] font-semibold text-[var(--text-secondary)] uppercase">Monitor</span>
+          <div className="border-b border-[var(--border)] px-2 py-2 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-semibold text-[var(--text-secondary)] uppercase">Processes</span>
               {monitor.uptime && (
-                <span className="text-[8px] text-[var(--text-secondary)] ml-auto">{monitor.uptime}</span>
+                <span className="text-[8px] text-[var(--text-secondary)]">up {monitor.uptime}</span>
               )}
-            </button>
-            {monitorOpen && (
-              <div className="px-2 pb-2 space-y-1.5">
-                {/* Processes */}
-                {[
-                  { label: 'Next.js', ...monitor.processes.nextjs },
-                  { label: 'Terminal', ...monitor.processes.terminal },
-                  { label: 'Telegram', ...monitor.processes.telegram },
-                  { label: 'Tunnel', ...monitor.processes.tunnel },
-                ].map(p => (
-                  <div key={p.label} className="flex items-center gap-1.5 text-[10px]">
-                    <span className={p.running ? 'text-green-400' : 'text-gray-500'}>●</span>
-                    <span className="text-[var(--text-primary)]">{p.label}</span>
-                    <span className="text-[var(--text-secondary)] font-mono ml-auto">{p.running ? `pid:${p.pid}` : 'stopped'}</span>
+            </div>
+            {[
+              { label: 'Next.js', ...monitor.processes.nextjs },
+              { label: 'Terminal', ...monitor.processes.terminal },
+              { label: 'Telegram', ...monitor.processes.telegram },
+              { label: 'Tunnel', ...monitor.processes.tunnel },
+            ].map(p => (
+              <div key={p.label} className="flex items-center gap-1.5 text-[10px]">
+                <span className={p.running ? 'text-green-400' : 'text-gray-500'}>●</span>
+                <span className="text-[var(--text-primary)]">{p.label}</span>
+                <span className="text-[var(--text-secondary)] font-mono ml-auto">{p.running ? `pid:${p.pid}` : 'stopped'}</span>
+              </div>
+            ))}
+            {monitor.processes.tunnel.running && monitor.processes.tunnel.url && (
+              <div className="text-[9px] text-[var(--accent)] truncate pl-4">{monitor.processes.tunnel.url}</div>
+            )}
+
+            {monitor.sessions.length > 0 && (
+              <div className="pt-1">
+                <span className="text-[9px] font-semibold text-[var(--text-secondary)] uppercase">Tmux ({monitor.sessions.length})</span>
+                {monitor.sessions.map(s => (
+                  <div key={s.name} className="flex items-center gap-1.5 text-[10px] mt-0.5">
+                    <span className={s.attached ? 'text-green-400' : 'text-yellow-500'}>●</span>
+                    <span className="font-mono text-[var(--text-primary)] truncate flex-1">{s.name}</span>
+                    <span className="text-[8px] text-[var(--text-secondary)]">{s.attached ? 'attached' : 'detached'}</span>
                   </div>
                 ))}
-                {monitor.processes.tunnel.running && monitor.processes.tunnel.url && (
-                  <div className="text-[9px] text-[var(--accent)] truncate pl-4">{monitor.processes.tunnel.url}</div>
-                )}
-
-                {/* Tmux sessions */}
-                {monitor.sessions.length > 0 && (
-                  <div className="pt-1">
-                    <span className="text-[8px] font-semibold text-[var(--text-secondary)] uppercase">Tmux ({monitor.sessions.length})</span>
-                    {monitor.sessions.map(s => (
-                      <div key={s.name} className="flex items-center gap-1.5 text-[10px] mt-0.5">
-                        <span className={s.attached ? 'text-green-400' : 'text-yellow-500'}>●</span>
-                        <span className="font-mono text-[var(--text-primary)] truncate flex-1">{s.name}</span>
-                        <span className="text-[8px] text-[var(--text-secondary)]">{s.attached ? 'attached' : 'detached'}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             )}
           </div>

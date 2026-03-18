@@ -182,6 +182,7 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
   const [showNewTabModal, setShowNewTabModal] = useState(false);
   const [projectRoots, setProjectRoots] = useState<string[]>([]);
   const [allProjects, setAllProjects] = useState<{ name: string; path: string; root: string }[]>([]);
+  const [skipPermissions, setSkipPermissions] = useState(false);
   const [expandedRoot, setExpandedRoot] = useState<string | null>(null);
 
   // Restore shared state from server after mount
@@ -196,6 +197,10 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
       }
       setHydrated(true);
     });
+    // Fetch settings for skipPermissions
+    fetch('/api/settings').then(r => r.json())
+      .then((s: any) => { if (s.skipPermissions) setSkipPermissions(true); })
+      .catch(() => {});
     // Fetch projects and derive roots
     fetch('/api/projects').then(r => r.json())
       .then((p: { name: string; path: string; root: string }[]) => {
@@ -765,6 +770,7 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
             setRatios={tab.id === activeTabId ? setRatios : () => {}}
             onSessionConnected={onSessionConnected}
             refreshKeys={refreshKeys}
+            skipPermissions={skipPermissions}
           />
         </div>
       ))}
@@ -777,7 +783,7 @@ export default WebTerminal;
 // ─── Pane renderer ───────────────────────────────────────────
 
 function PaneRenderer({
-  node, activeId, onFocus, ratios, setRatios, onSessionConnected, refreshKeys,
+  node, activeId, onFocus, ratios, setRatios, onSessionConnected, refreshKeys, skipPermissions,
 }: {
   node: SplitNode;
   activeId: number;
@@ -786,11 +792,12 @@ function PaneRenderer({
   setRatios: React.Dispatch<React.SetStateAction<Record<number, number>>>;
   onSessionConnected: (paneId: number, sessionName: string) => void;
   refreshKeys: Record<number, number>;
+  skipPermissions?: boolean;
 }) {
   if (node.type === 'terminal') {
     return (
       <div className={`h-full w-full ${activeId === node.id ? 'ring-1 ring-[#7c5bf0]/50 ring-inset' : ''}`} onMouseDown={() => onFocus(node.id)}>
-        <MemoTerminalPane key={`${node.id}-${refreshKeys[node.id] || 0}`} id={node.id} sessionName={node.sessionName} projectPath={node.projectPath} onSessionConnected={onSessionConnected} />
+        <MemoTerminalPane key={`${node.id}-${refreshKeys[node.id] || 0}`} id={node.id} sessionName={node.sessionName} projectPath={node.projectPath} skipPermissions={skipPermissions} onSessionConnected={onSessionConnected} />
       </div>
     );
   }
@@ -799,8 +806,8 @@ function PaneRenderer({
 
   return (
     <DraggableSplit splitId={node.id} direction={node.direction} ratio={ratio} setRatios={setRatios}>
-      <PaneRenderer node={node.first} activeId={activeId} onFocus={onFocus} ratios={ratios} setRatios={setRatios} onSessionConnected={onSessionConnected} refreshKeys={refreshKeys} />
-      <PaneRenderer node={node.second} activeId={activeId} onFocus={onFocus} ratios={ratios} setRatios={setRatios} onSessionConnected={onSessionConnected} refreshKeys={refreshKeys} />
+      <PaneRenderer node={node.first} activeId={activeId} onFocus={onFocus} ratios={ratios} setRatios={setRatios} onSessionConnected={onSessionConnected} refreshKeys={refreshKeys} skipPermissions={skipPermissions} />
+      <PaneRenderer node={node.second} activeId={activeId} onFocus={onFocus} ratios={ratios} setRatios={setRatios} onSessionConnected={onSessionConnected} refreshKeys={refreshKeys} skipPermissions={skipPermissions} />
     </DraggableSplit>
   );
 }
@@ -921,17 +928,21 @@ const MemoTerminalPane = memo(function TerminalPane({
   id,
   sessionName,
   projectPath,
+  skipPermissions,
   onSessionConnected,
 }: {
   id: number;
   sessionName?: string;
   projectPath?: string;
+  skipPermissions?: boolean;
   onSessionConnected: (paneId: number, sessionName: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sessionNameRef = useRef(sessionName);
   sessionNameRef.current = sessionName;
   const projectPathRef = useRef(projectPath);
+  const skipPermRef = useRef(skipPermissions);
+  skipPermRef.current = skipPermissions;
   projectPathRef.current = projectPath;
 
   useEffect(() => {
@@ -1055,7 +1066,8 @@ const MemoTerminalPane = memo(function TerminalPane({
               isNewlyCreated = false;
               setTimeout(() => {
                 if (!disposed && ws?.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ type: 'input', data: `cd "${projectPathRef.current}" && claude --resume\n` }));
+                  const skipFlag = skipPermRef.current ? ' --dangerously-skip-permissions' : '';
+                  ws.send(JSON.stringify({ type: 'input', data: `cd "${projectPathRef.current}" && claude --resume${skipFlag}\n` }));
                 }
               }, 300);
             }

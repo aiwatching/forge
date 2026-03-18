@@ -8,6 +8,7 @@ import SessionView from './SessionView';
 import NewTaskModal from './NewTaskModal';
 import SettingsModal from './SettingsModal';
 import TunnelToggle from './TunnelToggle';
+import MonitorPanel from './MonitorPanel';
 import type { Task } from '@/src/types';
 import type { WebTerminalHandle } from './WebTerminal';
 
@@ -44,6 +45,7 @@ export default function Dashboard({ user }: { user: any }) {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showMonitor, setShowMonitor] = useState(false);
   const [usage, setUsage] = useState<UsageSummary[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
@@ -194,6 +196,12 @@ export default function Dashboard({ user }: { user: any }) {
               )}
             </span>
           )}
+          <button
+            onClick={() => setShowMonitor(true)}
+            className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          >
+            Monitor
+          </button>
           <button
             onClick={() => setShowSettings(true)}
             className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
@@ -364,6 +372,8 @@ export default function Dashboard({ user }: { user: any }) {
           }}
         />
       )}
+
+      {showMonitor && <MonitorPanel onClose={() => setShowMonitor(false)} />}
 
       {showSettings && (
         <SettingsModal onClose={() => { setShowSettings(false); fetchData(); }} />

@@ -19,6 +19,7 @@ export interface Settings {
   taskModel: string;              // Model for tasks (default: sonnet)
   pipelineModel: string;          // Model for pipelines (default: sonnet)
   telegramModel: string;          // Model for Telegram AI features (default: sonnet)
+  skipPermissions: boolean;       // Add --dangerously-skip-permissions to all claude invocations
 }
 
 const defaults: Settings = {
@@ -34,6 +35,7 @@ const defaults: Settings = {
   taskModel: 'default',
   pipelineModel: 'default',
   telegramModel: 'sonnet',
+  skipPermissions: false,
 };
 
 export function loadSettings(): Settings {

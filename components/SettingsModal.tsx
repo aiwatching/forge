@@ -42,6 +42,7 @@ interface Settings {
   taskModel: string;
   pipelineModel: string;
   telegramModel: string;
+  skipPermissions: boolean;
 }
 
 interface TunnelStatus {
@@ -66,6 +67,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     taskModel: 'sonnet',
     pipelineModel: 'sonnet',
     telegramModel: 'sonnet',
+    skipPermissions: false,
   });
   const [newRoot, setNewRoot] = useState('');
   const [newDocRoot, setNewDocRoot] = useState('');
@@ -345,6 +347,22 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               </select>
             </div>
           </div>
+        </div>
+
+        {/* Permissions */}
+        <div className="space-y-2">
+          <label className="flex items-center gap-2 text-xs text-[var(--text-primary)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={settings.skipPermissions || false}
+              onChange={e => setSettings({ ...settings, skipPermissions: e.target.checked })}
+              className="rounded"
+            />
+            Skip permissions check (--dangerously-skip-permissions)
+          </label>
+          <p className="text-[9px] text-[var(--text-secondary)]">
+            When enabled, all Claude Code tasks and pipelines run without permission prompts. Useful for background automation but less safe.
+          </p>
         </div>
 
         {/* Remote Access (Cloudflare Tunnel) */}

@@ -22,6 +22,13 @@ export default function DocTerminal({ docRoot }: { docRoot: string }) {
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const docRootRef = useRef(docRoot);
+  const skipPermRef = useRef(false);
+
+  useEffect(() => {
+    fetch('/api/settings').then(r => r.json())
+      .then((s: any) => { if (s.skipPermissions) skipPermRef.current = true; })
+      .catch(() => {});
+  }, []);
   docRootRef.current = docRoot;
 
   useEffect(() => {
@@ -78,7 +85,8 @@ export default function DocTerminal({ docRoot }: { docRoot: string }) {
               isNewSession = false;
               setTimeout(() => {
                 if (socket.readyState === WebSocket.OPEN) {
-                  socket.send(JSON.stringify({ type: 'input', data: `cd "${docRootRef.current}" && claude --resume\n` }));
+                  const sf = skipPermRef.current ? ' --dangerously-skip-permissions' : '';
+                  socket.send(JSON.stringify({ type: 'input', data: `cd "${docRootRef.current}" && claude --resume${sf}\n` }));
                 }
               }, 300);
             }
@@ -147,13 +155,13 @@ export default function DocTerminal({ docRoot }: { docRoot: string }) {
         </span>
         <div className="ml-auto flex items-center gap-1">
           <button
-            onClick={() => runCommand(`cd "${docRoot}" && claude`)}
+            onClick={() => { const sf = skipPermRef.current ? ' --dangerously-skip-permissions' : ''; runCommand(`cd "${docRoot}" && claude${sf}`); }}
             className="text-[10px] px-2 py-0.5 text-[var(--accent)] hover:bg-[#2a2a4a] rounded"
           >
             New
           </button>
           <button
-            onClick={() => runCommand(`cd "${docRoot}" && claude --resume`)}
+            onClick={() => { const sf = skipPermRef.current ? ' --dangerously-skip-permissions' : ''; runCommand(`cd "${docRoot}" && claude --resume${sf}`); }}
             className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-white hover:bg-[#2a2a4a] rounded"
           >
             Resume

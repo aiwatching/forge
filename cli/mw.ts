@@ -112,10 +112,9 @@ async function main() {
       break;
     }
 
-    case 'status':
     case 's': {
       const id = args[0];
-      if (!id) { console.log('Usage: mw status <id>'); process.exit(1); }
+      if (!id) { console.log('Usage: forge status <id>'); process.exit(1); }
       const task = await api(`/api/tasks/${id}`);
       console.log(`Task: ${task.id}`);
       console.log(`Project: ${task.projectName} (${task.projectPath})`);
@@ -353,34 +352,163 @@ async function main() {
       break;
     }
 
+    case 'server': {
+      // Delegate to forge-server.mjs
+      const { execSync } = await import('node:child_process');
+      const { join, dirname } = await import('node:path');
+      const { fileURLToPath } = await import('node:url');
+      const serverScript = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'forge-server.mjs');
+      const sub = args[0] || 'start';
+      const serverArgs = args.slice(1);
+
+      const flagMap: Record<string, string[]> = {
+        'start': [],
+        'stop': ['--stop'],
+        'restart': ['--restart'],
+        'rebuild': ['--rebuild'],
+        'dev': ['--dev'],
+      };
+
+      const flags = flagMap[sub] || [];
+      const allArgs = [...flags, ...serverArgs];
+
+      try {
+        execSync(`node ${serverScript} ${allArgs.join(' ')}`, { stdio: 'inherit' });
+      } catch {}
+      break;
+    }
+
+    case 'status': {
+      // If arg provided, show task details
+      if (args[0]) {
+        const task = await api(`/api/tasks/${args[0]}`);
+        console.log(`Task: ${task.id}`);
+        console.log(`Project: ${task.projectName} (${task.projectPath})`);
+        console.log(`Status: ${task.status}`);
+        console.log(`Prompt: ${task.prompt}`);
+        if (task.startedAt) console.log(`Started: ${task.startedAt}`);
+        if (task.completedAt) console.log(`Completed: ${task.completedAt}`);
+        if (task.costUSD != null) console.log(`Cost: $${task.costUSD.toFixed(4)}`);
+        if (task.error) console.log(`Error: ${task.error}`);
+        if (task.resultSummary) console.log(`\nResult:\n${task.resultSummary}`);
+        if (task.gitDiff) console.log(`\nGit Diff:\n${task.gitDiff.slice(0, 2000)}`);
+        break;
+      }
+
+      // No arg — show process status
+      const { execSync } = await import('node:child_process');
+
+      const check = (pattern: string) => {
+        try {
+          const out = execSync(`ps aux | grep '${pattern}' | grep -v grep | head -1`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+          return out ? out.split(/\s+/)[1] : null;
+        } catch { return null; }
+      };
+
+      const nextPid = check('next-server');
+      const termPid = check('terminal-standalone');
+      const telePid = check('telegram-standalone');
+      const tunnPid = check('cloudflared tunnel');
+
+      console.log('');
+      console.log(`  ${nextPid ? '●' : '○'} Next.js        ${nextPid ? `running (pid: ${nextPid})` : 'stopped'}`);
+      console.log(`  ${termPid ? '●' : '○'} Terminal       ${termPid ? `running (pid: ${termPid})` : 'stopped'}`);
+      console.log(`  ${telePid ? '●' : '○'} Telegram       ${telePid ? `running (pid: ${telePid})` : 'stopped'}`);
+      console.log(`  ${tunnPid ? '●' : '○'} Tunnel         ${tunnPid ? `running (pid: ${tunnPid})` : 'stopped'}`);
+
+      try {
+        const { execSync: ex } = await import('node:child_process');
+        const sessions = ex("tmux list-sessions -F '#{session_name} #{session_attached}' 2>/dev/null", { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] })
+          .trim().split('\n').filter(l => l.startsWith('mw-'));
+        console.log(`\n  Sessions: ${sessions.length}`);
+        for (const s of sessions) {
+          const [name, att] = s.split(' ');
+          console.log(`    ${att !== '0' ? '●' : '○'} ${name}`);
+        }
+      } catch {
+        console.log('\n  Sessions: 0');
+      }
+      console.log('');
+      break;
+    }
+
+    case 'upgrade': {
+      const { execSync } = await import('node:child_process');
+      const { lstatSync } = await import('node:fs');
+      const { join, dirname } = await import('node:path');
+      const { fileURLToPath } = await import('node:url');
+
+      // Check if installed via npm link (symlink)
+      const cliDir = dirname(fileURLToPath(import.meta.url));
+      let isLinked = false;
+      try { isLinked = lstatSync(join(cliDir, '..')).isSymbolicLink(); } catch {}
+
+      if (isLinked) {
+        console.log('[forge] Installed via npm link (local source)');
+        console.log('[forge] Pull latest and rebuild:');
+        console.log('  cd ' + join(cliDir, '..'));
+        console.log('  git pull && pnpm install && pnpm build');
+      } else {
+        console.log('[forge] Upgrading from npm...');
+        try {
+          execSync('cd /tmp && npm install -g @aion0/forge', { stdio: 'inherit' });
+          console.log('[forge] Upgraded. Run: forge server restart');
+        } catch {
+          console.log('[forge] Upgrade failed');
+        }
+      }
+      break;
+    }
+
+    case 'uninstall': {
+      const { execSync } = await import('node:child_process');
+      console.log('[forge] Stopping server...');
+      try { execSync('forge server stop', { stdio: 'inherit' }); } catch {}
+      console.log('[forge] Uninstalling...');
+      try {
+        execSync('npm uninstall -g @aion0/forge', { stdio: 'inherit' });
+        console.log('[forge] Uninstalled. Data remains in ~/.forge/');
+      } catch {
+        console.log('[forge] Uninstall failed');
+      }
+      break;
+    }
+
     default:
       console.log(`forge — Forge CLI (@aion0/forge)
 
 Usage:
-  forge task <project> <prompt>     Submit a task (auto-continues project session)
-  forge task <project> <prompt> --new  Force a fresh session
-  forge run <flow-name>             Run a YAML workflow
-  forge tasks [status]              List tasks (running|queued|done|failed)
-  forge watch <id>                  Live stream task output
-  forge log <id>                    Show execution log
-  forge status <id>                 Task details + result
-  forge session [project]           Show session IDs → local claude --resume
-  forge session link <project> <id> Link a local CLI session to the web system
-  forge cancel <id>                 Cancel a task
-  forge retry <id>                  Retry a failed task
-  forge flows                       List workflows
-  forge projects                    List projects
-  forge password                    Show login password
+  forge server start [options]   Start server (default: foreground)
+  forge server stop              Stop server
+  forge server restart           Restart server (safe for remote)
+  forge server dev               Start in dev mode
+  forge server rebuild           Force rebuild
 
-Shortcuts: t=task, r=run, ls=tasks, w=watch, l=log, s=status, f=flows, p=projects, pw=password
+  forge task <project> <prompt>  Submit a task
+  forge tasks [status]           List tasks
+  forge watch <id>               Live stream output
+  forge status [<id>]            Process status / task details
+  forge log <id>                 Show execution log
+  forge cancel <id>              Cancel a task
+  forge retry <id>               Retry a failed task
 
-Examples:
-  forge task accord "Fix the authentication bug in login.ts"
-  forge watch abc123
-  forge run daily-review
-  forge tasks running
-  forge session accord              Show session ID, then:
-    cd ~/IdeaProjects/accord && claude --resume <session-id>`);
+  forge run <flow>               Run a workflow
+  forge flows                    List workflows
+  forge projects                 List projects
+  forge session [project]        Show session info
+  forge password                 Show login password
+
+  forge upgrade                  Update to latest version
+  forge uninstall                Remove forge
+
+Options for 'forge server start':
+  --port 4000                    Custom web port (default: 3000)
+  --terminal-port 4001           Custom terminal port (default: 3001)
+  --dir ~/.forge-staging         Custom data directory
+  --background                   Run in background
+  --reset-terminal               Kill terminal server on start
+
+Shortcuts: t=task, ls=tasks, w=watch, s=status, l=log, f=flows, p=projects, pw=password`);
   }
 }
 

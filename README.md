@@ -143,57 +143,63 @@ Features: DAG execution, parallel nodes, conditional routing, loop protection, T
 
 ## CLI
 
+All commands are unified under `forge`:
+
 ```bash
+# Server management
+forge server start              # Start server (foreground)
+forge server start --background # Start in background
+forge server start --dev        # Development mode with hot-reload
+forge server start --port 4000  # Custom port
+forge server stop               # Stop server
+forge server restart            # Restart (safe for remote use)
+forge server rebuild            # Force rebuild
+
+# Tasks
 forge task <project> <prompt>   # Submit a task
-forge tasks [status]            # List tasks
-forge watch <id>                # Live stream output
-forge status <id>               # Task details + result
+forge tasks [status]            # List tasks (running|queued|done|failed)
+forge watch <id>                # Live stream task output
 forge cancel <id>               # Cancel a task
 forge retry <id>                # Retry a failed task
+
+# Workflows
 forge run <flow-name>           # Run a YAML workflow
-forge projects                  # List projects
+forge flows                     # List available workflows
+
+# Status & Info
+forge status                    # Show process status + tmux sessions
+forge status <id>               # Show task details
 forge password                  # Show login password
-forge --version                 # Show version
+forge projects                  # List configured projects
+forge -v                        # Show version
+
+# Package management
+forge upgrade                   # Update to latest npm version
+forge uninstall                 # Stop server + uninstall (data preserved in ~/.forge)
 ```
 
-Shortcuts: `t`=task, `ls`=tasks, `w`=watch, `s`=status, `f`=flows, `p`=projects, `pw`=password
+Shortcuts: `t`=task, `ls`=tasks, `w`=watch, `s`=status, `l`=log, `f`=flows, `p`=projects, `pw`=password
 
-## Scripts
+### Server start options
 
 ```bash
-# Start / Stop
+forge server start --port 4000           # Custom web port (default: 3000)
+forge server start --terminal-port 4001  # Custom terminal port (default: 3001)
+forge server start --dir ~/.forge-test   # Custom data directory
+forge server start --background          # Run in background
+forge server start --reset-terminal      # Kill terminal server on start
+```
+
+### Development scripts
+
+```bash
 ./start.sh              # kill old processes → build → start (production)
-./start.sh dev          # kill old processes → start (dev, hot-reload)
-forge-server            # start via global install
-forge-server --restart  # stop + start (safe for remote use)
-forge-server --stop     # stop background server
-
-# Install
-./install.sh            # install from npm
-./install.sh --local    # install from local source (npm link + build)
-
-# Publish
-./publish.sh            # bump patch → commit → tag
-./publish.sh minor      # bump minor version
-
-# Test
+./start.sh dev          # development with hot-reload
 ./dev-test.sh           # test instance on port 4000 (separate data dir)
-
-# Monitor
+./install.sh            # install from npm
+./install.sh --local    # install from local source
+./publish.sh            # bump version → commit → tag → ready to publish
 ./check-forge-status.sh # show all forge processes + tmux sessions
-```
-
-### forge-server options
-
-```bash
-forge-server --dev              # development mode
-forge-server --background       # run in background
-forge-server --port 4000        # custom web port (default: 3000)
-forge-server --terminal-port 4001  # custom terminal port (default: 3001)
-forge-server --dir ~/.forge-staging  # custom data directory
-forge-server --reset-terminal   # kill terminal server before start
-forge-server --rebuild          # force rebuild
-forge-server -v                 # show version
 ```
 
 ## Configuration

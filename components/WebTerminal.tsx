@@ -506,7 +506,17 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
             </div>
           ))}
           <button
-            onClick={() => setShowNewTabModal(true)}
+            onClick={() => {
+              setShowNewTabModal(true);
+              // Refresh projects list when opening modal
+              fetch('/api/projects').then(r => r.json())
+                .then((p: { name: string; path: string; root: string }[]) => {
+                  if (!Array.isArray(p)) return;
+                  setAllProjects(p);
+                  setProjectRoots([...new Set(p.map(proj => proj.root))]);
+                })
+                .catch(() => {});
+            }}
             className="px-2 py-1 text-[11px] text-gray-500 hover:text-white hover:bg-[var(--term-border)]"
             title="New tab"
           >
@@ -690,7 +700,25 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
                             {rootProjects.map(p => (
                               <button
                                 key={p.path}
-                                onClick={() => { addTab(p.path); setShowNewTabModal(false); setExpandedRoot(null); }}
+                                onClick={async () => {
+                                  setShowNewTabModal(false); setExpandedRoot(null);
+                                  // Pre-check sessions before creating tab
+                                  let hasSession = false;
+                                  try {
+                                    const sRes = await fetch(`/api/claude-sessions/${encodeURIComponent(p.name)}`);
+                                    const sData = await sRes.json();
+                                    hasSession = Array.isArray(sData) ? sData.length > 0 : (Array.isArray(sData.sessions) && sData.sessions.length > 0);
+                                  } catch {}
+                                  const skipFlag = skipPermissions ? ' --dangerously-skip-permissions' : '';
+                                  const resumeFlag = hasSession ? ' --resume' : '';
+                                  const tree = makeTerminal(undefined, p.path);
+                                  const paneId = firstTerminalId(tree);
+                                  pendingCommands.set(paneId, `cd "${p.path}" && claude${resumeFlag}${skipFlag}\n`);
+                                  const tabNum = tabs.length + 1;
+                                  const newTab: TabState = { id: nextId++, label: p.name || `Terminal ${tabNum}`, tree, ratios: {}, activeId: paneId, projectPath: p.path };
+                                  setTabs(prev => [...prev, newTab]);
+                                  setActiveTabId(newTab.id);
+                                }}
                                 className="w-full text-left px-3 py-1.5 rounded hover:bg-[var(--term-border)] text-[11px] text-gray-300 flex items-center gap-2 truncate"
                                 title={p.path}
                               >
@@ -1090,13 +1118,13 @@ const MemoTerminalPane = memo(function TerminalPane({
             createRetries = 0;
             reconnectAttempts = 0;
             onSessionConnected(id, msg.sessionName);
-            // Auto-run claude --resume for project tabs on new session
-            if (isNewlyCreated && projectPathRef.current) {
+            // Auto-run claude for project tabs (only if no pendingCommand already set)
+            if (isNewlyCreated && projectPathRef.current && !pendingCommands.has(id)) {
               isNewlyCreated = false;
               setTimeout(() => {
                 if (!disposed && ws?.readyState === WebSocket.OPEN) {
                   const skipFlag = skipPermRef.current ? ' --dangerously-skip-permissions' : '';
-                  ws.send(JSON.stringify({ type: 'input', data: `cd "${projectPathRef.current}" && claude --resume${skipFlag}\n` }));
+                  ws.send(JSON.stringify({ type: 'input', data: `cd "${projectPathRef.current}" && claude${skipFlag}\n` }));
                 }
               }, 300);
             }

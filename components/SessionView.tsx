@@ -32,6 +32,17 @@ interface Watcher {
   createdAt: string;
 }
 
+interface MonitorData {
+  processes: {
+    nextjs: { running: boolean; pid: string };
+    terminal: { running: boolean; pid: string };
+    telegram: { running: boolean; pid: string };
+    tunnel: { running: boolean; pid: string; url: string };
+  };
+  sessions: { name: string; created: string; attached: boolean; windows: number }[];
+  uptime: string;
+}
+
 export default function SessionView({
   projectName,
   projects,
@@ -51,7 +62,9 @@ export default function SessionView({
   const [syncing, setSyncing] = useState(false);
   const [watchers, setWatchers] = useState<Watcher[]>([]);
   const [batchMode, setBatchMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Map<string, Set<string>>>(new Map()); // project → sessionIds
+  const [selectedIds, setSelectedIds] = useState<Map<string, Set<string>>>(new Map());
+  const [monitor, setMonitor] = useState<MonitorData | null>(null);
+  const [monitorOpen, setMonitorOpen] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Load cached sessions tree
@@ -79,10 +92,17 @@ export default function SessionView({
     } catch {}
   }, []);
 
+  const refreshMonitor = useCallback(() => {
+    fetch('/api/monitor').then(r => r.json()).then(setMonitor).catch(() => {});
+  }, []);
+
   useEffect(() => {
-    loadTree(true); // Initial sync
+    loadTree(true);
     loadWatchers();
-  }, [loadTree, loadWatchers]);
+    refreshMonitor();
+    const timer = setInterval(refreshMonitor, 5000);
+    return () => clearInterval(timer);
+  }, [loadTree, loadWatchers, refreshMonitor]);
 
   // Auto-expand project if only one or if pre-selected
   useEffect(() => {
@@ -325,6 +345,56 @@ export default function SessionView({
             >
               Delete All
             </button>
+          </div>
+        )}
+
+        {/* Monitor */}
+        {monitor && (
+          <div className="border-b border-[var(--border)]">
+            <button
+              onClick={() => setMonitorOpen(v => !v)}
+              className="w-full flex items-center gap-1.5 px-2 py-1.5 hover:bg-[var(--bg-tertiary)] transition-colors"
+            >
+              <span className="text-[10px] text-[var(--text-secondary)]">{monitorOpen ? '▼' : '▶'}</span>
+              <span className="text-[9px] font-semibold text-[var(--text-secondary)] uppercase">Monitor</span>
+              {monitor.uptime && (
+                <span className="text-[8px] text-[var(--text-secondary)] ml-auto">{monitor.uptime}</span>
+              )}
+            </button>
+            {monitorOpen && (
+              <div className="px-2 pb-2 space-y-1.5">
+                {/* Processes */}
+                {[
+                  { label: 'Next.js', ...monitor.processes.nextjs },
+                  { label: 'Terminal', ...monitor.processes.terminal },
+                  { label: 'Telegram', ...monitor.processes.telegram },
+                  { label: 'Tunnel', ...monitor.processes.tunnel },
+                ].map(p => (
+                  <div key={p.label} className="flex items-center gap-1.5 text-[10px]">
+                    <span className={p.running ? 'text-green-400' : 'text-gray-500'}>●</span>
+                    <span className="text-[var(--text-primary)]">{p.label}</span>
+                    <span className="text-[var(--text-secondary)] font-mono ml-auto">{p.running ? `pid:${p.pid}` : 'stopped'}</span>
+                  </div>
+                ))}
+                {monitor.processes.tunnel.running && monitor.processes.tunnel.url && (
+                  <div className="text-[9px] text-[var(--accent)] truncate pl-4">{monitor.processes.tunnel.url}</div>
+                )}
+
+                {/* Tmux sessions */}
+                {monitor.sessions.length > 0 && (
+                  <div className="pt-1">
+                    <span className="text-[8px] font-semibold text-[var(--text-secondary)] uppercase">Tmux ({monitor.sessions.length})</span>
+                    {monitor.sessions.map(s => (
+                      <div key={s.name} className="flex items-center gap-1.5 text-[10px] mt-0.5">
+                        <span className={s.attached ? 'text-green-400' : 'text-yellow-500'}>●</span>
+                        <span className="font-mono text-[var(--text-primary)] truncate flex-1">{s.name}</span>
+                        <span className="text-[8px] text-[var(--text-secondary)]">{s.attached ? 'attached' : 'detached'}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

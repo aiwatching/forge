@@ -28,6 +28,16 @@ import { homedir } from 'node:os';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
+/** Build Next.js — install devDependencies first if missing */
+function buildNext() {
+  // Check if devDependencies are installed (e.g. @tailwindcss/postcss)
+  if (!existsSync(join(ROOT, 'node_modules', '@tailwindcss', 'postcss'))) {
+    console.log('[forge] Installing dependencies...');
+    execSync('npm install --include=dev', { cwd: ROOT, stdio: 'inherit' });
+  }
+  execSync('npx next build', { cwd: ROOT, stdio: 'inherit', env: { ...process.env } });
+}
+
 // ── Parse arguments ──
 
 function getArg(name) {
@@ -173,7 +183,7 @@ function stopServer() {
 function startBackground() {
   if (!existsSync(join(ROOT, '.next', 'BUILD_ID'))) {
     console.log('[forge] Building...');
-    execSync('npx next build', { cwd: ROOT, stdio: 'inherit', env: { ...process.env } });
+    buildNext();
   }
 
   const logFd = openSync(LOG_FILE, 'a');
@@ -221,7 +231,7 @@ if (isRebuild || existsSync(join(ROOT, '.next', 'BUILD_ID'))) {
   if (isRebuild || lastBuiltVersion !== pkgVersion) {
     console.log(`[forge] Rebuilding (v${pkgVersion})...`);
     execSync('rm -rf .next', { cwd: ROOT });
-    execSync('npx next build', { cwd: ROOT, stdio: 'inherit', env: { ...process.env } });
+    buildNext();
     writeFileSync(versionFile, pkgVersion);
     if (isRebuild) {
       console.log('[forge] Rebuild complete');
@@ -254,7 +264,7 @@ if (isDev) {
 } else {
   if (!existsSync(join(ROOT, '.next', 'BUILD_ID'))) {
     console.log('[forge] Building...');
-    execSync('npx next build', { cwd: ROOT, stdio: 'inherit', env: { ...process.env } });
+    buildNext();
   }
   console.log(`[forge] Starting server (port ${webPort}, terminal ${terminalPort}, data ${DATA_DIR})`);
   startServices();

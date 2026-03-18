@@ -410,15 +410,38 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">
             Claude Code Path
           </label>
-          <p className="text-[10px] text-[var(--text-secondary)]">
-            Full path to the claude binary. Run `which claude` to find it.
+          <div className="flex gap-2">
+            <input
+              value={settings.claudePath}
+              onChange={e => setSettings({ ...settings, claudePath: e.target.value })}
+              placeholder="Auto-detect or enter path manually"
+              className="flex-1 px-2 py-1.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]"
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const res = await fetch('/api/detect-cli');
+                  const data = await res.json();
+                  const claude = data.tools?.find((t: any) => t.name === 'claude');
+                  if (claude?.path) {
+                    setSettings({ ...settings, claudePath: claude.path });
+                  } else {
+                    const hint = claude?.installHint || 'npm install -g @anthropic-ai/claude-code';
+                    alert(`Claude Code not found.\n\nInstall:\n  ${hint}`);
+                  }
+                } catch { alert('Detection failed'); }
+              }}
+              className="text-[10px] px-2 py-1.5 border border-[var(--accent)] text-[var(--accent)] rounded hover:bg-[var(--accent)] hover:text-white transition-colors shrink-0"
+            >
+              Detect
+            </button>
+          </div>
+          <p className={`text-[9px] ${settings.claudePath ? 'text-[var(--text-secondary)]' : 'text-[var(--yellow)]'}`}>
+            {settings.claudePath
+              ? 'Click Detect to re-scan, or edit manually.'
+              : 'Not configured. Click Detect or run `which claude` in terminal to find the path.'}
           </p>
-          <input
-            value={settings.claudePath}
-            onChange={e => setSettings({ ...settings, claudePath: e.target.value })}
-            placeholder="/usr/local/bin/claude"
-            className="w-full px-2 py-1.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]"
-          />
         </div>
 
         {/* Telegram Notifications */}

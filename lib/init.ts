@@ -45,12 +45,30 @@ function migrateSecrets() {
   }
 }
 
+/** Auto-detect claude binary path if not configured */
+function autoDetectClaude() {
+  try {
+    const settings = loadSettings();
+    if (settings.claudePath) return; // already configured
+    const { execSync } = require('node:child_process');
+    const path = execSync('which claude', { encoding: 'utf-8', timeout: 3000, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    if (path) {
+      settings.claudePath = path;
+      saveSettings(settings);
+      console.log(`[init] Auto-detected claude: ${path}`);
+    }
+  } catch {}
+}
+
 export function ensureInitialized() {
   if (gInit[initKey]) return;
   gInit[initKey] = true;
 
   // Migrate plaintext secrets on startup
   migrateSecrets();
+
+  // Auto-detect claude path if not configured
+  autoDetectClaude();
 
   // Task runner is safe in every worker (DB-level coordination)
   ensureRunnerStarted();

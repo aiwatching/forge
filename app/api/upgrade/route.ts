@@ -16,7 +16,15 @@ export async function POST() {
       });
     }
 
+    // Upgrade from npm
     execSync('cd /tmp && npm install -g @aion0/forge', { timeout: 120000 });
+
+    // Install devDependencies for build (npm -g doesn't install them)
+    const pkgRoot = execSync('npm root -g', { encoding: 'utf-8', timeout: 5000 }).trim();
+    const forgeRoot = join(pkgRoot, '@aion0', 'forge');
+    try {
+      execSync('npm install --include=dev', { cwd: forgeRoot, timeout: 120000 });
+    } catch {}
 
     return NextResponse.json({
       ok: true,

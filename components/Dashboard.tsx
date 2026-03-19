@@ -18,6 +18,7 @@ const CodeViewer = lazy(() => import('./CodeViewer'));
 const ProjectManager = lazy(() => import('./ProjectManager'));
 const PreviewPanel = lazy(() => import('./PreviewPanel'));
 const PipelineView = lazy(() => import('./PipelineView'));
+const SkillsPanel = lazy(() => import('./SkillsPanel'));
 
 interface UsageSummary {
   provider: string;
@@ -40,7 +41,7 @@ interface ProjectInfo {
 }
 
 export default function Dashboard({ user }: { user: any }) {
-  const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal' | 'docs' | 'projects' | 'preview' | 'pipelines'>('terminal');
+  const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal' | 'docs' | 'projects' | 'preview' | 'pipelines' | 'skills'>('terminal');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
@@ -237,6 +238,16 @@ export default function Dashboard({ user }: { user: any }) {
               }`}
             >
               Demo Preview
+            </button>
+            <button
+              onClick={() => setViewMode('skills')}
+              className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
+                viewMode === 'skills'
+                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              Skills
             </button>
           </div>
 
@@ -536,15 +547,22 @@ export default function Dashboard({ user }: { user: any }) {
           </Suspense>
         )}
 
+        {/* Skills */}
+        {viewMode === 'skills' && (
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
+            <SkillsPanel />
+          </Suspense>
+        )}
+
         {/* Docs — always mounted to keep terminal session alive */}
-        <div className={`flex-1 min-h-0 flex ${viewMode === 'docs' ? '' : 'hidden'}`}>
+        <div className={viewMode === 'docs' ? 'flex-1 min-h-0 flex' : 'hidden'}>
           <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
             <DocsViewer />
           </Suspense>
         </div>
 
         {/* Code — terminal + file browser, always mounted to keep terminal sessions alive */}
-        <div className={`flex-1 min-h-0 flex ${viewMode === 'terminal' ? '' : 'hidden'}`}>
+        <div className={viewMode === 'terminal' ? 'flex-1 min-h-0 flex' : 'hidden'}>
           <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
             <CodeViewer terminalRef={terminalRef} />
           </Suspense>

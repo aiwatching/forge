@@ -76,6 +76,13 @@ export function ensureInitialized() {
   // Auto-detect claude path if not configured
   autoDetectClaude();
 
+  // Sync skills registry (async, non-blocking) — on startup + every 30 min
+  try {
+    const { syncSkills } = require('./skills');
+    syncSkills().catch(() => {});
+    setInterval(() => { syncSkills().catch(() => {}); }, 30 * 60 * 1000);
+  } catch {}
+
   // Task runner is safe in every worker (DB-level coordination)
   ensureRunnerStarted();
 

@@ -22,6 +22,7 @@ export interface Settings {
   telegramModel: string;          // Model for Telegram AI features (default: sonnet)
   skipPermissions: boolean;       // Add --dangerously-skip-permissions to all claude invocations
   notificationRetentionDays: number; // Auto-cleanup notifications older than N days
+  skillsRepoUrl: string;              // GitHub raw URL for skills registry
 }
 
 const defaults: Settings = {
@@ -39,6 +40,7 @@ const defaults: Settings = {
   telegramModel: 'sonnet',
   skipPermissions: false,
   notificationRetentionDays: 30,
+  skillsRepoUrl: 'https://raw.githubusercontent.com/aiwatching/forge-skills/main',
 };
 
 /** Load settings with secrets decrypted (for internal use) */

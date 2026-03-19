@@ -37,6 +37,7 @@ export default function ProjectManager() {
   const [fileLanguage, setFileLanguage] = useState('');
   const [fileLoading, setFileLoading] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [projectSkills, setProjectSkills] = useState<{ name: string; displayName: string; scope: string }[]>([]);
 
   // Fetch projects
   useEffect(() => {
@@ -67,6 +68,23 @@ export default function ProjectManager() {
     } catch { setFileTree([]); }
   }, []);
 
+  const fetchProjectSkills = useCallback(async (projectPath: string) => {
+    try {
+      const res = await fetch('/api/skills');
+      const data = await res.json();
+      const skills = (data.skills || []).filter((s: any) =>
+        s.installedGlobal || (s.installedProjects || []).includes(projectPath)
+      ).map((s: any) => ({
+        name: s.name,
+        displayName: s.displayName,
+        scope: s.installedGlobal && (s.installedProjects || []).includes(projectPath) ? 'global + project'
+          : s.installedGlobal ? 'global'
+          : 'project',
+      }));
+      setProjectSkills(skills);
+    } catch { setProjectSkills([]); }
+  }, []);
+
   const selectProject = useCallback((p: Project) => {
     setSelectedProject(p);
     setSelectedFile(null);
@@ -75,7 +93,8 @@ export default function ProjectManager() {
     setCommitMsg('');
     fetchGitInfo(p);
     fetchTree(p);
-  }, [fetchGitInfo, fetchTree]);
+    fetchProjectSkills(p.path);
+  }, [fetchGitInfo, fetchTree, fetchProjectSkills]);
 
   const openFile = useCallback(async (path: string) => {
     if (!selectedProject) return;
@@ -231,6 +250,21 @@ export default function ProjectManager() {
                   <span className="ml-2">{gitInfo.remote.replace(/^https?:\/\//, '').replace(/^git@github\.com:/, 'github.com/').replace(/\.git$/, '')}</span>
                 )}
               </div>
+              {projectSkills.length > 0 && (
+                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                  <span className="text-[9px] text-[var(--text-secondary)]">Skills:</span>
+                  {projectSkills.map(s => (
+                    <span
+                      key={s.name}
+                      className="text-[8px] px-1.5 py-0.5 rounded bg-[var(--accent)]/10 text-[var(--accent)]"
+                      title={`/${s.name} (${s.scope})`}
+                    >
+                      /{s.displayName}
+                      <span className="text-[var(--text-secondary)] ml-0.5">({s.scope})</span>
+                    </span>
+                  ))}
+                </div>
+              )}
               {gitInfo?.lastCommit && (
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-[9px] text-[var(--text-secondary)] font-mono truncate">{gitInfo.lastCommit}</span>

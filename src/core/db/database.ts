@@ -120,6 +120,22 @@ function initSchema(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read, created_at);
 
+    -- Skills registry cache
+    CREATE TABLE IF NOT EXISTS skills (
+      name TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      description TEXT,
+      author TEXT,
+      version TEXT,
+      tags TEXT,
+      score INTEGER DEFAULT 0,
+      source_url TEXT,
+      skill_content TEXT,
+      installed_global INTEGER NOT NULL DEFAULT 0,
+      installed_projects TEXT NOT NULL DEFAULT '[]',
+      synced_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- Session watchers — monitor sessions and notify via Telegram
     CREATE TABLE IF NOT EXISTS session_watchers (
       id TEXT PRIMARY KEY,

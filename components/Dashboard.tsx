@@ -239,14 +239,18 @@ export default function Dashboard({ user }: { user: any }) {
               + New Task
             </button>
           )}
-          {/* Tunnel + Preview */}
-          <TunnelToggle />
+          {/* Preview + Tunnel */}
           <button
             onClick={() => setViewMode('preview')}
-            className={`text-[10px] ${viewMode === 'preview' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+            className={`text-[10px] px-2 py-0.5 border rounded transition-colors ${
+              viewMode === 'preview'
+                ? 'border-[var(--accent)] text-[var(--accent)]'
+                : 'border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-secondary)]'
+            }`}
           >
             Preview
           </button>
+          <TunnelToggle />
           {onlineCount.total > 0 && (
             <span className="text-[10px] text-[var(--text-secondary)] flex items-center gap-1" title={`${onlineCount.total} online${onlineCount.remote > 0 ? `, ${onlineCount.remote} remote` : ''}`}>
               <span className="text-green-500">●</span>

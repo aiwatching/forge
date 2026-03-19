@@ -168,17 +168,23 @@ export default function Dashboard({ user }: { user: any }) {
           )}
 
           {/* View mode toggle */}
-          <div className="flex bg-[var(--bg-tertiary)] rounded p-0.5">
-            <button
-              onClick={() => setViewMode('terminal')}
-              className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
-                viewMode === 'terminal'
-                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              Vibe Coding
-            </button>
+          <div className="flex items-center bg-[var(--bg-tertiary)] rounded p-0.5">
+            {/* Workspace */}
+            {(['terminal', 'projects', 'sessions'] as const).map(mode => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
+                  viewMode === mode
+                    ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                {{ terminal: 'Vibe Coding', projects: 'Projects', sessions: 'Sessions' }[mode]}
+              </button>
+            ))}
+            <span className="w-[2px] h-4 bg-[var(--text-secondary)]/30 mx-1.5" />
+            {/* Docs */}
             <button
               onClick={() => setViewMode('docs')}
               className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
@@ -189,56 +195,23 @@ export default function Dashboard({ user }: { user: any }) {
             >
               Docs
             </button>
-            <button
-              onClick={() => setViewMode('projects')}
-              className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
-                viewMode === 'projects'
-                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              Projects
-            </button>
-            <button
-              onClick={() => setViewMode('tasks')}
-              className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
-                viewMode === 'tasks'
-                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              Tasks
-            </button>
-            <button
-              onClick={() => setViewMode('pipelines')}
-              className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
-                viewMode === 'pipelines'
-                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              Pipelines
-            </button>
-            <button
-              onClick={() => setViewMode('sessions')}
-              className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
-                viewMode === 'sessions'
-                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              Sessions
-            </button>
-            <button
-              onClick={() => setViewMode('preview')}
-              className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
-                viewMode === 'preview'
-                  ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              Demo Preview
-            </button>
+            <span className="w-[2px] h-4 bg-[var(--text-secondary)]/30 mx-1.5" />
+            {/* Automation */}
+            {(['tasks', 'pipelines'] as const).map(mode => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
+                  viewMode === mode
+                    ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                {{ tasks: 'Tasks', pipelines: 'Pipelines' }[mode]}
+              </button>
+            ))}
+            <span className="w-[2px] h-4 bg-[var(--text-secondary)]/30 mx-1.5" />
+            {/* Skills */}
             <button
               onClick={() => setViewMode('skills')}
               className={`text-[11px] px-2.5 py-0.5 rounded transition-colors ${
@@ -266,13 +239,21 @@ export default function Dashboard({ user }: { user: any }) {
               + New Task
             </button>
           )}
+          {/* Tunnel + Preview */}
           <TunnelToggle />
+          <button
+            onClick={() => setViewMode('preview')}
+            className={`text-[10px] ${viewMode === 'preview' ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+          >
+            Preview
+          </button>
           {onlineCount.total > 0 && (
             <span className="text-[10px] text-[var(--text-secondary)] flex items-center gap-1" title={`${onlineCount.total} online${onlineCount.remote > 0 ? `, ${onlineCount.remote} remote` : ''}`}>
               <span className="text-green-500">●</span>
               {onlineCount.total}
             </span>
           )}
+          <span className="w-[2px] h-4 bg-[var(--text-secondary)]/30" />
           {/* Alerts */}
           <div className="relative">
             <button

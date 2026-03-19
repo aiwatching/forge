@@ -35,7 +35,7 @@ interface TabState {
   tree: SplitNode;
   ratios: Record<number, number>;
   activeId: number;
-  projectPath?: string;  // If set, auto-run claude --resume in this dir on session create
+  projectPath?: string;
 }
 
 // ─── Layout persistence ──────────────────────────────────────
@@ -187,9 +187,32 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
 
   // Restore shared state from server after mount
   useEffect(() => {
-    loadSharedState().then(saved => {
+    // Fetch settings for skipPermissions
+    fetch('/api/settings').then(r => r.json())
+      .then((s: any) => { if (s.skipPermissions) setSkipPermissions(true); })
+      .catch(() => {});
+    // Load state + projects together, then patch missing projectPath
+    Promise.all([
+      loadSharedState(),
+      fetch('/api/projects').then(r => r.json()).catch(() => []),
+    ]).then(([saved, projects]) => {
+      const projList: { name: string; path: string; root: string }[] = Array.isArray(projects) ? projects : [];
+      setAllProjects(projList);
+      setProjectRoots([...new Set(projList.map(p => p.root))]);
+
       if (saved && saved.tabs.length > 0) {
         initNextIdFromTabs(saved.tabs);
+        // Patch missing projectPath by matching tab label to project name
+        for (const tab of saved.tabs) {
+          if (!tab.projectPath) {
+            const match = projList.find(p => p.name.toLowerCase() === tab.label.toLowerCase());
+            if (match) {
+              tab.projectPath = match.path;
+              // Also patch tree node
+              if (tab.tree.type === 'terminal') tab.tree.projectPath = match.path;
+            }
+          }
+        }
         setTabs(saved.tabs);
         setActiveTabId(saved.activeTabId);
         sessionLabelsRef.current = saved.sessionLabels || {};
@@ -197,27 +220,24 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
       }
       setHydrated(true);
     });
-    // Fetch settings for skipPermissions
-    fetch('/api/settings').then(r => r.json())
-      .then((s: any) => { if (s.skipPermissions) setSkipPermissions(true); })
-      .catch(() => {});
-    // Fetch projects and derive roots
-    fetch('/api/projects').then(r => r.json())
-      .then((p: { name: string; path: string; root: string }[]) => {
-        if (!Array.isArray(p)) return;
-        setAllProjects(p);
-        const roots = [...new Set(p.map(proj => proj.root))];
-        setProjectRoots(roots);
-      })
-      .catch(() => {});
   }, []);
 
   // Persist to server on changes (debounced, only after hydration)
   const saveTimerRef = useRef(0);
   useEffect(() => {
     if (!hydrated) return;
-    // Sync session labels ref
-    const labels = { ...sessionLabelsRef.current };
+    // Collect all active session names from current tabs
+    const activeSessionNames = new Set<string>();
+    for (const tab of tabs) {
+      for (const sn of collectSessionNames(tab.tree)) {
+        activeSessionNames.add(sn);
+      }
+    }
+    // Only keep labels for active sessions (clean up stale entries)
+    const labels: Record<string, string> = {};
+    for (const sn of activeSessionNames) {
+      labels[sn] = sessionLabelsRef.current[sn] || '';
+    }
     for (const tab of tabs) {
       for (const sn of collectSessionNames(tab.tree)) {
         labels[sn] = tab.label;

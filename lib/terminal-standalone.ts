@@ -53,7 +53,17 @@ function loadTerminalState(): unknown {
 function saveTerminalState(data: unknown): void {
   try {
     mkdirSync(STATE_DIR, { recursive: true });
-    writeFileSync(STATE_FILE, JSON.stringify(data, null, 2));
+    const json = JSON.stringify(data, null, 2);
+    writeFileSync(STATE_FILE, json);
+    // Debug: check if projectPath is being saved
+    const parsed = JSON.parse(json);
+    if (parsed.tabs) {
+      for (const t of parsed.tabs) {
+        if (t.projectPath || t.tree?.projectPath) {
+          console.log(`[terminal] Saved tab "${t.label}" with projectPath: tab=${t.projectPath} tree=${t.tree?.projectPath}`);
+        }
+      }
+    }
   } catch (e) {
     console.error('[terminal] Failed to save state:', e);
   }

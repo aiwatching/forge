@@ -824,7 +824,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             onEdit={() => setEditingSecret({ field: 'telegramTunnelPassword', label: 'Admin Password' })}
           />
           <p className="text-[9px] text-[var(--text-secondary)]">
-            Forgot? Run: <code className="text-[var(--accent)]">forge server start --reset-password</code>
+            Forgot? Run: <code className="text-[var(--accent)]">forge --reset-password</code>
           </p>
         </div>
 

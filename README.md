@@ -93,7 +93,7 @@ forge password                  # show login password
 forge projects                  # list projects
 forge flows                     # list workflows
 forge run <flow>                # run a workflow
-forge server start --reset-password  # reset admin password
+forge --reset-password               # reset admin password
 ```
 
 ## Telegram Bot

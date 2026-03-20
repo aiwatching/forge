@@ -73,6 +73,18 @@ async function main() {
     process.exit(0);
   }
 
+  if (cmd === '--reset-password') {
+    // Shortcut: delegate to forge-server.mjs --reset-password
+    const { execSync } = await import('node:child_process');
+    const { join, dirname } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const serverScript = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'forge-server.mjs');
+    try {
+      execSync(`node ${serverScript} --reset-password`, { stdio: 'inherit' });
+    } catch {}
+    process.exit(0);
+  }
+
   switch (cmd) {
     case 'task':
     case 't': {
@@ -553,7 +565,7 @@ Shortcuts: t=task, ls=tasks, w=watch, s=status, l=log, f=flows, p=projects, pw=p
   }
 }
 
-const skipUpdateCheck = ['upgrade', 'uninstall', '--version', '-v'];
+const skipUpdateCheck = ['upgrade', 'uninstall', '--version', '-v', '--reset-password'];
 main().then(() => { if (!skipUpdateCheck.includes(cmd)) return checkForUpdate(); }).catch(err => {
   console.error(err.message);
   process.exit(1);

@@ -175,9 +175,28 @@ export async function GET(req: Request) {
   return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
 }
 
-// POST /api/skills/local — save edited file
+// POST /api/skills/local — save, install-local, delete-local
 export async function POST(req: Request) {
   const body = await req.json();
+  const action = body.action || 'save';
+
+  // Install local skill/command to another project or global
+  if (action === 'install-local') {
+    const { installLocal } = require('@/lib/skills');
+    const { name, type, sourceProject, target, force } = body;
+    const result = installLocal(name, type, sourceProject || undefined, target, !!force);
+    return NextResponse.json(result, { status: result.ok ? 200 : 400 });
+  }
+
+  // Delete local skill/command
+  if (action === 'delete-local') {
+    const { deleteLocal } = require('@/lib/skills');
+    const { name, type, project } = body;
+    const ok = deleteLocal(name, type, project || undefined);
+    return NextResponse.json({ ok });
+  }
+
+  // Save edited file (default action)
   const { name, type, project, path: filePath, content, expectedHash } = body;
 
   let fullPath: string;

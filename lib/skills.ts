@@ -104,10 +104,32 @@ export async function syncSkills(): Promise<{ synced: number; error?: string }> 
     // Support both v1 (flat skills array) and v2 (separate skills + commands)
     let items: any[] = [];
     if (data.version === 2) {
-      items = [
+      const rawItems = [
         ...(data.skills || []).map((s: any) => ({ ...s, type: s.type || 'skill' })),
         ...(data.commands || []).map((c: any) => ({ ...c, type: c.type || 'command' })),
       ];
+      // Always enrich from info.json for latest rating/score/version
+      items = await Promise.all(rawItems.map(async (s: any) => {
+        try {
+          const repoDir = s.type === 'skill' ? 'skills' : 'commands';
+          let infoRes = await fetch(`${baseUrl}/${repoDir}/${s.name}/info.json`, { signal: AbortSignal.timeout(5000) });
+          if (!infoRes.ok) {
+            const altDir = s.type === 'skill' ? 'commands' : 'skills';
+            infoRes = await fetch(`${baseUrl}/${altDir}/${s.name}/info.json`, { signal: AbortSignal.timeout(5000) });
+          }
+          if (infoRes.ok) {
+            const info = await infoRes.json();
+            return {
+              ...s,
+              version: info.version || s.version,
+              score: info.score ?? s.score ?? 0,
+              rating: info.rating ?? s.rating ?? 0,
+              description: info.description || s.description,
+            };
+          }
+        } catch {}
+        return s;
+      }));
     } else {
       // v1: enrich from info.json in parallel
       const rawItems = data.skills || [];
@@ -159,6 +181,18 @@ export async function syncSkills(): Promise<{ synced: number; error?: string }> 
       }
     });
     tx();
+
+    // Remove items no longer in registry (not installed locally)
+    const registryNames = new Set(items.map(s => s.name));
+    const dbItems = db().prepare('SELECT name, installed_global, installed_projects FROM skills').all() as any[];
+    for (const row of dbItems) {
+      if (!registryNames.has(row.name)) {
+        const hasLocal = !!row.installed_global || JSON.parse(row.installed_projects || '[]').length > 0;
+        if (!hasLocal) {
+          db().prepare('DELETE FROM skills WHERE name = ?').run(row.name);
+        }
+      }
+    }
 
     return { synced: items.length };
   } catch (e) {
@@ -429,4 +463,85 @@ export async function checkLocalModified(name: string): Promise<boolean> {
   }
 
   return false;
+}
+
+// ─── Local-to-local install (copy between projects/global) ───
+
+/** Recursively copy a directory */
+function copyDir(src: string, dest: string): void {
+  if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
+  for (const entry of readdirSync(src, { withFileTypes: true })) {
+    const srcPath = join(src, entry.name);
+    const destPath = join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDir(srcPath, destPath);
+    } else {
+      writeFileSync(destPath, readFileSync(srcPath));
+    }
+  }
+}
+
+/** Resolve the source path for a local skill/command */
+function resolveLocalSource(name: string, type: string, sourceProject?: string): string | null {
+  const base = sourceProject ? join(sourceProject, '.claude') : join(getClaudeDir());
+  if (type === 'skill') {
+    const dir = join(base, 'skills', name);
+    if (existsSync(dir)) return dir;
+  } else {
+    const file = join(base, 'commands', `${name}.md`);
+    if (existsSync(file)) return file;
+    const dir = join(base, 'commands', name);
+    if (existsSync(dir)) return dir;
+  }
+  return null;
+}
+
+/** Install a local skill/command to a target (global or project path). Force=overwrite existing. */
+export function installLocal(name: string, type: string, sourceProject: string | undefined, target: string, force?: boolean): { ok: boolean; error?: string } {
+  const src = resolveLocalSource(name, type, sourceProject);
+  if (!src) return { ok: false, error: 'Source not found' };
+
+  const isGlobal = target === 'global';
+  const isFile = !existsSync(src) ? false : require('node:fs').statSync(src).isFile();
+
+  if (type === 'skill') {
+    const dest = isGlobal
+      ? join(GLOBAL_SKILLS_DIR, name)
+      : join(target, '.claude', 'skills', name);
+    if (existsSync(dest) && !force) return { ok: false, error: 'Already installed. Use force to overwrite.' };
+    if (existsSync(dest)) rmSync(dest, { recursive: true });
+    copyDir(src, dest);
+  } else {
+    const destBase = isGlobal ? GLOBAL_COMMANDS_DIR : join(target, '.claude', 'commands');
+    if (!existsSync(destBase)) mkdirSync(destBase, { recursive: true });
+    if (isFile) {
+      const destFile = join(destBase, `${name}.md`);
+      if (existsSync(destFile) && !force) return { ok: false, error: 'Already installed. Use force to overwrite.' };
+      writeFileSync(destFile, readFileSync(src));
+    } else {
+      const dest = join(destBase, name);
+      if (existsSync(dest) && !force) return { ok: false, error: 'Already installed. Use force to overwrite.' };
+      if (existsSync(dest)) rmSync(dest, { recursive: true });
+      copyDir(src, dest);
+    }
+  }
+
+  return { ok: true };
+}
+
+/** Delete a local skill/command from a specific project or global */
+export function deleteLocal(name: string, type: string, projectPath?: string): boolean {
+  const base = projectPath ? join(projectPath, '.claude') : getClaudeDir();
+  if (type === 'skill') {
+    const dir = join(base, 'skills', name);
+    try { rmSync(dir, { recursive: true }); return true; } catch { return false; }
+  } else {
+    // Try file first, then directory
+    const file = join(base, 'commands', `${name}.md`);
+    const dir = join(base, 'commands', name);
+    let deleted = false;
+    try { unlinkSync(file); deleted = true; } catch {}
+    try { rmSync(dir, { recursive: true }); deleted = true; } catch {}
+    return deleted;
+  }
 }

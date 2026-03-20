@@ -169,13 +169,14 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
     } catch { setSkillFiles([]); }
   };
 
-  const loadFile = async (skillName: string, filePath: string, isLocalItem?: boolean, localType?: string) => {
+  const loadFile = async (skillName: string, filePath: string, isLocalItem?: boolean, localType?: string, localProject?: string) => {
     setActiveFile(filePath);
     setFileContent('Loading...');
     try {
       let res;
       if (isLocalItem) {
-        res = await fetch(`/api/skills/local?action=read&name=${encodeURIComponent(skillName)}&type=${localType || 'command'}&path=${encodeURIComponent(filePath)}`);
+        const projectParam = localProject ? `&project=${encodeURIComponent(localProject)}` : '';
+        res = await fetch(`/api/skills/local?action=read&name=${encodeURIComponent(skillName)}&type=${localType || 'command'}&path=${encodeURIComponent(filePath)}${projectParam}`);
       } else {
         res = await fetch(`/api/skills?action=file&name=${encodeURIComponent(skillName)}&path=${encodeURIComponent(filePath)}`);
       }
@@ -435,7 +436,6 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                       {skill?.hasUpdate && (
                         <button
                           onClick={async () => {
-                            // Re-install to update (global if globally installed, plus all project installs)
                             if (skill.installedGlobal) await install(skill.name, 'global');
                             for (const pp of skill.installedProjects) await install(skill.name, pp);
                           }}
@@ -443,6 +443,66 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                         >
                           Update
                         </button>
+                      )}
+
+                      {/* Local item actions: install to other projects, delete */}
+                      {isLocal && localItem && (
+                        <>
+                          <div className="relative ml-auto">
+                            <button
+                              onClick={() => setInstallTarget(prev =>
+                                prev.skill === itemName && prev.show ? { skill: '', show: false } : { skill: itemName, show: true }
+                              )}
+                              className="text-[9px] px-2 py-1 border border-[var(--accent)] text-[var(--accent)] rounded hover:bg-[var(--accent)] hover:text-white transition-colors"
+                            >
+                              Install to...
+                            </button>
+                            {installTarget.skill === itemName && installTarget.show && (
+                              <>
+                                <div className="fixed inset-0 z-40" onClick={() => setInstallTarget({ skill: '', show: false })} />
+                                <div className="absolute right-0 top-7 w-[200px] bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg shadow-xl z-50 py-1">
+                                  <button
+                                    onClick={async () => {
+                                      const res = await fetch('/api/skills/local', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ action: 'install-local', name: itemName, type: localItem.type, sourceProject: localItem.projectPath, target: 'global', force: true }) });
+                                      const data = await res.json();
+                                      if (!data.ok) alert(data.error);
+                                      setInstallTarget({ skill: '', show: false });
+                                      fetchSkills();
+                                    }}
+                                    className="w-full text-left text-[10px] px-3 py-1.5 hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)]"
+                                  >Global (~/.claude)</button>
+                                  <div className="border-t border-[var(--border)] my-0.5" />
+                                  {projects.map(p => (
+                                    <button
+                                      key={p.path}
+                                      onClick={async () => {
+                                        const res = await fetch('/api/skills/local', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ action: 'install-local', name: itemName, type: localItem.type, sourceProject: localItem.projectPath, target: p.path, force: true }) });
+                                        const data = await res.json();
+                                        if (!data.ok) alert(data.error);
+                                        setInstallTarget({ skill: '', show: false });
+                                        fetchSkills();
+                                      }}
+                                      className="w-full text-left text-[10px] px-3 py-1.5 hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)] truncate"
+                                      title={p.path}
+                                    >{p.name}</button>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                          <button
+                            onClick={async () => {
+                              if (!confirm(`Delete "${itemName}" from ${localScope}?`)) return;
+                              await fetch('/api/skills/local', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: 'delete-local', name: itemName, type: localItem.type, project: localItem.projectPath }) });
+                              setExpandedSkill(null);
+                              fetchSkills();
+                            }}
+                            className="text-[9px] text-[var(--red)] hover:underline"
+                          >Delete</button>
+                        </>
                       )}
 
                       {/* Install dropdown — registry items only */}
@@ -519,7 +579,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                           f.type === 'file' ? (
                             <button
                               key={f.path}
-                              onClick={() => loadFile(itemName, f.path, isLocal, localItem?.type)}
+                              onClick={() => loadFile(itemName, f.path, isLocal, localItem?.type, localItem?.projectPath)}
                               className={`w-full text-left px-2 py-1 text-[10px] truncate ${
                                 activeFile === f.path
                                   ? 'bg-[var(--accent)]/15 text-[var(--accent)]'

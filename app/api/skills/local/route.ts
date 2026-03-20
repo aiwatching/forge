@@ -42,8 +42,8 @@ function resolveDir(name: string, type: string, projectPath?: string): string {
 }
 
 /** Scan a directory for all installed skills/commands */
-function scanLocalItems(projectPath?: string): { name: string; type: 'skill' | 'command'; scope: 'global' | 'project'; fileCount: number }[] {
-  const items: { name: string; type: 'skill' | 'command'; scope: 'global' | 'project'; fileCount: number }[] = [];
+function scanLocalItems(projectPath?: string): { name: string; type: 'skill' | 'command'; scope: string; fileCount: number; projectPath?: string }[] {
+  const items: { name: string; type: 'skill' | 'command'; scope: string; fileCount: number; projectPath?: string }[] = [];
 
   // Scan skills directories
   const skillsDirs = [
@@ -104,6 +104,29 @@ export async function GET(req: Request) {
   const projectPath = searchParams.get('project') || '';
 
   if (action === 'scan') {
+    const scanAll = searchParams.get('all') === '1';
+    if (scanAll) {
+      // Scan global + all configured projects
+      const { loadSettings } = require('@/lib/settings');
+      const settings = loadSettings();
+      const allItems: any[] = [];
+      // Global
+      allItems.push(...scanLocalItems());
+      // All projects
+      for (const root of (settings.projectRoots || [])) {
+        const resolvedRoot = root.replace(/^~/, homedir());
+        if (!existsSync(resolvedRoot)) continue;
+        for (const entry of readdirSync(resolvedRoot, { withFileTypes: true })) {
+          if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+          const pp = join(resolvedRoot, entry.name);
+          const projItems = scanLocalItems(pp)
+            .filter(i => i.scope === 'project')
+            .map(i => ({ ...i, projectPath: pp, scope: entry.name }));
+          allItems.push(...projItems);
+        }
+      }
+      return NextResponse.json({ items: allItems });
+    }
     const items = scanLocalItems(projectPath || undefined);
     return NextResponse.json({ items });
   }

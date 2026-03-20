@@ -204,6 +204,18 @@ export default function ProjectManager() {
     if (selectedProject) fetchProjectSkills(selectedProject.path);
   };
 
+  const uninstallSkill = async (name: string, scope: string) => {
+    const target = scope === 'global' ? 'global' : (selectedProject?.path || '');
+    const label = scope === 'global' ? 'global' : selectedProject?.name || 'project';
+    if (!confirm(`Uninstall "${name}" from ${label}?`)) return;
+    await fetch('/api/skills', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'uninstall', name, target }),
+    });
+    if (selectedProject) fetchProjectSkills(selectedProject.path);
+  };
+
   const fetchProjectSkills = useCallback(async (projectPath: string) => {
     try {
       // Fetch registry skills (with update info)
@@ -561,7 +573,7 @@ export default function ProjectManager() {
                       <div key={`${s.name}-${s.scope}-${s.source}`}>
                         <button
                           onClick={() => toggleSkillItem(s.name, s.type, s.scope)}
-                          className={`w-full text-left px-2 py-1 text-[10px] rounded flex items-center gap-1.5 ${
+                          className={`w-full text-left px-2 py-1 text-[10px] rounded flex items-center gap-1.5 group ${
                             expandedSkillItem === s.name ? 'bg-[var(--accent)]/10 text-[var(--accent)]' : 'text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]'
                           }`}
                         >
@@ -573,6 +585,11 @@ export default function ProjectManager() {
                           <span className={`text-[7px] shrink-0 ${s.scope === 'global' ? 'text-green-400' : 'text-[var(--accent)]'}`}>{s.scope === 'global' ? 'G' : s.scope === 'project' ? 'P' : 'G+P'}</span>
                           {s.hasUpdate && <span className="text-[7px] text-[var(--yellow)] shrink-0">!</span>}
                           {s.source === 'local' && <span className="text-[7px] text-[var(--text-secondary)] shrink-0">local</span>}
+                          {s.source === 'registry' && <span className="text-[7px] text-[var(--accent)] shrink-0">mkt</span>}
+                          <span
+                            onClick={(e) => { e.stopPropagation(); uninstallSkill(s.name, s.scope); }}
+                            className="text-[8px] text-[var(--text-secondary)] hover:text-[var(--red)] shrink-0 opacity-0 group-hover:opacity-100 cursor-pointer"
+                          >x</span>
                         </button>
                         {/* Expanded file list */}
                         {expandedSkillItem === s.name && skillItemFiles.length > 0 && (

@@ -32,7 +32,9 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
   const [loading, setLoading] = useState(true);
   const [installTarget, setInstallTarget] = useState<{ skill: string; show: boolean }>({ skill: '', show: false });
   const [typeFilter, setTypeFilter] = useState<'all' | 'skill' | 'command' | 'local'>('all');
-  const [localItems, setLocalItems] = useState<{ name: string; type: string; scope: string; fileCount: number }[]>([]);
+  const [localItems, setLocalItems] = useState<{ name: string; type: string; scope: string; fileCount: number; projectPath?: string }[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [collapsedLocalSections, setCollapsedLocalSections] = useState<Set<string>>(new Set());
   const [expandedSkill, setExpandedSkill] = useState<string | null>(null);
   const [skillFiles, setSkillFiles] = useState<{ name: string; path: string; type: string }[]>([]);
   const [activeFile, setActiveFile] = useState<string | null>(null);
@@ -42,7 +44,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
     try {
       const [registryRes, localRes] = await Promise.all([
         fetch('/api/skills'),
-        fetch('/api/skills/local?action=scan'),
+        fetch('/api/skills/local?action=scan&all=1'),
       ]);
       const data = await registryRes.json();
       setSkills(data.skills || []);
@@ -123,10 +125,33 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
     fetchSkills();
   };
 
-  // Filter by project and/or type
+  // Filter by project, type, and search
+  const q = searchQuery.toLowerCase();
   const filtered = typeFilter === 'local' ? [] : skills
     .filter(s => projectFilter ? (s.installedGlobal || s.installedProjects.includes(projectFilter)) : true)
-    .filter(s => typeFilter === 'all' ? true : s.type === typeFilter);
+    .filter(s => typeFilter === 'all' ? true : s.type === typeFilter)
+    .filter(s => !q || s.name.toLowerCase().includes(q) || s.displayName.toLowerCase().includes(q) || s.description.toLowerCase().includes(q));
+
+  const filteredLocal = localItems
+    .filter(item => typeFilter === 'local' || typeFilter === 'all' || item.type === typeFilter)
+    .filter(item => !q || item.name.toLowerCase().includes(q));
+
+  // Group local items by scope
+  const localGroups = new Map<string, typeof localItems>();
+  for (const item of filteredLocal) {
+    const key = item.scope;
+    if (!localGroups.has(key)) localGroups.set(key, []);
+    localGroups.get(key)!.push(item);
+  }
+
+  const toggleLocalSection = (section: string) => {
+    setCollapsedLocalSections(prev => {
+      const next = new Set(prev);
+      if (next.has(section)) next.delete(section);
+      else next.add(section);
+      return next;
+    });
+  };
 
   const skillCount = skills.filter(s => s.type === 'skill').length;
   const commandCount = skills.filter(s => s.type === 'command').length;
@@ -165,6 +190,16 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
         >
           {syncing ? 'Syncing...' : 'Sync'}
         </button>
+      </div>
+      {/* Search */}
+      <div className="px-3 py-1.5 border-b border-[var(--border)] shrink-0">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder="Search skills & commands..."
+          className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent)]"
+        />
       </div>
 
       {skills.length === 0 ? (
@@ -212,59 +247,80 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                 </div>
               );
             })}
-            {/* Local (global) items — shown in all tabs or dedicated Local tab */}
-            {(typeFilter === 'all' || typeFilter === 'local') && localItems.length > 0 && (
+            {/* Local items — collapsible by scope group */}
+            {(typeFilter === 'all' || typeFilter === 'local') && filteredLocal.length > 0 && (
               <>
-                {typeFilter !== 'local' && <div className="px-3 py-1 text-[8px] text-[var(--text-secondary)] uppercase bg-[var(--bg-tertiary)] border-b border-[var(--border)]/50">Global Local</div>}
-                {localItems
-                  .filter(item => typeFilter === 'local' || typeFilter === 'all' || item.type === typeFilter)
-                  .map(item => {
-                    const isActive = expandedSkill === `local:${item.name}`;
-                    return (
-                      <div
-                        key={`local:${item.name}`}
-                        className={`px-3 py-2.5 border-b border-[var(--border)]/50 cursor-pointer ${
-                          isActive ? 'bg-[var(--accent)]/10 border-l-2 border-l-[var(--accent)]' : 'hover:bg-[var(--bg-tertiary)] border-l-2 border-l-transparent'
-                        }`}
-                        onClick={() => {
-                          const key = `local:${item.name}`;
-                          if (expandedSkill === key) { setExpandedSkill(null); return; }
-                          setExpandedSkill(key);
-                          setSkillFiles([]);
-                          setActiveFile(null);
-                          setFileContent('');
-                          // Fetch files from local API
-                          fetch(`/api/skills/local?action=files&name=${encodeURIComponent(item.name)}&type=${item.type}`)
-                            .then(r => r.json())
-                            .then(d => {
-                              const files = (d.files || []).map((f: any) => ({ name: f.path.split('/').pop(), path: f.path, type: 'file' }));
-                              setSkillFiles(files);
-                              const first = files.find((f: any) => f.name?.endsWith('.md'));
-                              if (first) {
-                                setActiveFile(first.path);
-                                fetch(`/api/skills/local?action=read&name=${encodeURIComponent(item.name)}&type=${item.type}&path=${encodeURIComponent(first.path)}`)
+                {/* Local section header — collapsible */}
+                {typeFilter !== 'local' && (
+                  <button
+                    onClick={() => toggleLocalSection('__local__')}
+                    className="w-full px-3 py-1 text-[8px] text-[var(--text-secondary)] uppercase bg-[var(--bg-tertiary)] border-b border-[var(--border)]/50 flex items-center gap-1 hover:text-[var(--text-primary)]"
+                  >
+                    <span>{collapsedLocalSections.has('__local__') ? '▸' : '▾'}</span>
+                    Local ({filteredLocal.length})
+                  </button>
+                )}
+                {(typeFilter === 'local' || !collapsedLocalSections.has('__local__')) && (
+                  <>
+                    {[...localGroups.entries()].sort(([a], [b]) => a === 'global' ? -1 : b === 'global' ? 1 : a.localeCompare(b)).map(([scope, items]) => (
+                      <div key={scope}>
+                        {/* Scope group header — collapsible */}
+                        <button
+                          onClick={() => toggleLocalSection(scope)}
+                          className="w-full px-3 py-1 text-[8px] text-[var(--text-secondary)] border-b border-[var(--border)]/30 flex items-center gap-1.5 hover:bg-[var(--bg-tertiary)]"
+                        >
+                          <span className="text-[7px]">{collapsedLocalSections.has(scope) ? '▸' : '▾'}</span>
+                          <span className={scope === 'global' ? 'text-green-400' : 'text-[var(--accent)]'}>{scope}</span>
+                          <span className="text-[var(--text-secondary)]">({items.length})</span>
+                        </button>
+                        {!collapsedLocalSections.has(scope) && items.map(item => {
+                          const key = `local:${item.name}:${item.scope}`;
+                          const isActive = expandedSkill === key;
+                          const projectParam = item.projectPath ? encodeURIComponent(item.projectPath) : '';
+                          return (
+                            <div
+                              key={key}
+                              className={`px-3 py-2 border-b border-[var(--border)]/50 cursor-pointer ${
+                                isActive ? 'bg-[var(--accent)]/10 border-l-2 border-l-[var(--accent)]' : 'hover:bg-[var(--bg-tertiary)] border-l-2 border-l-transparent'
+                              }`}
+                              onClick={() => {
+                                if (expandedSkill === key) { setExpandedSkill(null); return; }
+                                setExpandedSkill(key);
+                                setSkillFiles([]);
+                                setActiveFile(null);
+                                setFileContent('');
+                                const fetchUrl = `/api/skills/local?action=files&name=${encodeURIComponent(item.name)}&type=${item.type}${projectParam ? `&project=${projectParam}` : ''}`;
+                                fetch(fetchUrl)
                                   .then(r => r.json())
-                                  .then(rd => setFileContent(rd.content || ''))
+                                  .then(d => {
+                                    const files = (d.files || []).map((f: any) => ({ name: f.path.split('/').pop(), path: f.path, type: 'file' }));
+                                    setSkillFiles(files);
+                                    const first = files.find((f: any) => f.name?.endsWith('.md'));
+                                    if (first) {
+                                      setActiveFile(first.path);
+                                      fetch(`/api/skills/local?action=read&name=${encodeURIComponent(item.name)}&type=${item.type}&path=${encodeURIComponent(first.path)}${projectParam ? `&project=${projectParam}` : ''}`)
+                                        .then(r => r.json())
+                                        .then(rd => setFileContent(rd.content || ''))
+                                        .catch(() => {});
+                                    }
+                                  })
                                   .catch(() => {});
-                              }
-                            })
-                            .catch(() => {});
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-semibold text-[var(--text-primary)] truncate flex-1">{item.name}</span>
-                          <span className="text-[7px] px-1 rounded bg-[var(--bg-secondary)] text-[var(--text-secondary)]">{item.scope}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 mt-1">
-                          <span className={`text-[7px] px-1 rounded font-medium ${
-                            item.type === 'skill' ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'
-                          }`}>{item.type === 'skill' ? 'SKILL' : 'CMD'}</span>
-                          <span className="text-[8px] text-[var(--text-secondary)]">{item.fileCount} file{item.fileCount > 1 ? 's' : ''}</span>
-                          <span className="text-[7px] px-1 rounded bg-green-500/10 text-green-400 ml-auto">local</span>
-                        </div>
+                              }}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className={`text-[7px] px-1 rounded font-medium ${
+                                  item.type === 'skill' ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'
+                                }`}>{item.type === 'skill' ? 'S' : 'C'}</span>
+                                <span className="text-[10px] text-[var(--text-primary)] truncate flex-1">{item.name}</span>
+                                <span className="text-[8px] text-[var(--text-secondary)]">{item.fileCount}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
+                    ))}
+                  </>
+                )}
               </>
             )}
           </div>
@@ -358,13 +414,13 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                         {skill.installedGlobal && (
                           <span className="flex items-center gap-1 text-[8px] text-[var(--green)]">
                             Global
-                            <button onClick={() => uninstall(skill.name, 'global')} className="text-[var(--text-secondary)] hover:text-[var(--red)]">x</button>
+                            <button onClick={() => { if (confirm(`Uninstall "${skill.name}" from global?`)) uninstall(skill.name, 'global'); }} className="text-[var(--text-secondary)] hover:text-[var(--red)]">x</button>
                           </span>
                         )}
                         {skill.installedProjects.map(pp => (
                           <span key={pp} className="flex items-center gap-1 text-[8px] text-[var(--accent)]">
                             {pp.split('/').pop()}
-                            <button onClick={() => uninstall(skill.name, pp)} className="text-[var(--text-secondary)] hover:text-[var(--red)]">x</button>
+                            <button onClick={() => { if (confirm(`Uninstall "${skill.name}" from ${pp.split('/').pop()}?`)) uninstall(skill.name, pp); }} className="text-[var(--text-secondary)] hover:text-[var(--red)]">x</button>
                           </span>
                         ))}
                       </div>

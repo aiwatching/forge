@@ -13,6 +13,7 @@ interface Skill {
   version: string;
   tags: string[];
   score: number;
+  rating: number;
   sourceUrl: string;
   installedGlobal: boolean;
   installedVersion: string;
@@ -31,8 +32,20 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
   const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [installTarget, setInstallTarget] = useState<{ skill: string; show: boolean }>({ skill: '', show: false });
-  const [typeFilter, setTypeFilter] = useState<'all' | 'skill' | 'command' | 'local'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'skill' | 'command' | 'local' | 'rules'>('all');
   const [localItems, setLocalItems] = useState<{ name: string; type: string; scope: string; fileCount: number; projectPath?: string }[]>([]);
+  // Rules (CLAUDE.md templates)
+  const [rulesTemplates, setRulesTemplates] = useState<{ id: string; name: string; description: string; tags: string[]; builtin: boolean; isDefault: boolean; content: string }[]>([]);
+  const [rulesProjects, setRulesProjects] = useState<{ name: string; path: string }[]>([]);
+  const [rulesSelectedTemplate, setRulesSelectedTemplate] = useState<string | null>(null);
+  const [rulesEditing, setRulesEditing] = useState(false);
+  const [rulesEditId, setRulesEditId] = useState('');
+  const [rulesEditName, setRulesEditName] = useState('');
+  const [rulesEditDesc, setRulesEditDesc] = useState('');
+  const [rulesEditContent, setRulesEditContent] = useState('');
+  const [rulesEditDefault, setRulesEditDefault] = useState(false);
+  const [rulesShowNew, setRulesShowNew] = useState(false);
+  const [rulesBatchProjects, setRulesBatchProjects] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [collapsedLocalSections, setCollapsedLocalSections] = useState<Set<string>>(new Set());
   const [expandedSkill, setExpandedSkill] = useState<string | null>(null);
@@ -58,6 +71,61 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
   }, []);
 
   useEffect(() => { fetchSkills(); }, [fetchSkills]);
+
+  const fetchRules = useCallback(async () => {
+    try {
+      const res = await fetch('/api/claude-templates?action=list');
+      const data = await res.json();
+      setRulesTemplates(data.templates || []);
+      setRulesProjects(data.projects || []);
+    } catch {}
+  }, []);
+
+  useEffect(() => { if (typeFilter === 'rules') fetchRules(); }, [typeFilter, fetchRules]);
+
+  const saveRule = async () => {
+    if (!rulesEditId || !rulesEditName || !rulesEditContent) return;
+    await fetch('/api/claude-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save', id: rulesEditId, name: rulesEditName, description: rulesEditDesc, tags: [], content: rulesEditContent, isDefault: rulesEditDefault }),
+    });
+    setRulesEditing(false);
+    setRulesShowNew(false);
+    fetchRules();
+  };
+
+  const deleteRule = async (id: string) => {
+    if (!confirm(`Delete template "${id}"?`)) return;
+    await fetch('/api/claude-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete', id }),
+    });
+    if (rulesSelectedTemplate === id) setRulesSelectedTemplate(null);
+    fetchRules();
+  };
+
+  const toggleDefault = async (id: string, isDefault: boolean) => {
+    await fetch('/api/claude-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'set-default', id, isDefault }),
+    });
+    fetchRules();
+  };
+
+  const batchInject = async (templateId: string) => {
+    const projects = [...rulesBatchProjects];
+    if (!projects.length) return;
+    await fetch('/api/claude-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'inject', templateId, projects }),
+    });
+    setRulesBatchProjects(new Set());
+    fetchRules();
+  };
 
   const sync = async () => {
     setSyncing(true);
@@ -168,7 +236,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-[var(--text-primary)]">Marketplace</span>
           <div className="flex items-center bg-[var(--bg-tertiary)] rounded p-0.5">
-            {([['all', `All (${skills.length})`], ['skill', `Skills (${skillCount})`], ['command', `Commands (${commandCount})`], ['local', `Local (${localCount})`]] as const).map(([value, label]) => (
+            {([['all', `All (${skills.length})`], ['skill', `Skills (${skillCount})`], ['command', `Commands (${commandCount})`], ['local', `Local (${localCount})`], ['rules', 'Rules']] as const).map(([value, label]) => (
               <button
                 key={value}
                 onClick={() => setTypeFilter(value)}
@@ -191,8 +259,8 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
           {syncing ? 'Syncing...' : 'Sync'}
         </button>
       </div>
-      {/* Search */}
-      <div className="px-3 py-1.5 border-b border-[var(--border)] shrink-0">
+      {/* Search — hide on rules tab */}
+      {typeFilter !== 'rules' && <div className="px-3 py-1.5 border-b border-[var(--border)] shrink-0">
         <input
           type="text"
           value={searchQuery}
@@ -200,9 +268,9 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
           placeholder="Search skills & commands..."
           className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent)]"
         />
-      </div>
+      </div>}
 
-      {skills.length === 0 ? (
+      {typeFilter === 'rules' ? null : skills.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-2 text-[var(--text-secondary)]">
           <p className="text-xs">No skills yet</p>
           <button onClick={sync} className="text-xs px-3 py-1 bg-[var(--accent)] text-white rounded hover:opacity-90">
@@ -228,8 +296,13 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] font-semibold text-[var(--text-primary)] truncate flex-1">{skill.displayName}</span>
                     <span className="text-[8px] text-[var(--text-secondary)] font-mono shrink-0">v{skill.version}</span>
-                    {skill.score > 0 && (
-                      <span className="text-[8px] text-[var(--yellow)] shrink-0">{skill.score}pt</span>
+                    {skill.rating > 0 && (
+                      <span className="text-[8px] text-[var(--yellow)] shrink-0" title={`Rating: ${skill.rating}/5`}>
+                        {'★'.repeat(Math.round(skill.rating))}{'☆'.repeat(5 - Math.round(skill.rating))}
+                      </span>
+                    )}
+                    {skill.score > 0 && !skill.rating && (
+                      <span className="text-[8px] text-[var(--text-secondary)] shrink-0">{skill.score}pt</span>
                     )}
                   </div>
                   <p className="text-[9px] text-[var(--text-secondary)] mt-0.5 line-clamp-1">{skill.description}</p>
@@ -329,9 +402,12 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
           <div className="flex-1 flex flex-col min-w-0">
             {expandedSkill ? (() => {
               const isLocal = expandedSkill.startsWith('local:');
-              const itemName = isLocal ? expandedSkill.slice(6) : expandedSkill;
+              // Key format: "local:<name>:<scope>" — extract name (could contain colons in scope)
+              const localParts = isLocal ? expandedSkill.slice(6).split(':') : [];
+              const itemName = isLocal ? localParts[0] : expandedSkill;
+              const localScope = isLocal ? localParts.slice(1).join(':') : '';
               const skill = isLocal ? null : skills.find(s => s.name === expandedSkill);
-              const localItem = isLocal ? localItems.find(i => i.name === itemName) : null;
+              const localItem = isLocal ? localItems.find(i => i.name === itemName && i.scope === localScope) : null;
               if (!skill && !localItem) return null;
               const isInstalled = skill ? (skill.installedGlobal || skill.installedProjects.length > 0) : true;
               return (
@@ -348,7 +424,12 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                       {skill?.installedVersion && skill.installedVersion !== skill.version && (
                         <span className="text-[9px] text-[var(--yellow)] font-mono">installed: v{skill.installedVersion}</span>
                       )}
-                      {skill && skill.score > 0 && <span className="text-[9px] text-[var(--yellow)]">{skill.score}pt</span>}
+                      {skill && skill.rating > 0 && (
+                        <span className="text-[9px] text-[var(--yellow)]" title={`Rating: ${skill.rating}/5`}>
+                          {'★'.repeat(Math.round(skill.rating))}{'☆'.repeat(5 - Math.round(skill.rating))}
+                        </span>
+                      )}
+                      {skill && skill.score > 0 && <span className="text-[9px] text-[var(--text-secondary)]">{skill.score}pt</span>}
 
                       {/* Update button */}
                       {skill?.hasUpdate && (
@@ -487,6 +568,174 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
             })() : (
               <div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">
                 <p className="text-xs">Select a skill to view details</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Rules (CLAUDE.md Templates) — full-page view */}
+      {typeFilter === 'rules' && (
+        <div className="flex-1 flex min-h-0">
+          {/* Left: template list */}
+          <div className="w-56 border-r border-[var(--border)] overflow-y-auto shrink-0 flex flex-col">
+            <div className="px-3 py-1.5 border-b border-[var(--border)] flex items-center justify-between">
+              <span className="text-[9px] text-[var(--text-secondary)] uppercase">Rule Templates</span>
+              <button
+                onClick={() => { setRulesShowNew(true); setRulesEditing(true); setRulesEditId(''); setRulesEditName(''); setRulesEditDesc(''); setRulesEditContent(''); setRulesEditDefault(false); setRulesSelectedTemplate(null); }}
+                className="text-[9px] text-[var(--accent)] hover:underline"
+              >+ New</button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {rulesTemplates.map(t => {
+                const isActive = rulesSelectedTemplate === t.id;
+                return (
+                  <div
+                    key={t.id}
+                    className={`px-3 py-2 border-b border-[var(--border)]/50 cursor-pointer ${
+                      isActive ? 'bg-[var(--accent)]/10 border-l-2 border-l-[var(--accent)]' : 'hover:bg-[var(--bg-tertiary)] border-l-2 border-l-transparent'
+                    }`}
+                    onClick={() => { setRulesSelectedTemplate(t.id); setRulesEditing(false); setRulesShowNew(false); }}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-[var(--text-primary)] truncate flex-1">{t.name}</span>
+                      {t.builtin && <span className="text-[7px] text-[var(--text-secondary)]">built-in</span>}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleDefault(t.id, !t.isDefault); }}
+                        className={`text-[7px] px-1 rounded ${t.isDefault ? 'bg-[var(--accent)]/20 text-[var(--accent)]' : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+                        title={t.isDefault ? 'Default: auto-applied to new projects' : 'Click to set as default'}
+                      >{t.isDefault ? 'default' : 'set default'}</button>
+                    </div>
+                    <p className="text-[8px] text-[var(--text-secondary)] mt-0.5 line-clamp-1">{t.description}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Right: template detail / editor / batch apply */}
+          <div className="flex-1 flex flex-col min-w-0">
+            {rulesShowNew || rulesEditing ? (
+              /* Edit / New form */
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <div className="px-4 py-2 border-b border-[var(--border)] shrink-0">
+                  <div className="text-[11px] font-semibold text-[var(--text-primary)]">{rulesShowNew ? 'New Rule Template' : 'Edit Template'}</div>
+                </div>
+                <div className="flex-1 overflow-auto p-4 space-y-3">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={rulesEditId}
+                      onChange={e => setRulesEditId(e.target.value.replace(/[^a-z0-9-]/g, ''))}
+                      placeholder="template-id (kebab-case)"
+                      disabled={!rulesShowNew}
+                      className="flex-1 px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)] font-mono disabled:opacity-50"
+                    />
+                    <input
+                      type="text"
+                      value={rulesEditName}
+                      onChange={e => setRulesEditName(e.target.value)}
+                      placeholder="Display Name"
+                      className="flex-1 px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)]"
+                    />
+                  </div>
+                  <input
+                    type="text"
+                    value={rulesEditDesc}
+                    onChange={e => setRulesEditDesc(e.target.value)}
+                    placeholder="Description"
+                    className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)]"
+                  />
+                  <textarea
+                    value={rulesEditContent}
+                    onChange={e => setRulesEditContent(e.target.value)}
+                    placeholder="Template content (markdown)..."
+                    className="w-full flex-1 min-h-[200px] p-2 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] font-mono text-[var(--text-primary)] resize-none"
+                    spellCheck={false}
+                  />
+                  <div className="flex items-center gap-3">
+                    <label className="flex items-center gap-1.5 text-[10px] text-[var(--text-secondary)] cursor-pointer">
+                      <input type="checkbox" checked={rulesEditDefault} onChange={e => setRulesEditDefault(e.target.checked)} className="accent-[var(--accent)]" />
+                      Auto-apply to new projects
+                    </label>
+                    <div className="flex gap-2 ml-auto">
+                      <button onClick={saveRule} className="text-[10px] px-3 py-1 bg-[var(--accent)] text-white rounded hover:opacity-90">Save</button>
+                      <button onClick={() => { setRulesEditing(false); setRulesShowNew(false); }} className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]">Cancel</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : rulesSelectedTemplate ? (() => {
+              const tmpl = rulesTemplates.find(t => t.id === rulesSelectedTemplate);
+              if (!tmpl) return null;
+              return (
+                <div className="flex-1 flex flex-col overflow-hidden">
+                  {/* Template header */}
+                  <div className="px-4 py-2 border-b border-[var(--border)] shrink-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-[var(--text-primary)]">{tmpl.name}</span>
+                      {tmpl.builtin && <span className="text-[8px] px-1 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">built-in</span>}
+                      <div className="ml-auto flex gap-1.5">
+                        <button
+                          onClick={() => { setRulesEditing(true); setRulesShowNew(false); setRulesEditId(tmpl.id); setRulesEditName(tmpl.name); setRulesEditDesc(tmpl.description); setRulesEditContent(tmpl.content); setRulesEditDefault(tmpl.isDefault); }}
+                          className="text-[9px] text-[var(--accent)] hover:underline"
+                        >Edit</button>
+                        {!tmpl.builtin && (
+                          <button onClick={() => deleteRule(tmpl.id)} className="text-[9px] text-[var(--red)] hover:underline">Delete</button>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-[9px] text-[var(--text-secondary)] mt-0.5">{tmpl.description}</p>
+                  </div>
+
+                  {/* Content + batch apply */}
+                  <div className="flex-1 flex min-h-0 overflow-hidden">
+                    {/* Template content */}
+                    <div className="flex-1 min-w-0 overflow-auto">
+                      <pre className="p-3 text-[11px] font-mono text-[var(--text-primary)] whitespace-pre-wrap break-words">
+                        {tmpl.content}
+                      </pre>
+                    </div>
+
+                    {/* Batch apply panel */}
+                    <div className="w-48 border-l border-[var(--border)] overflow-y-auto shrink-0 flex flex-col">
+                      <div className="px-2 py-1.5 border-b border-[var(--border)] text-[9px] text-[var(--text-secondary)] uppercase">Apply to Projects</div>
+                      <div className="flex-1 overflow-y-auto">
+                        {rulesProjects.map(p => (
+                          <label key={p.path} className="flex items-center gap-1.5 px-2 py-1 hover:bg-[var(--bg-tertiary)] cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={rulesBatchProjects.has(p.path)}
+                              onChange={() => {
+                                setRulesBatchProjects(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(p.path)) next.delete(p.path); else next.add(p.path);
+                                  return next;
+                                });
+                              }}
+                              className="accent-[var(--accent)]"
+                            />
+                            <span className="text-[9px] text-[var(--text-primary)] truncate">{p.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                      {rulesBatchProjects.size > 0 && (
+                        <div className="p-2 border-t border-[var(--border)]">
+                          <button
+                            onClick={() => batchInject(tmpl.id)}
+                            className="w-full text-[9px] px-2 py-1 bg-[var(--accent)] text-white rounded hover:opacity-90"
+                          >
+                            Apply to {rulesBatchProjects.size} project{rulesBatchProjects.size > 1 ? 's' : ''}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })() : (
+              <div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">
+                <p className="text-xs">Select a template or create a new one</p>
               </div>
             )}
           </div>

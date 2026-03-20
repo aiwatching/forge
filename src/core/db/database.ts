@@ -32,6 +32,7 @@ function initSchema(db: Database.Database) {
   migrate("ALTER TABLE skills ADD COLUMN type TEXT NOT NULL DEFAULT 'skill'");
   migrate('ALTER TABLE skills ADD COLUMN archive TEXT');
   migrate("ALTER TABLE skills ADD COLUMN installed_version TEXT NOT NULL DEFAULT ''");
+  migrate('ALTER TABLE skills ADD COLUMN rating REAL DEFAULT 0');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -138,6 +139,7 @@ function initSchema(db: Database.Database) {
       version TEXT,
       tags TEXT,
       score INTEGER DEFAULT 0,
+      rating REAL DEFAULT 0,
       source_url TEXT,
       archive TEXT,
       installed_global INTEGER NOT NULL DEFAULT 0,

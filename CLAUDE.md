@@ -55,3 +55,9 @@ forge watch <id>         # live stream task output
 Location: /Users/zliu/MyDocuments/obsidian-project/Projects/Bastion
 When I ask about my notes, use bash to search and read files from this directory.
 Example: find /Users/zliu/MyDocuments/obsidian-project -name "*.md" | head -20
+
+<!-- forge:template:obsidian-vault -->
+## Obsidian Vault
+When I ask about my notes, use bash to search and read files from the vault directory.
+Example: find <vault_path> -name "*.md" | head -20
+<!-- /forge:template:obsidian-vault -->

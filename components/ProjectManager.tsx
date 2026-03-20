@@ -77,7 +77,14 @@ export default function ProjectManager() {
   const [diffFile, setDiffFile] = useState<string | null>(null);
   const [projectSkills, setProjectSkills] = useState<{ name: string; displayName: string; type: string; scope: string; version: string; installedVersion: string; hasUpdate: boolean; source: 'registry' | 'local' }[]>([]);
   const [showSkillsDetail, setShowSkillsDetail] = useState(false);
-  const [projectTab, setProjectTab] = useState<'code' | 'skills'>('code');
+  const [projectTab, setProjectTab] = useState<'code' | 'skills' | 'claudemd'>('code');
+  const [claudeMdContent, setClaudeMdContent] = useState('');
+  const [claudeMdExists, setClaudeMdExists] = useState(false);
+  const [claudeTemplates, setClaudeTemplates] = useState<{ id: string; name: string; description: string; tags: string[]; builtin: boolean; content: string }[]>([]);
+  const [claudeInjectedIds, setClaudeInjectedIds] = useState<Set<string>>(new Set());
+  const [claudeEditing, setClaudeEditing] = useState(false);
+  const [claudeEditContent, setClaudeEditContent] = useState('');
+  const [claudeSelectedTemplate, setClaudeSelectedTemplate] = useState<string | null>(null);
   const [expandedSkillItem, setExpandedSkillItem] = useState<string | null>(null);
   const [skillItemFiles, setSkillItemFiles] = useState<{ path: string; size: number }[]>([]);
   const [skillFileContent, setSkillFileContent] = useState('');
@@ -214,6 +221,53 @@ export default function ProjectManager() {
       body: JSON.stringify({ action: 'uninstall', name, target }),
     });
     if (selectedProject) fetchProjectSkills(selectedProject.path);
+  };
+
+  const fetchClaudeMd = useCallback(async (projectPath: string) => {
+    try {
+      const [contentRes, statusRes, listRes] = await Promise.all([
+        fetch(`/api/claude-templates?action=read-claude-md&project=${encodeURIComponent(projectPath)}`),
+        fetch(`/api/claude-templates?action=status&project=${encodeURIComponent(projectPath)}`),
+        fetch('/api/claude-templates?action=list'),
+      ]);
+      const contentData = await contentRes.json();
+      setClaudeMdContent(contentData.content || '');
+      setClaudeMdExists(contentData.exists || false);
+      const statusData = await statusRes.json();
+      setClaudeInjectedIds(new Set((statusData.status || []).filter((s: any) => s.injected).map((s: any) => s.id)));
+      const listData = await listRes.json();
+      setClaudeTemplates(listData.templates || []);
+    } catch {}
+  }, []);
+
+  const injectToProject = async (templateId: string, projectPath: string) => {
+    await fetch('/api/claude-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'inject', templateId, projects: [projectPath] }),
+    });
+    fetchClaudeMd(projectPath);
+  };
+
+  const removeFromProject = async (templateId: string, projectPath: string) => {
+    if (!confirm(`Remove template from this project's CLAUDE.md?`)) return;
+    await fetch('/api/claude-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'remove', templateId, project: projectPath }),
+    });
+    fetchClaudeMd(projectPath);
+  };
+
+  const saveClaudeMd = async (projectPath: string, content: string) => {
+    await fetch('/api/claude-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save-claude-md', project: projectPath, content }),
+    });
+    setClaudeMdContent(content);
+    setClaudeEditing(false);
+    fetchClaudeMd(projectPath);
   };
 
   const fetchProjectSkills = useCallback(async (projectPath: string) => {
@@ -480,6 +534,15 @@ export default function ProjectManager() {
                     {projectSkills.length > 0 && <span className="ml-1 text-[8px] text-[var(--text-secondary)]">({projectSkills.length})</span>}
                     {projectSkills.some(s => s.hasUpdate) && <span className="ml-1 text-[8px] text-[var(--yellow)]">!</span>}
                   </button>
+                  <button
+                    onClick={() => { setProjectTab('claudemd'); if (selectedProject) fetchClaudeMd(selectedProject.path); }}
+                    className={`text-[9px] px-2 py-0.5 rounded transition-colors ${
+                      projectTab === 'claudemd' ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    CLAUDE.md
+                    {claudeMdExists && <span className="ml-1 text-[8px] text-[var(--green)]">•</span>}
+                  </button>
                 </div>
               </div>
               {projectTab === 'code' && gitInfo?.lastCommit && (
@@ -672,6 +735,118 @@ export default function ProjectManager() {
                       Select a skill or command to view
                     </div>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* CLAUDE.md tab */}
+            {projectTab === 'claudemd' && selectedProject && (
+              <div className="flex-1 flex min-h-0 overflow-hidden">
+                {/* Left: templates list */}
+                <div className="w-52 border-r border-[var(--border)] overflow-y-auto shrink-0 flex flex-col">
+                  <button
+                    onClick={() => { setClaudeSelectedTemplate(null); setClaudeEditing(false); }}
+                    className={`w-full px-2 py-1.5 border-b border-[var(--border)] text-[10px] text-left flex items-center gap-1 ${
+                      !claudeSelectedTemplate && !claudeEditing ? 'text-[var(--accent)] bg-[var(--accent)]/5' : 'text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]'
+                    }`}
+                  >
+                    <span className="font-mono">CLAUDE.md</span>
+                    {claudeMdExists && <span className="text-[var(--green)] text-[8px]">•</span>}
+                  </button>
+                  <div className="px-2 py-1 border-b border-[var(--border)] text-[8px] text-[var(--text-secondary)] uppercase">Templates</div>
+                  <div className="flex-1 overflow-y-auto">
+                    {claudeTemplates.map(t => {
+                      const injected = claudeInjectedIds.has(t.id);
+                      const isSelected = claudeSelectedTemplate === t.id;
+                      return (
+                        <div
+                          key={t.id}
+                          className={`px-2 py-1.5 border-b border-[var(--border)]/30 cursor-pointer ${isSelected ? 'bg-[var(--accent)]/10' : 'hover:bg-[var(--bg-tertiary)]'}`}
+                          onClick={() => setClaudeSelectedTemplate(isSelected ? null : t.id)}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-[var(--text-primary)] truncate flex-1">{t.name}</span>
+                            {t.builtin && <span className="text-[7px] text-[var(--text-secondary)]">built-in</span>}
+                            {injected ? (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); removeFromProject(t.id, selectedProject.path); }}
+                                className="text-[7px] px-1 rounded bg-green-500/10 text-green-400 hover:bg-red-500/10 hover:text-red-400"
+                                title="Remove from CLAUDE.md"
+                              >added</button>
+                            ) : (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); injectToProject(t.id, selectedProject.path); }}
+                                className="text-[7px] px-1 rounded bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20"
+                                title="Add to CLAUDE.md"
+                              >+ add</button>
+                            )}
+                          </div>
+                          <p className="text-[8px] text-[var(--text-secondary)] mt-0.5 line-clamp-1">{t.description}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Right: CLAUDE.md content or template preview */}
+                <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-[var(--bg-primary)]">
+                  {/* Header bar */}
+                  <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border)] shrink-0">
+                    {claudeSelectedTemplate ? (
+                      <>
+                        <span className="text-[10px] text-[var(--text-secondary)]">Preview:</span>
+                        <span className="text-[10px] text-[var(--text-primary)] font-semibold">{claudeTemplates.find(t => t.id === claudeSelectedTemplate)?.name}</span>
+                        <button
+                          onClick={() => setClaudeSelectedTemplate(null)}
+                          className="text-[9px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-auto"
+                        >Show CLAUDE.md</button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-[10px] text-[var(--text-primary)] font-mono">CLAUDE.md</span>
+                        {!claudeMdExists && <span className="text-[8px] text-[var(--yellow)]">not created</span>}
+                        <div className="flex items-center gap-1 ml-auto">
+                          {!claudeEditing ? (
+                            <button
+                              onClick={() => { setClaudeEditing(true); setClaudeEditContent(claudeMdContent); }}
+                              className="text-[9px] text-[var(--accent)] hover:underline"
+                            >Edit</button>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => saveClaudeMd(selectedProject.path, claudeEditContent)}
+                                className="text-[9px] px-2 py-0.5 bg-[var(--accent)] text-white rounded hover:opacity-90"
+                              >Save</button>
+                              <button
+                                onClick={() => setClaudeEditing(false)}
+                                className="text-[9px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                              >Cancel</button>
+                            </>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1 overflow-auto" style={{ width: 0, minWidth: '100%' }}>
+                    {claudeSelectedTemplate ? (
+                      <pre className="p-3 text-[11px] font-mono text-[var(--text-primary)] whitespace-pre-wrap break-words">
+                        {claudeTemplates.find(t => t.id === claudeSelectedTemplate)?.content || ''}
+                      </pre>
+                    ) : claudeEditing ? (
+                      <textarea
+                        value={claudeEditContent}
+                        onChange={e => setClaudeEditContent(e.target.value)}
+                        className="w-full h-full p-3 text-[11px] font-mono bg-[var(--bg-primary)] text-[var(--text-primary)] border-none outline-none resize-none"
+                        spellCheck={false}
+                      />
+                    ) : (
+                      <pre className="p-3 text-[11px] font-mono text-[var(--text-primary)] whitespace-pre-wrap break-words">
+                        {claudeMdContent || '(Empty — add templates or edit directly)'}
+                      </pre>
+                    )}
+                  </div>
                 </div>
               </div>
             )}

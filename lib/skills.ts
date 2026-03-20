@@ -28,6 +28,7 @@ export interface SkillItem {
   version: string;
   tags: string[];
   score: number;
+  rating: number;       // 0-5 star rating from registry
   sourceUrl: string;
   installedGlobal: boolean;
   installedProjects: string[];
@@ -113,7 +114,10 @@ export async function syncSkills(): Promise<{ synced: number; error?: string }> 
       const enriched = await Promise.all(rawItems.map(async (s: any) => {
         // Fetch info.json for metadata and type
         try {
-          const infoRes = await fetch(`${baseUrl}/skills/${s.name}/info.json`, { signal: AbortSignal.timeout(5000) });
+          let infoRes = await fetch(`${baseUrl}/skills/${s.name}/info.json`, { signal: AbortSignal.timeout(5000) });
+          if (!infoRes.ok) {
+            infoRes = await fetch(`${baseUrl}/commands/${s.name}/info.json`, { signal: AbortSignal.timeout(5000) });
+          }
           if (infoRes.ok) {
             const info = await infoRes.json();
             return {
@@ -124,6 +128,7 @@ export async function syncSkills(): Promise<{ synced: number; error?: string }> 
               version: info.version || s.version,
               tags: info.tags || s.tags,
               score: info.score ?? s.score,
+              rating: info.rating ?? s.rating ?? 0,
             };
           }
         } catch {}
@@ -133,9 +138,9 @@ export async function syncSkills(): Promise<{ synced: number; error?: string }> 
     }
 
     const stmt = db().prepare(`
-      INSERT OR REPLACE INTO skills (name, type, display_name, description, author, version, tags, score, source_url, archive, synced_at,
+      INSERT OR REPLACE INTO skills (name, type, display_name, description, author, version, tags, score, rating, source_url, archive, synced_at,
         installed_global, installed_projects, installed_version)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'),
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'),
         COALESCE((SELECT installed_global FROM skills WHERE name = ?), 0),
         COALESCE((SELECT installed_projects FROM skills WHERE name = ?), '[]'),
         COALESCE((SELECT installed_version FROM skills WHERE name = ?), ''))
@@ -147,7 +152,7 @@ export async function syncSkills(): Promise<{ synced: number; error?: string }> 
           s.name, s.type || 'skill',
           s.display_name, s.description || '',
           s.author?.name || '', s.version || '', JSON.stringify(s.tags || []),
-          s.score || 0, s.source?.url || '',
+          s.score || 0, s.rating || 0, s.source?.url || '',
           '', // archive field (unused now, kept for compat)
           s.name, s.name, s.name
         );
@@ -178,6 +183,7 @@ export function listSkills(): SkillItem[] {
       version: registryVersion,
       tags: JSON.parse(r.tags || '[]'),
       score: r.score,
+      rating: r.rating || 0,
       sourceUrl: r.source_url,
       installedGlobal: !!r.installed_global,
       installedProjects: JSON.parse(r.installed_projects || '[]'),

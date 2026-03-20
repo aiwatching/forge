@@ -782,6 +782,34 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
 
         </div>
 
+        {/* Display Name */}
+        <div className="space-y-2">
+          <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">
+            Display Name
+          </label>
+          <input
+            type="text"
+            value={(settings as any).displayName || ''}
+            onChange={e => setSettings({ ...settings, displayName: e.target.value } as any)}
+            placeholder="Forge"
+            className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)]"
+          />
+        </div>
+
+        {/* Email */}
+        <div className="space-y-2">
+          <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">
+            Email
+          </label>
+          <input
+            type="email"
+            value={(settings as any).displayEmail || ''}
+            onChange={e => setSettings({ ...settings, displayEmail: e.target.value } as any)}
+            placeholder="local@forge"
+            className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)]"
+          />
+        </div>
+
         {/* Admin Password */}
         <div className="space-y-2">
           <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">

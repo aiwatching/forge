@@ -23,6 +23,8 @@ export interface Settings {
   skipPermissions: boolean;       // Add --dangerously-skip-permissions to all claude invocations
   notificationRetentionDays: number; // Auto-cleanup notifications older than N days
   skillsRepoUrl: string;              // GitHub raw URL for skills registry
+  displayName: string;                  // User display name (shown in header)
+  displayEmail: string;                 // User email (for session/future integrations)
 }
 
 const defaults: Settings = {
@@ -41,6 +43,8 @@ const defaults: Settings = {
   skipPermissions: false,
   notificationRetentionDays: 30,
   skillsRepoUrl: 'https://raw.githubusercontent.com/aiwatching/forge-skills/main',
+  displayName: 'Forge',
+  displayEmail: '',
 };
 
 /** Load settings with secrets decrypted (for internal use) */

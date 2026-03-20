@@ -128,6 +128,12 @@ export function ensureInitialized() {
 export function restartTelegramBot() {
   stopTelegramBot();
   startTelegramBot();
+  // Kill existing telegram process and restart if configured
+  if (telegramChild) {
+    try { telegramChild.kill('SIGTERM'); } catch {}
+    telegramChild = null;
+  }
+  startTelegramProcess();
 }
 
 let telegramChild: ReturnType<typeof spawn> | null = null;

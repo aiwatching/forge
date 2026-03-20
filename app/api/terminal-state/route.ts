@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { NextResponse } from 'next/server';
+import { getDataDir } from '@/lib/dirs';
 
-const STATE_FILE = join(homedir(), '.forge', 'terminal-state.json');
+const STATE_FILE = join(getDataDir(), 'terminal-state.json');
 
 export async function GET() {
   try {

@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync, statSync, readdirSync, watch, openSync, readSync, closeSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { getClaudeDir } from './dirs';
 import { getProjectInfo } from './projects';
 
 export interface ClaudeSessionInfo {
@@ -33,7 +33,7 @@ export interface SessionEntry {
  */
 export function projectPathToClaudeDir(projectPath: string): string {
   const hash = projectPath.replace(/\//g, '-');
-  return join(homedir(), '.claude', 'projects', hash);
+  return join(getClaudeDir(), 'projects', hash);
 }
 
 /**

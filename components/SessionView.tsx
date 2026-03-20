@@ -337,7 +337,7 @@ export default function SessionView({
             </p>
           )}
 
-          {Object.entries(sessionTree).map(([project, sessions]) => (
+          {Object.entries(sessionTree).sort(([a], [b]) => a.localeCompare(b)).map(([project, sessions]) => (
             <div key={project}>
               {/* Project node */}
               <div

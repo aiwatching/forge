@@ -28,6 +28,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
+import { getDataDir } from './dirs';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -39,7 +40,7 @@ delete process.env.CLAUDECODE;
 
 // ─── Shared state persistence ─────────────────────────────────
 
-const STATE_DIR = join(homedir(), '.forge');
+const STATE_DIR = getDataDir();
 const STATE_FILE = join(STATE_DIR, 'terminal-state.json');
 
 function loadTerminalState(): unknown {
@@ -118,7 +119,7 @@ const MAX_SESSIONS = 10;
 
 function getDefaultCwd(): string {
   try {
-    const settingsPath = join(homedir(), '.forge', 'settings.yaml');
+    const settingsPath = join(getDataDir(), 'settings.yaml');
     const raw = readFileSync(settingsPath, 'utf-8');
     const match = raw.match(/projectRoots:\s*\n((?:\s+-\s+.+\n?)*)/);
     if (match) {

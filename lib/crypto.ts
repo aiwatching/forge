@@ -1,15 +1,14 @@
 /**
  * Encryption utilities for storing secrets in settings.yaml
- * Uses AES-256-GCM with a persistent key stored in ~/.forge/.encrypt-key
+ * Uses AES-256-GCM with a persistent key stored in <dataDir>/.encrypt-key
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
+import { getDataDir } from './dirs';
 
-const DATA_DIR = process.env.FORGE_DATA_DIR || join(homedir(), '.forge');
-const KEY_FILE = join(DATA_DIR, '.encrypt-key');
+const KEY_FILE = join(getDataDir(), '.encrypt-key');
 const PREFIX = 'enc:';
 
 function getEncryptionKey(): Buffer {

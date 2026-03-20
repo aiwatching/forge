@@ -7,6 +7,7 @@ import {
   uninstallGlobal,
   uninstallProject,
   refreshInstallState,
+  checkLocalModified,
 } from '@/lib/skills';
 import { loadSettings } from '@/lib/settings';
 import { homedir } from 'node:os';
@@ -34,18 +35,23 @@ export async function GET(req: Request) {
   const action = searchParams.get('action');
   const name = searchParams.get('name');
 
-  // List files in a skill directory
+  // List files in a skill/command directory
   if (action === 'files' && name) {
     try {
       const settings = loadSettings();
       const repoUrl = settings.skillsRepoUrl || 'https://raw.githubusercontent.com/aiwatching/forge-skills/main';
-      // Extract owner/repo from raw URL
-      const match = repoUrl.match(/github\.com\/([^/]+\/[^/]+)/);
-      const repo = match ? match[1] : 'aiwatching/forge-skills';
+      const matchRepo = repoUrl.match(/github\.com\/([^/]+\/[^/]+)/);
+      const repo = matchRepo ? matchRepo[1] : 'aiwatching/forge-skills';
 
-      const res = await fetch(`https://api.github.com/repos/${repo}/contents/skills/${name}`, {
+      // Try skills/ first, then commands/ (repo may not have commands/ dir)
+      let res = await fetch(`https://api.github.com/repos/${repo}/contents/skills/${name}`, {
         headers: { 'Accept': 'application/vnd.github.v3+json' },
       });
+      if (!res.ok) {
+        res = await fetch(`https://api.github.com/repos/${repo}/contents/commands/${name}`, {
+          headers: { 'Accept': 'application/vnd.github.v3+json' },
+        });
+      }
       if (!res.ok) return NextResponse.json({ files: [] });
 
       const items = await res.json();
@@ -80,7 +86,11 @@ export async function GET(req: Request) {
     try {
       const settings = loadSettings();
       const baseUrl = settings.skillsRepoUrl || 'https://raw.githubusercontent.com/aiwatching/forge-skills/main';
-      const res = await fetch(`${baseUrl}/skills/${name}/${filePath}`);
+      // Try skills/ first, then commands/
+      let res = await fetch(`${baseUrl}/skills/${name}/${filePath}`);
+      if (!res.ok) {
+        res = await fetch(`${baseUrl}/commands/${name}/${filePath}`);
+      }
       if (!res.ok) return NextResponse.json({ content: '(Not found)' });
       const content = await res.text();
       return NextResponse.json({ content });
@@ -107,8 +117,18 @@ export async function POST(req: Request) {
     return NextResponse.json(result);
   }
 
+  if (body.action === 'check-modified') {
+    try {
+      const modified = await checkLocalModified(body.name);
+      return NextResponse.json({ modified });
+    } catch (e) {
+      return NextResponse.json({ modified: false, error: String(e) });
+    }
+  }
+
   if (body.action === 'install') {
     const { name, target } = body; // target: 'global' | projectPath
+    if (!name || !target) return NextResponse.json({ ok: false, error: 'name and target required' }, { status: 400 });
     try {
       if (target === 'global') {
         await installGlobal(name);
@@ -123,12 +143,17 @@ export async function POST(req: Request) {
 
   if (body.action === 'uninstall') {
     const { name, target } = body;
-    if (target === 'global') {
-      uninstallGlobal(name);
-    } else {
-      uninstallProject(name, target);
+    if (!name || !target) return NextResponse.json({ ok: false, error: 'name and target required' }, { status: 400 });
+    try {
+      if (target === 'global') {
+        uninstallGlobal(name);
+      } else {
+        uninstallProject(name, target);
+      }
+      return NextResponse.json({ ok: true });
+    } catch (e) {
+      return NextResponse.json({ ok: false, error: String(e) }, { status: 500 });
     }
-    return NextResponse.json({ ok: true });
   }
 
   return NextResponse.json({ error: 'Invalid action' }, { status: 400 });

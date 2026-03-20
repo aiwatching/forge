@@ -57,6 +57,7 @@ export default function Dashboard({ user }: { user: any }) {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [displayName, setDisplayName] = useState(user?.name || 'Forge');
   const terminalRef = useRef<WebTerminalHandle>(null);
 
   // Theme: load from localStorage + apply
@@ -74,6 +75,28 @@ export default function Dashboard({ user }: { user: any }) {
     document.documentElement.setAttribute('data-theme', next === 'light' ? 'light' : '');
     localStorage.setItem('forge-theme', next);
   };
+
+  // Fetch display name from settings
+  const refreshDisplayName = useCallback(() => {
+    fetch('/api/settings').then(r => r.json())
+      .then((s: any) => { if (s.displayName) setDisplayName(s.displayName); })
+      .catch(() => {});
+  }, []);
+  useEffect(() => { refreshDisplayName(); }, [refreshDisplayName]);
+
+  // Listen for open-terminal events from ProjectManager
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { projectPath, projectName } = (e as CustomEvent).detail;
+      setViewMode('terminal');
+      // Give terminal time to render, then trigger open
+      setTimeout(() => {
+        terminalRef.current?.openProjectTerminal?.(projectPath, projectName);
+      }, 300);
+    };
+    window.addEventListener('forge:open-terminal', handler);
+    return () => window.removeEventListener('forge:open-terminal', handler);
+  }, []);
 
   // Version check (on mount + every 10 min)
   useEffect(() => {
@@ -375,7 +398,7 @@ export default function Dashboard({ user }: { user: any }) {
               onClick={() => { setShowUserMenu(v => !v); setShowNotifications(false); }}
               className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] flex items-center gap-1 px-1"
             >
-              {user?.name || 'local'} <span className="text-[8px]">▾</span>
+              {displayName} <span className="text-[8px]">▾</span>
             </button>
             {showUserMenu && (
               <>
@@ -572,7 +595,7 @@ export default function Dashboard({ user }: { user: any }) {
       {showMonitor && <MonitorPanel onClose={() => setShowMonitor(false)} />}
 
       {showSettings && (
-        <SettingsModal onClose={() => { setShowSettings(false); fetchData(); }} />
+        <SettingsModal onClose={() => { setShowSettings(false); fetchData(); refreshDisplayName(); }} />
       )}
     </div>
   );

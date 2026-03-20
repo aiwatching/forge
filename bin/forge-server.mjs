@@ -54,7 +54,8 @@ if (process.argv.includes('--version') || process.argv.includes('-v')) {
 }
 
 const isDev = process.argv.includes('--dev');
-const isBackground = process.argv.includes('--background');
+const isForeground = process.argv.includes('--foreground');
+const isBackground = !isForeground && !isDev; // default background unless --foreground or --dev
 const isStop = process.argv.includes('--stop');
 const isRestart = process.argv.includes('--restart');
 const isRebuild = process.argv.includes('--rebuild');
@@ -62,8 +63,8 @@ const resetTerminal = process.argv.includes('--reset-terminal');
 const resetPassword = process.argv.includes('--reset-password');
 
 const webPort = parseInt(getArg('--port')) || 3000;
-const terminalPort = parseInt(getArg('--terminal-port')) || 3001;
-const DATA_DIR = getArg('--dir')?.replace(/^~/, homedir()) || join(homedir(), '.forge');
+const terminalPort = parseInt(getArg('--terminal-port')) || (webPort + 1);
+const DATA_DIR = getArg('--dir')?.replace(/^~/, homedir()) || join(homedir(), '.forge', 'data');
 
 const PID_FILE = join(DATA_DIR, 'forge.pid');
 const LOG_FILE = join(DATA_DIR, 'forge.log');
@@ -108,21 +109,29 @@ if (!isStop) {
 
     const readline = await import('node:readline');
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const ask = (q) => new Promise(resolve => rl.question(q, resolve));
+    const ask = (q) => new Promise((resolve, reject) => {
+      rl.question(q, resolve);
+      rl.once('close', () => reject(new Error('cancelled')));
+    });
 
     let pw = '';
-    while (true) {
-      pw = await ask('  Enter admin password: ');
-      if (!pw || pw.length < 4) {
-        console.log('  Password must be at least 4 characters');
-        continue;
+    try {
+      while (true) {
+        pw = await ask('  Enter admin password: ');
+        if (!pw || pw.length < 4) {
+          console.log('  Password must be at least 4 characters');
+          continue;
+        }
+        const confirm = await ask('  Confirm password: ');
+        if (pw !== confirm) {
+          console.log('  Passwords do not match, try again');
+          continue;
+        }
+        break;
       }
-      const confirm = await ask('  Confirm password: ');
-      if (pw !== confirm) {
-        console.log('  Passwords do not match, try again');
-        continue;
-      }
-      break;
+    } catch {
+      console.log('\n[forge] Cancelled');
+      process.exit(0);
     }
     rl.close();
 
@@ -170,27 +179,34 @@ const protectedPids = new Set();
 
 function cleanupOrphans() {
   try {
-    const out = execSync("ps aux | grep -E 'telegram-standalone|terminal-standalone|next-server|next start|next dev' | grep -v grep | awk '{print $2}'", {
-      encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    if (out) {
-      const myPid = String(process.pid);
-      for (const pid of out.split('\n').filter(Boolean)) {
-        const p = pid.trim();
-        if (p === myPid) continue;
-        if (protectedPids.has(p)) continue; // don't kill processes we just started
-        try { process.kill(parseInt(p), 'SIGTERM'); } catch {}
-      }
-      setTimeout(() => {
-        for (const pid of out.split('\n').filter(Boolean)) {
+    // Only kill processes on OUR ports, not other instances
+    for (const port of [webPort, terminalPort]) {
+      try {
+        const pids = execSync(`lsof -ti:${port}`, { encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+        const myPid = String(process.pid);
+        for (const pid of pids.split('\n').filter(Boolean)) {
           const p = pid.trim();
-          if (p === myPid) continue;
-          if (protectedPids.has(p)) continue;
-          try { process.kill(parseInt(p), 'SIGKILL'); } catch {}
+          if (p === myPid || protectedPids.has(p)) continue;
+          try { process.kill(parseInt(p), 'SIGTERM'); } catch {}
         }
-      }, 2000);
-      console.log('[forge] Cleaned up orphan processes');
+      } catch {}
     }
+    // Kill standalone processes that belong to this instance (match by FORGE_DATA_DIR)
+    try {
+      const out = execSync(`ps aux | grep -E 'telegram-standalone|terminal-standalone' | grep -v grep`, {
+        encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+      if (out) {
+        const myPid = String(process.pid);
+        for (const line of out.split('\n').filter(Boolean)) {
+          // Only kill if it matches our DATA_DIR or port
+          if (!line.includes(DATA_DIR) && !line.includes(`PORT=${webPort}`) && !line.includes(`TERMINAL_PORT=${terminalPort}`)) continue;
+          const pid = line.trim().split(/\s+/)[1];
+          if (pid === myPid || protectedPids.has(pid)) continue;
+          try { process.kill(parseInt(pid), 'SIGTERM'); } catch {}
+        }
+      }
+    } catch {}
   } catch {}
 }
 

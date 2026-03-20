@@ -20,10 +20,18 @@ export function getDb(dbPath: string): Database.Database {
 }
 
 function initSchema(db: Database.Database) {
-  // Migrations for existing tables
-  try { db.exec('ALTER TABLE tasks ADD COLUMN scheduled_at TEXT'); } catch {}
-  try { db.exec('ALTER TABLE tasks ADD COLUMN mode TEXT NOT NULL DEFAULT \'prompt\''); } catch {}
-  try { db.exec('ALTER TABLE tasks ADD COLUMN watch_config TEXT'); } catch {}
+  // Migrations for existing tables (catch duplicate column errors silently)
+  const migrate = (sql: string) => {
+    try { db.exec(sql); } catch (e: any) {
+      if (!String(e.message).includes('duplicate column')) console.error('[db] Migration failed:', sql, e.message);
+    }
+  };
+  migrate('ALTER TABLE tasks ADD COLUMN scheduled_at TEXT');
+  migrate("ALTER TABLE tasks ADD COLUMN mode TEXT NOT NULL DEFAULT 'prompt'");
+  migrate('ALTER TABLE tasks ADD COLUMN watch_config TEXT');
+  migrate("ALTER TABLE skills ADD COLUMN type TEXT NOT NULL DEFAULT 'skill'");
+  migrate('ALTER TABLE skills ADD COLUMN archive TEXT');
+  migrate("ALTER TABLE skills ADD COLUMN installed_version TEXT NOT NULL DEFAULT ''");
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -123,6 +131,7 @@ function initSchema(db: Database.Database) {
     -- Skills registry cache
     CREATE TABLE IF NOT EXISTS skills (
       name TEXT PRIMARY KEY,
+      type TEXT NOT NULL DEFAULT 'skill',
       display_name TEXT NOT NULL,
       description TEXT,
       author TEXT,
@@ -130,9 +139,10 @@ function initSchema(db: Database.Database) {
       tags TEXT,
       score INTEGER DEFAULT 0,
       source_url TEXT,
-      skill_content TEXT,
+      archive TEXT,
       installed_global INTEGER NOT NULL DEFAULT 0,
       installed_projects TEXT NOT NULL DEFAULT '[]',
+      installed_version TEXT NOT NULL DEFAULT '',
       synced_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 

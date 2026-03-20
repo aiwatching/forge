@@ -1,16 +1,16 @@
 import { NextResponse } from 'next/server';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { getClaudeDir } from '@/lib/dirs';
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const dir = searchParams.get('dir');
   if (!dir) return NextResponse.json({ sessions: [] });
 
-  // Claude stores sessions at ~/.claude/projects/<path-with-dashes>/
+  // Claude stores sessions at <claudeDir>/projects/<path-with-dashes>/
   const hash = dir.replace(/\//g, '-');
-  const claudeDir = join(homedir(), '.claude', 'projects', hash);
+  const claudeDir = join(getClaudeDir(), 'projects', hash);
 
   if (!existsSync(claudeDir)) {
     return NextResponse.json({ sessions: [] });

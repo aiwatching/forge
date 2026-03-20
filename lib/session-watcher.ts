@@ -8,7 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import { getDb } from '@/src/core/db/database';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { getDataDir } from './dirs';
 import {
   listClaudeSessions,
   getSessionFilePath,
@@ -19,7 +19,7 @@ import {
 import { scanProjects } from './projects';
 import { loadSettings } from './settings';
 
-const DB_PATH = join(homedir(), '.forge', 'data.db');
+const DB_PATH = join(getDataDir(), 'workflow.db');
 
 // ─── Types ───────────────────────────────────────────────────
 

@@ -5,12 +5,13 @@
 
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, chmodSync, createWriteStream, unlinkSync, writeFileSync, readFileSync } from 'node:fs';
-import { homedir, platform, arch } from 'node:os';
+import { platform, arch } from 'node:os';
 import { join } from 'node:path';
 import https from 'node:https';
 import http from 'node:http';
+import { getConfigDir, getDataDir } from './dirs';
 
-const BIN_DIR = join(homedir(), '.forge', 'bin');
+const BIN_DIR = join(getConfigDir(), 'bin');
 const BIN_NAME = platform() === 'win32' ? 'cloudflared.exe' : 'cloudflared';
 const BIN_PATH = join(BIN_DIR, BIN_NAME);
 
@@ -105,7 +106,7 @@ if (!gAny[stateKey]) {
 const state: TunnelState = gAny[stateKey];
 
 const MAX_LOG_LINES = 100;
-const TUNNEL_STATE_FILE = join(homedir(), '.forge', 'tunnel-state.json');
+const TUNNEL_STATE_FILE = join(getDataDir(), 'tunnel-state.json');
 
 function saveTunnelState() {
   try {

@@ -6,13 +6,13 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import YAML from 'yaml';
 import { createTask } from './task-manager';
 import { getProjectInfo } from './projects';
 import type { Task } from '@/src/types';
+import { getDataDir } from './dirs';
 
-const FLOWS_DIR = join(homedir(), '.forge', 'flows');
+const FLOWS_DIR = join(getDataDir(), 'flows');
 
 export interface FlowStep {
   project: string;

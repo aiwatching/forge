@@ -1,16 +1,17 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import YAML from 'yaml';
 import { encryptSecret, decryptSecret, isEncrypted, SECRET_FIELDS } from './crypto';
+import { getDataDir } from './dirs';
 
-const DATA_DIR = process.env.FORGE_DATA_DIR || join(homedir(), '.forge');
+const DATA_DIR = getDataDir();
 const SETTINGS_FILE = join(DATA_DIR, 'settings.yaml');
 
 export interface Settings {
   projectRoots: string[];       // Multiple project directories
   docRoots: string[];           // Markdown document directories (e.g. Obsidian vaults)
   claudePath: string;           // Path to claude binary
+  claudeHome: string;           // Claude Code home directory (default: ~/.claude)
   telegramBotToken: string;     // Telegram Bot API token
   telegramChatId: string;       // Telegram chat ID to send notifications to
   notifyOnComplete: boolean;    // Notify when task completes
@@ -23,12 +24,15 @@ export interface Settings {
   skipPermissions: boolean;       // Add --dangerously-skip-permissions to all claude invocations
   notificationRetentionDays: number; // Auto-cleanup notifications older than N days
   skillsRepoUrl: string;              // GitHub raw URL for skills registry
+  displayName: string;                  // User display name (shown in header)
+  displayEmail: string;                 // User email (for session/future integrations)
 }
 
 const defaults: Settings = {
   projectRoots: [],
   docRoots: [],
   claudePath: '',
+  claudeHome: '',
   telegramBotToken: '',
   telegramChatId: '',
   notifyOnComplete: true,
@@ -41,6 +45,8 @@ const defaults: Settings = {
   skipPermissions: false,
   notificationRetentionDays: 30,
   skillsRepoUrl: 'https://raw.githubusercontent.com/aiwatching/forge-skills/main',
+  displayName: 'Forge',
+  displayEmail: '',
 };
 
 /** Load settings with secrets decrypted (for internal use) */

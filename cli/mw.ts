@@ -73,6 +73,18 @@ async function main() {
     process.exit(0);
   }
 
+  if (cmd === '--reset-password') {
+    // Shortcut: delegate to forge-server.mjs --reset-password
+    const { execSync } = await import('node:child_process');
+    const { join, dirname } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const serverScript = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'forge-server.mjs');
+    try {
+      execSync(`node ${serverScript} --reset-password`, { stdio: 'inherit' });
+    } catch {}
+    process.exit(0);
+  }
+
   switch (cmd) {
     case 'task':
     case 't': {
@@ -349,24 +361,30 @@ async function main() {
       break;
     }
 
-    case 'password':
-    case 'pw': {
+    case 'tunnel_code':
+    case 'tcode': {
       const { readFileSync, existsSync } = await import('node:fs');
-      const { homedir } = await import('node:os');
       const { join } = await import('node:path');
-      const dataDir = process.env.FORGE_DATA_DIR || join(homedir(), '.forge');
+      const { getDataDir: _gdd } = await import('../lib/dirs');
+      const dataDir = _gdd();
       const codeFile = join(dataDir, 'session-code.json');
       try {
         if (existsSync(codeFile)) {
           const data = JSON.parse(readFileSync(codeFile, 'utf-8'));
           if (data.code) {
-            console.log(`Session code: ${data.code} (for remote login 2FA)`);
+            console.log(`Session code: ${data.code}`);
+          } else {
+            console.log('No session code. Start tunnel first.');
           }
+        } else {
+          console.log('No session code. Start tunnel first.');
         }
       } catch {}
-      console.log('Admin password: configured in Settings → Admin Password');
-      console.log('Local login: admin password only');
-      console.log('Remote login: admin password + session code');
+      // Also show tunnel URL if running
+      try {
+        const tunnelState = JSON.parse(readFileSync(join(dataDir, 'tunnel-state.json'), 'utf-8'));
+        if (tunnelState.url) console.log(`Tunnel URL: ${tunnelState.url}`);
+      } catch {}
       break;
     }
 
@@ -553,7 +571,7 @@ Shortcuts: t=task, ls=tasks, w=watch, s=status, l=log, f=flows, p=projects, pw=p
   }
 }
 
-const skipUpdateCheck = ['upgrade', 'uninstall', '--version', '-v'];
+const skipUpdateCheck = ['upgrade', 'uninstall', '--version', '-v', '--reset-password'];
 main().then(() => { if (!skipUpdateCheck.includes(cmd)) return checkForUpdate(); }).catch(err => {
   console.error(err.message);
   process.exit(1);

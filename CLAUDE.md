@@ -7,7 +7,8 @@
 ./start.sh dev           # development (hot-reload)
 forge server start              # production via npm link/install
 forge server start --dev        # dev mode
-forge server start --background # background, logs to ~/.forge/forge.log
+forge server start              # background by default, logs to ~/.forge/forge.log
+forge server start --foreground # foreground mode
 forge server stop               # stop background server
 forge server restart            # stop + start (safe for remote)
 forge server rebuild            # force rebuild
@@ -34,7 +35,7 @@ npm login && npm publish --access public --otp=<code>
 # ── CLI ──
 forge                    # help
 forge --version          # show version
-forge password           # show today's login password
+forge tcode              # show tunnel URL + session code
 forge tasks              # list tasks
 forge task <project> "prompt"  # submit task
 forge watch <id>         # live stream task output

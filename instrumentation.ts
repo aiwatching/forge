@@ -8,8 +8,8 @@ export async function register() {
     // Load ~/.forge/.env.local if it exists (works for both pnpm dev and forge-server)
     const { existsSync, readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
-    const { homedir } = await import('node:os');
-    const dataDir = process.env.FORGE_DATA_DIR || join(homedir(), '.forge');
+    const { getDataDir } = await import('./lib/dirs');
+    const dataDir = getDataDir();
     const envFile = join(dataDir, '.env.local');
     if (existsSync(envFile)) {
       for (const line of readFileSync(envFile, 'utf-8').split('\n')) {

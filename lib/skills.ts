@@ -1,19 +1,27 @@
 /**
- * Skills management — sync from registry, install/uninstall to local.
+ * Skills & Commands marketplace — sync from registry, install/uninstall.
  *
- * Global install: ~/.claude/commands/<name>.md
- * Project install: <projectPath>/.claude/commands/<name>.md
+ * Skills:   ~/.claude/skills/<name>/  (directory with SKILL.md + support files)
+ * Commands: ~/.claude/commands/<name>.md  (single .md file)
+ *
+ * Install = download all files from GitHub repo directory → write to local.
+ * No tar.gz — direct file sync via GitHub raw URLs.
+ * Version tracking — compare registry version with installed version for update detection.
  */
 
 import { getDb } from '@/src/core/db/database';
 import { getDbPath } from '@/src/config';
 import { loadSettings } from './settings';
-import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
+import { existsSync, mkdirSync, writeFileSync, unlinkSync, readdirSync, rmSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { getClaudeDir } from './dirs';
 
-export interface Skill {
+export type ItemType = 'skill' | 'command';
+
+export interface SkillItem {
   name: string;
+  type: ItemType;
   displayName: string;
   description: string;
   author: string;
@@ -22,24 +30,62 @@ export interface Skill {
   score: number;
   sourceUrl: string;
   installedGlobal: boolean;
-  installedProjects: string[]; // project paths where installed
+  installedProjects: string[];
+  installedVersion: string;  // version currently installed (empty if not installed)
+  hasUpdate: boolean;         // true if registry version > installed version
 }
 
 function db() {
   return getDb(getDbPath());
 }
 
-const GLOBAL_COMMANDS_DIR = join(homedir(), '.claude', 'commands');
+const GLOBAL_SKILLS_DIR = join(getClaudeDir(), 'skills');
+const GLOBAL_COMMANDS_DIR = join(getClaudeDir(), 'commands');
 
-function projectCommandsDir(projectPath: string): string {
-  return join(projectPath, '.claude', 'commands');
+function getBaseUrl(): string {
+  const settings = loadSettings();
+  return settings.skillsRepoUrl || 'https://raw.githubusercontent.com/aiwatching/forge-skills/main';
+}
+
+function getRepoInfo(): string {
+  const baseUrl = getBaseUrl();
+  const match = baseUrl.match(/github\.com\/([^/]+\/[^/]+)/);
+  return match ? match[1] : 'aiwatching/forge-skills';
+}
+
+// ─── Version comparison ──────────────────────────────────────
+
+function compareVersions(a: string, b: string): number {
+  const pa = (a || '0.0.0').split('.').map(Number);
+  const pb = (b || '0.0.0').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+/** Read installed version from info.json (skills) or return DB version (commands) */
+function getInstalledVersion(name: string, type: string, basePath?: string): string {
+  if (type === 'skill') {
+    const dir = basePath
+      ? join(basePath, '.claude', 'skills', name)
+      : join(GLOBAL_SKILLS_DIR, name);
+    const infoPath = join(dir, 'info.json');
+    try {
+      const info = JSON.parse(readFileSync(infoPath, 'utf-8'));
+      return info.version || '';
+    } catch { return ''; }
+  }
+  // Commands don't have version files — use DB installed_version
+  const row = db().prepare('SELECT installed_version FROM skills WHERE name = ?').get(name) as any;
+  return row?.installed_version || '';
 }
 
 // ─── Sync from registry ──────────────────────────────────────
 
 export async function syncSkills(): Promise<{ synced: number; error?: string }> {
-  const settings = loadSettings();
-  const baseUrl = settings.skillsRepoUrl || 'https://raw.githubusercontent.com/aiwatching/forge-skills/main';
+  const baseUrl = getBaseUrl();
 
   try {
     const controller = new AbortController();
@@ -53,130 +99,328 @@ export async function syncSkills(): Promise<{ synced: number; error?: string }> 
     if (!res.ok) return { synced: 0, error: `Registry fetch failed: ${res.status}` };
 
     const data = await res.json();
-    const skills = data.skills || [];
+
+    // Support both v1 (flat skills array) and v2 (separate skills + commands)
+    let items: any[] = [];
+    if (data.version === 2) {
+      items = [
+        ...(data.skills || []).map((s: any) => ({ ...s, type: s.type || 'skill' })),
+        ...(data.commands || []).map((c: any) => ({ ...c, type: c.type || 'command' })),
+      ];
+    } else {
+      // v1: enrich from info.json in parallel
+      const rawItems = data.skills || [];
+      const enriched = await Promise.all(rawItems.map(async (s: any) => {
+        // Fetch info.json for metadata and type
+        try {
+          const infoRes = await fetch(`${baseUrl}/skills/${s.name}/info.json`, { signal: AbortSignal.timeout(5000) });
+          if (infoRes.ok) {
+            const info = await infoRes.json();
+            return {
+              ...s,
+              type: info.type || s.type || 'command',
+              display_name: info.display_name || s.display_name,
+              description: info.description || s.description,
+              version: info.version || s.version,
+              tags: info.tags || s.tags,
+              score: info.score ?? s.score,
+            };
+          }
+        } catch {}
+        return { ...s, type: s.type || 'command' };
+      }));
+      items = enriched;
+    }
 
     const stmt = db().prepare(`
-      INSERT OR REPLACE INTO skills (name, display_name, description, author, version, tags, score, source_url, synced_at,
-        installed_global, installed_projects, skill_content)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'),
+      INSERT OR REPLACE INTO skills (name, type, display_name, description, author, version, tags, score, source_url, archive, synced_at,
+        installed_global, installed_projects, installed_version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'),
         COALESCE((SELECT installed_global FROM skills WHERE name = ?), 0),
         COALESCE((SELECT installed_projects FROM skills WHERE name = ?), '[]'),
-        COALESCE((SELECT skill_content FROM skills WHERE name = ?), NULL))
+        COALESCE((SELECT installed_version FROM skills WHERE name = ?), ''))
     `);
 
     const tx = db().transaction(() => {
-      for (const s of skills) {
+      for (const s of items) {
         stmt.run(
-          s.name, s.display_name, s.description || '',
+          s.name, s.type || 'skill',
+          s.display_name, s.description || '',
           s.author?.name || '', s.version || '', JSON.stringify(s.tags || []),
           s.score || 0, s.source?.url || '',
+          '', // archive field (unused now, kept for compat)
           s.name, s.name, s.name
         );
       }
     });
     tx();
 
-    return { synced: skills.length };
+    return { synced: items.length };
   } catch (e) {
     return { synced: 0, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
-// ─── List skills ─────────────────────────────────────────────
+// ─── List ────────────────────────────────────────────────────
 
-export function listSkills(): Skill[] {
-  const rows = db().prepare('SELECT * FROM skills ORDER BY score DESC, display_name ASC').all() as any[];
-  return rows.map(r => ({
-    name: r.name,
-    displayName: r.display_name,
-    description: r.description,
-    author: r.author,
-    version: r.version,
-    tags: JSON.parse(r.tags || '[]'),
-    score: r.score,
-    sourceUrl: r.source_url,
-    installedGlobal: !!r.installed_global,
-    installedProjects: JSON.parse(r.installed_projects || '[]'),
-  }));
+export function listSkills(): SkillItem[] {
+  const rows = db().prepare('SELECT * FROM skills ORDER BY type ASC, score DESC, display_name ASC').all() as any[];
+  return rows.map(r => {
+    const installedVersion = r.installed_version || '';
+    const registryVersion = r.version || '';
+    const isInstalled = !!r.installed_global || JSON.parse(r.installed_projects || '[]').length > 0;
+    return {
+      name: r.name,
+      type: r.type || 'skill',
+      displayName: r.display_name,
+      description: r.description,
+      author: r.author,
+      version: registryVersion,
+      tags: JSON.parse(r.tags || '[]'),
+      score: r.score,
+      sourceUrl: r.source_url,
+      installedGlobal: !!r.installed_global,
+      installedProjects: JSON.parse(r.installed_projects || '[]'),
+      installedVersion,
+      hasUpdate: isInstalled && !!registryVersion && !!installedVersion && compareVersions(registryVersion, installedVersion) > 0,
+    };
+  });
+}
+
+// ─── Download directory from GitHub ──────────────────────────
+
+/** Recursively list all files in a skill/command directory via GitHub API */
+async function listRepoFiles(name: string, type: ItemType): Promise<{ path: string; download_url: string }[]> {
+  const repo = getRepoInfo();
+  const files: { path: string; download_url: string }[] = [];
+
+  async function recurse(apiUrl: string, prefix: string) {
+    const res = await fetch(apiUrl, {
+      headers: { 'Accept': 'application/vnd.github.v3+json' },
+    });
+    if (!res.ok) return;
+    const items = await res.json();
+    if (!Array.isArray(items)) return;
+
+    for (const item of items) {
+      const relPath = prefix ? `${prefix}/${item.name}` : item.name;
+      if (item.type === 'file') {
+        files.push({ path: relPath, download_url: item.download_url });
+      } else if (item.type === 'dir') {
+        await recurse(item.url, relPath);
+      }
+    }
+  }
+
+  // Try skills/ first, then commands/
+  await recurse(`https://api.github.com/repos/${repo}/contents/skills/${name}`, '');
+  if (files.length === 0) {
+    await recurse(`https://api.github.com/repos/${repo}/contents/commands/${name}`, '');
+  }
+  return files;
+}
+
+/** Download all files to a local directory */
+async function downloadToDir(files: { path: string; download_url: string }[], destDir: string): Promise<void> {
+  if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
+
+  for (const file of files) {
+    const filePath = join(destDir, file.path);
+    const fileDir = join(destDir, file.path.split('/').slice(0, -1).join('/'));
+    if (fileDir !== destDir && !existsSync(fileDir)) mkdirSync(fileDir, { recursive: true });
+
+    const res = await fetch(file.download_url);
+    if (!res.ok) continue;
+    const content = await res.text();
+    writeFileSync(filePath, content, 'utf-8');
+  }
 }
 
 // ─── Install ─────────────────────────────────────────────────
 
-async function fetchSkillContent(name: string): Promise<string> {
-  // Check if already cached in DB
-  const row = db().prepare('SELECT skill_content FROM skills WHERE name = ?').get(name) as any;
-  if (row?.skill_content) return row.skill_content;
-
-  // Fetch from GitHub
-  const settings = loadSettings();
-  const baseUrl = settings.skillsRepoUrl || 'https://raw.githubusercontent.com/aiwatching/forge-skills/main';
-  const res = await fetch(`${baseUrl}/skills/${name}/skill.md`, { headers: { 'Accept': 'text/plain' } });
-  if (!res.ok) throw new Error(`Failed to fetch skill: ${res.status}`);
-  const content = await res.text();
-
-  // Cache in DB
-  db().prepare('UPDATE skills SET skill_content = ? WHERE name = ?').run(content, name);
-  return content;
-}
-
 export async function installGlobal(name: string): Promise<void> {
-  const content = await fetchSkillContent(name);
-  if (!existsSync(GLOBAL_COMMANDS_DIR)) mkdirSync(GLOBAL_COMMANDS_DIR, { recursive: true });
-  writeFileSync(join(GLOBAL_COMMANDS_DIR, `${name}.md`), content, 'utf-8');
-  db().prepare('UPDATE skills SET installed_global = 1 WHERE name = ?').run(name);
+  const row = db().prepare('SELECT type, version FROM skills WHERE name = ?').get(name) as any;
+  if (!row) throw new Error(`Not found: ${name}`);
+  const type: ItemType = row.type || 'skill';
+  const version = row.version || '';
+
+  const files = await listRepoFiles(name, type);
+
+  if (type === 'skill') {
+    const dest = join(GLOBAL_SKILLS_DIR, name);
+    if (existsSync(dest)) rmSync(dest, { recursive: true });
+    await downloadToDir(files, dest);
+  } else {
+    // Command: download all files to commands/<name>/ directory
+    // If only a single .md, also copy as <name>.md directly for slash command registration
+    const dest = join(GLOBAL_COMMANDS_DIR);
+    if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
+    const mdFiles = files.filter(f => f.path.endsWith('.md') && f.path !== 'info.json');
+    if (mdFiles.length === 1 && files.filter(f => f.path !== 'info.json').length === 1) {
+      // Single .md command — write directly as <name>.md
+      const res = await fetch(mdFiles[0].download_url);
+      if (res.ok) writeFileSync(join(dest, `${name}.md`), await res.text(), 'utf-8');
+    } else {
+      // Multi-file command — copy all files (except info.json) to commands/<name>/
+      const cmdDir = join(dest, name);
+      if (existsSync(cmdDir)) rmSync(cmdDir, { recursive: true });
+      const nonInfo = files.filter(f => f.path !== 'info.json');
+      await downloadToDir(nonInfo, cmdDir);
+    }
+  }
+
+  db().prepare('UPDATE skills SET installed_global = 1, installed_version = ? WHERE name = ?').run(version, name);
 }
 
 export async function installProject(name: string, projectPath: string): Promise<void> {
-  const content = await fetchSkillContent(name);
-  const dir = projectCommandsDir(projectPath);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${name}.md`), content, 'utf-8');
+  const row = db().prepare('SELECT type, version FROM skills WHERE name = ?').get(name) as any;
+  if (!row) throw new Error(`Not found: ${name}`);
+  const type: ItemType = row.type || 'skill';
+  const version = row.version || '';
 
-  // Update installed_projects list
-  const row = db().prepare('SELECT installed_projects FROM skills WHERE name = ?').get(name) as any;
-  const projects: string[] = JSON.parse(row?.installed_projects || '[]');
+  const files = await listRepoFiles(name, type);
+
+  if (type === 'skill') {
+    const dest = join(projectPath, '.claude', 'skills', name);
+    if (existsSync(dest)) rmSync(dest, { recursive: true });
+    await downloadToDir(files, dest);
+  } else {
+    const cmdDir = join(projectPath, '.claude', 'commands');
+    if (!existsSync(cmdDir)) mkdirSync(cmdDir, { recursive: true });
+    const mdFiles = files.filter(f => f.path.endsWith('.md') && f.path !== 'info.json');
+    if (mdFiles.length === 1 && files.filter(f => f.path !== 'info.json').length === 1) {
+      const res = await fetch(mdFiles[0].download_url);
+      if (res.ok) writeFileSync(join(cmdDir, `${name}.md`), await res.text(), 'utf-8');
+    } else {
+      const subDir = join(cmdDir, name);
+      if (existsSync(subDir)) rmSync(subDir, { recursive: true });
+      const nonInfo = files.filter(f => f.path !== 'info.json');
+      await downloadToDir(nonInfo, subDir);
+    }
+  }
+
+  // Update installed_projects + version
+  const current = db().prepare('SELECT installed_projects FROM skills WHERE name = ?').get(name) as any;
+  const projects: string[] = JSON.parse(current?.installed_projects || '[]');
   if (!projects.includes(projectPath)) {
     projects.push(projectPath);
-    db().prepare('UPDATE skills SET installed_projects = ? WHERE name = ?').run(JSON.stringify(projects), name);
   }
+  db().prepare('UPDATE skills SET installed_projects = ?, installed_version = ? WHERE name = ?')
+    .run(JSON.stringify(projects), version, name);
 }
 
 // ─── Uninstall ───────────────────────────────────────────────
 
 export function uninstallGlobal(name: string): void {
-  const file = join(GLOBAL_COMMANDS_DIR, `${name}.md`);
-  try { unlinkSync(file); } catch {}
-  db().prepare('UPDATE skills SET installed_global = 0 WHERE name = ?').run(name);
+  // Remove from all possible locations
+  try { rmSync(join(GLOBAL_SKILLS_DIR, name), { recursive: true }); } catch {}
+  try { unlinkSync(join(GLOBAL_COMMANDS_DIR, `${name}.md`)); } catch {}
+  try { rmSync(join(GLOBAL_COMMANDS_DIR, name), { recursive: true }); } catch {}
+
+  db().prepare('UPDATE skills SET installed_global = 0, installed_version = ? WHERE name = ?')
+    .run('', name);
 }
 
 export function uninstallProject(name: string, projectPath: string): void {
-  const file = join(projectCommandsDir(projectPath), `${name}.md`);
-  try { unlinkSync(file); } catch {}
+  // Remove from all possible locations
+  try { rmSync(join(projectPath, '.claude', 'skills', name), { recursive: true }); } catch {}
+  try { unlinkSync(join(projectPath, '.claude', 'commands', `${name}.md`)); } catch {}
+  try { rmSync(join(projectPath, '.claude', 'commands', name), { recursive: true }); } catch {}
 
-  const row = db().prepare('SELECT installed_projects FROM skills WHERE name = ?').get(name) as any;
-  const projects: string[] = JSON.parse(row?.installed_projects || '[]');
+  const current = db().prepare('SELECT installed_projects FROM skills WHERE name = ?').get(name) as any;
+  const projects: string[] = JSON.parse(current?.installed_projects || '[]');
   const updated = projects.filter(p => p !== projectPath);
   db().prepare('UPDATE skills SET installed_projects = ? WHERE name = ?').run(JSON.stringify(updated), name);
+  // Clear installed_version if no longer installed anywhere
+  if (updated.length === 0) {
+    const row2 = db().prepare('SELECT installed_global FROM skills WHERE name = ?').get(name) as any;
+    if (!row2?.installed_global) {
+      db().prepare('UPDATE skills SET installed_version = ? WHERE name = ?').run('', name);
+    }
+  }
 }
 
 // ─── Scan installed state from filesystem ────────────────────
 
 export function refreshInstallState(projectPaths: string[]): void {
-  const skills = db().prepare('SELECT name FROM skills').all() as { name: string }[];
+  const items = db().prepare('SELECT name, type FROM skills').all() as { name: string; type: string }[];
 
-  for (const { name } of skills) {
-    // Check global
-    const globalInstalled = existsSync(join(GLOBAL_COMMANDS_DIR, `${name}.md`));
+  for (const { name, type } of items) {
+    let globalInstalled = false;
+    let installedVersion = '';
 
-    // Check projects
+    // Check BOTH locations — skill dir and command file/dir
+    const skillDir = join(GLOBAL_SKILLS_DIR, name);
+    const cmdFile = join(GLOBAL_COMMANDS_DIR, `${name}.md`);
+    const cmdDir = join(GLOBAL_COMMANDS_DIR, name);
+
+    if (existsSync(skillDir)) {
+      globalInstalled = true;
+      installedVersion = getInstalledVersion(name, 'skill');
+    } else if (existsSync(cmdFile)) {
+      globalInstalled = true;
+    } else if (existsSync(cmdDir)) {
+      globalInstalled = true;
+    }
+
     const installedIn: string[] = [];
     for (const pp of projectPaths) {
-      if (existsSync(join(projectCommandsDir(pp), `${name}.md`))) {
+      // Check all possible install locations for this project
+      const projSkillDir = join(pp, '.claude', 'skills', name);
+      const projCmdFile = join(pp, '.claude', 'commands', `${name}.md`);
+      const projCmdDir = join(pp, '.claude', 'commands', name);
+      if (existsSync(projSkillDir) || existsSync(projCmdFile) || existsSync(projCmdDir)) {
         installedIn.push(pp);
       }
     }
 
-    db().prepare('UPDATE skills SET installed_global = ?, installed_projects = ? WHERE name = ?')
-      .run(globalInstalled ? 1 : 0, JSON.stringify(installedIn), name);
+    db().prepare('UPDATE skills SET installed_global = ?, installed_projects = ?, installed_version = CASE WHEN ? != \'\' THEN ? ELSE installed_version END WHERE name = ?')
+      .run(globalInstalled ? 1 : 0, JSON.stringify(installedIn), installedVersion, installedVersion, name);
   }
+}
+
+// ─── Check local modifications ───────────────────────────────
+
+/** Compare local installed files against remote. Returns true if any file was locally modified. */
+export async function checkLocalModified(name: string): Promise<boolean> {
+  const row = db().prepare('SELECT type FROM skills WHERE name = ?').get(name) as any;
+  if (!row) return false;
+  const type: ItemType = row.type || 'command';
+
+  // Get remote file list
+  const remoteFiles = await listRepoFiles(name, type);
+
+  // Compare each file
+  for (const rf of remoteFiles) {
+    if (rf.path === 'info.json') continue; // skip metadata
+
+    let localPath: string;
+    if (type === 'skill') {
+      localPath = join(GLOBAL_SKILLS_DIR, name, rf.path);
+    } else {
+      // Single file command
+      const cmdFile = join(GLOBAL_COMMANDS_DIR, `${name}.md`);
+      const cmdDir = join(GLOBAL_COMMANDS_DIR, name);
+      if (existsSync(cmdDir)) {
+        localPath = join(cmdDir, rf.path);
+      } else {
+        localPath = cmdFile;
+      }
+    }
+
+    if (!existsSync(localPath)) continue;
+    const localContent = readFileSync(localPath, 'utf-8');
+
+    // Fetch remote content
+    try {
+      const res = await fetch(rf.download_url);
+      if (!res.ok) continue;
+      const remoteContent = await res.text();
+      const localHash = createHash('md5').update(localContent).digest('hex');
+      const remoteHash = createHash('md5').update(remoteContent).digest('hex');
+      if (localHash !== remoteHash) return true;
+    } catch { continue; }
+  }
+
+  return false;
 }

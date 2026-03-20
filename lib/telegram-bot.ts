@@ -260,7 +260,7 @@ async function handleMessage(msg: any) {
         await handleTunnelStatus(chatId);
         break;
       case '/tunnel_start':
-        await handleTunnelStart(chatId, args[0]);
+        await handleTunnelStart(chatId, args[0], msg.message_id);
         break;
       case '/tunnel_stop':
         await handleTunnelStop(chatId);
@@ -892,9 +892,12 @@ async function handleTunnelStatus(chatId: number) {
   }
 }
 
-async function handleTunnelStart(chatId: number, password?: string) {
+async function handleTunnelStart(chatId: number, password?: string, userMsgId?: number) {
   const settings = loadSettings();
   if (String(chatId) !== settings.telegramChatId) { await send(chatId, '⛔ Unauthorized'); return; }
+
+  // Delete user's message containing password
+  if (userMsgId && password) deleteMessageLater(chatId, userMsgId, 0);
 
   // Require admin password
   if (!password) {
@@ -932,8 +935,11 @@ async function handleTunnelStart(chatId: number, password?: string) {
   await send(chatId, '🌐 Starting tunnel...');
   const result = await startTunnel();
   if (result.url) {
-    await send(chatId, '✅ Tunnel started:');
-    await sendHtml(chatId, `<a href="${result.url}">${result.url}</a>`);
+    const { getSessionCode } = require('./password');
+    const code = getSessionCode();
+    // Send URL + code, auto-delete after 60 seconds
+    const msgUrl = await sendHtml(chatId, `✅ Tunnel started:\n<a href="${result.url}">${result.url}</a>\n\n🔑 Session code: <code>${code || 'N/A'}</code>\n\n<i>This message will be deleted in 60 seconds</i>`);
+    if (msgUrl) deleteMessageLater(chatId, msgUrl, 60);
   } else {
     await send(chatId, `❌ Failed: ${result.error}`);
   }
@@ -1240,7 +1246,8 @@ async function sendNoteToDocsClaude(chatId: number, content: string) {
   }
 
   // Write content to a temp file, then use tmux to send a prompt referencing it
-  const tmpFile = join(homedir(), '.forge', '.note-tmp.txt');
+  const { getDataDir: _getDataDir } = require('./dirs');
+  const tmpFile = join(_getDataDir(), '.note-tmp.txt');
   try {
     writeFileSync(tmpFile, content, 'utf-8');
 

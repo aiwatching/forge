@@ -8,15 +8,15 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import YAML from 'yaml';
 import { createTask, getTask, onTaskEvent, taskModelOverrides } from './task-manager';
 import { getProjectInfo } from './projects';
 import { loadSettings } from './settings';
 import type { Task } from '@/src/types';
+import { getDataDir } from './dirs';
 
-const PIPELINES_DIR = join(homedir(), '.forge', 'pipelines');
-const WORKFLOWS_DIR = join(homedir(), '.forge', 'flows');
+const PIPELINES_DIR = join(getDataDir(), 'pipelines');
+const WORKFLOWS_DIR = join(getDataDir(), 'flows');
 
 // Track pipeline task IDs so terminal notifications can skip them (persists across hot-reloads)
 const pipelineTaskKey = Symbol.for('mw-pipeline-task-ids');

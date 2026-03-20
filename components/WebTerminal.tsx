@@ -9,6 +9,7 @@ import '@xterm/xterm/css/xterm.css';
 
 export interface WebTerminalHandle {
   openSessionInTerminal: (sessionId: string, projectPath: string) => void;
+  openProjectTerminal: (projectPath: string, projectName: string) => void;
 }
 
 export interface WebTerminalProps {
@@ -269,21 +270,65 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
 
   useImperativeHandle(ref, () => ({
     openSessionInTerminal(sessionId: string, projectPath: string) {
-      const tree = makeTerminal();
+      const tree = makeTerminal(undefined, projectPath);
       const paneId = firstTerminalId(tree);
-      const cmd = `cd ${projectPath} && claude --resume ${sessionId}\n`;
+      const sf = skipPermissions ? ' --dangerously-skip-permissions' : '';
+      const cmd = `cd "${projectPath}" && claude --resume ${sessionId}${sf}\n`;
       pendingCommands.set(paneId, cmd);
+      const projectName = projectPath.split('/').pop() || 'Terminal';
       const newTab: TabState = {
         id: nextId++,
-        label: `claude ${sessionId.slice(0, 8)}`,
+        label: projectName,
         tree,
         ratios: {},
         activeId: paneId,
+        projectPath,
       };
       setTabs(prev => [...prev, newTab]);
-      setActiveTabId(newTab.id);
+      setTimeout(() => setActiveTabId(newTab.id), 0);
     },
-  }));
+    async openProjectTerminal(projectPath: string, projectName: string) {
+      // Check for existing sessions to use -c
+      let hasSession = false;
+      try {
+        const sRes = await fetch(`/api/claude-sessions/${encodeURIComponent(projectName)}`);
+        const sData = await sRes.json();
+        hasSession = Array.isArray(sData) ? sData.length > 0 : false;
+      } catch {}
+      const sf = skipPermissions ? ' --dangerously-skip-permissions' : '';
+      const resumeFlag = hasSession ? ' -c' : '';
+
+      // Use a ref-stable ID so we can set active after state update
+      let targetTabId: number | null = null;
+
+      setTabs(prev => {
+        // Check if there's already a tab for this project
+        const existing = prev.find(t => t.projectPath === projectPath);
+        if (existing) {
+          targetTabId = existing.id;
+          return prev;
+        }
+        const tree = makeTerminal(undefined, projectPath);
+        const paneId = firstTerminalId(tree);
+        pendingCommands.set(paneId, `cd "${projectPath}" && claude${resumeFlag}${sf}\n`);
+        const newTab: TabState = {
+          id: nextId++,
+          label: projectName,
+          tree,
+          ratios: {},
+          activeId: paneId,
+          projectPath,
+        };
+        targetTabId = newTab.id;
+        return [...prev, newTab];
+      });
+
+      // Set active tab after React processes the state update
+      setTimeout(() => {
+        if (targetTabId !== null) setActiveTabId(targetTabId);
+      }, 0);
+    },
+  }), [skipPermissions]);
 
   // ─── Tab operations ───────────────────────────────────
 

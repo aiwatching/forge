@@ -26,8 +26,8 @@ export async function GET() {
   try {
     const { readFileSync } = require('fs');
     const { join } = require('path');
-    const { homedir } = require('os');
-    const state = JSON.parse(readFileSync(join(homedir(), '.forge', 'tunnel-state.json'), 'utf-8'));
+    const { getDataDir: _gdd } = require('@/lib/dirs');
+    const state = JSON.parse(readFileSync(join(_gdd(), 'tunnel-state.json'), 'utf-8'));
     tunnelUrl = state.url || '';
   } catch {}
 

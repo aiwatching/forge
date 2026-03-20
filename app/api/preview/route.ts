@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import { getDataDir, getConfigDir } from '@/lib/dirs';
 
-const CONFIG_FILE = join(process.env.FORGE_DATA_DIR || join(homedir(), '.forge'), 'preview.json');
+const CONFIG_FILE = join(getDataDir(), 'preview.json');
 
 interface PreviewEntry {
   port: number;
@@ -35,8 +35,7 @@ function saveConfig(entries: PreviewEntry[]) {
 }
 
 function getCloudflaredPath(): string | null {
-  const dataDir = process.env.FORGE_DATA_DIR || join(homedir(), '.forge');
-  const binPath = join(dataDir, 'bin', 'cloudflared');
+  const binPath = join(getConfigDir(), 'bin', 'cloudflared');
   if (existsSync(binPath)) return binPath;
   try {
     return execSync('which cloudflared', { encoding: 'utf-8' }).trim();

@@ -446,6 +446,23 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           </p>
         </div>
 
+        {/* Claude Home Directory */}
+        <div className="space-y-2">
+          <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">
+            Claude Home Directory
+          </label>
+          <input
+            type="text"
+            value={(settings as any).claudeHome || ''}
+            onChange={e => setSettings({ ...settings, claudeHome: e.target.value } as any)}
+            placeholder="~/.claude (default)"
+            className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono"
+          />
+          <p className="text-[9px] text-[var(--text-secondary)]">
+            Where Claude Code stores skills, commands, and sessions. Leave empty for default (~/.claude).
+          </p>
+        </div>
+
         {/* Telegram Notifications */}
         <div className="space-y-2">
           <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">
@@ -782,6 +799,34 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
 
         </div>
 
+        {/* Display Name */}
+        <div className="space-y-2">
+          <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">
+            Display Name
+          </label>
+          <input
+            type="text"
+            value={(settings as any).displayName || ''}
+            onChange={e => setSettings({ ...settings, displayName: e.target.value } as any)}
+            placeholder="Forge"
+            className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)]"
+          />
+        </div>
+
+        {/* Email */}
+        <div className="space-y-2">
+          <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">
+            Email
+          </label>
+          <input
+            type="email"
+            value={(settings as any).displayEmail || ''}
+            onChange={e => setSettings({ ...settings, displayEmail: e.target.value } as any)}
+            placeholder="local@forge"
+            className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)]"
+          />
+        </div>
+
         {/* Admin Password */}
         <div className="space-y-2">
           <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">
@@ -796,7 +841,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             onEdit={() => setEditingSecret({ field: 'telegramTunnelPassword', label: 'Admin Password' })}
           />
           <p className="text-[9px] text-[var(--text-secondary)]">
-            Forgot? Run: <code className="text-[var(--accent)]">forge server start --reset-password</code>
+            Forgot? Run: <code className="text-[var(--accent)]">forge --reset-password</code>
           </p>
         </div>
 

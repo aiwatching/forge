@@ -21,9 +21,9 @@ const gInit = globalThis as any;
 function migrateSecrets() {
   try {
     const { existsSync, readFileSync } = require('node:fs');
-    const { homedir } = require('node:os');
     const YAML = require('yaml');
-    const dataDir = process.env.FORGE_DATA_DIR || join(homedir(), '.forge');
+    const { getDataDir: _gdd } = require('./dirs');
+    const dataDir = _gdd();
     const file = join(dataDir, 'settings.yaml');
     if (!existsSync(file)) return;
     const raw = YAML.parse(readFileSync(file, 'utf-8')) || {};

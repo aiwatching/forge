@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server';
 import { listPipelines, listWorkflows, startPipeline } from '@/lib/pipeline';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import YAML from 'yaml';
+import { getDataDir } from '@/lib/dirs';
 
-const FLOWS_DIR = join(homedir(), '.forge', 'flows');
+const FLOWS_DIR = join(getDataDir(), 'flows');
 
 // GET /api/pipelines — list all pipelines + available workflows
 export async function GET(req: Request) {

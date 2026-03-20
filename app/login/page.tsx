@@ -88,7 +88,7 @@ export default function LoginPage() {
             {showHelp && (
               <p className="text-[10px] text-[var(--text-secondary)] mt-1 bg-[var(--bg-tertiary)] rounded p-2">
                 Run in terminal:<br />
-                <code className="text-[var(--accent)]">forge server start --reset-password</code>
+                <code className="text-[var(--accent)]">forge --reset-password</code>
               </p>
             )}
           </div>

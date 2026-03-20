@@ -1,9 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { getDataDir } from '@/lib/dirs';
 
-const CONFIG_FILE = join(homedir(), '.forge', 'preview.json');
+const CONFIG_FILE = join(getDataDir(), 'preview.json');
 
 function getPort(): number {
   try {

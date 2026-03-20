@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import YAML from 'yaml';
 import type { AppConfig, ProviderName, SessionTemplate } from '@/src/types';
+import { getConfigDir as _getConfigDir, getDataDir as _getDataDir } from '@/lib/dirs';
 
-const CONFIG_DIR = join(homedir(), '.forge');
+const CONFIG_DIR = _getConfigDir();
 const CONFIG_FILE = join(CONFIG_DIR, 'config.yaml');
 const TEMPLATES_DIR = join(CONFIG_DIR, 'templates');
 
@@ -13,7 +13,7 @@ export function getConfigDir(): string {
 }
 
 export function getDataDir(): string {
-  return join(CONFIG_DIR, 'data');
+  return _getDataDir();
 }
 
 export function getDbPath(): string {
@@ -21,7 +21,7 @@ export function getDbPath(): string {
 }
 
 export function ensureDirs() {
-  for (const dir of [CONFIG_DIR, TEMPLATES_DIR, getDataDir()]) {
+  for (const dir of [CONFIG_DIR, getDataDir()]) {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
@@ -32,9 +32,8 @@ export function loadConfig(): AppConfig {
   ensureDirs();
 
   if (!existsSync(CONFIG_FILE)) {
-    const defaults = getDefaultConfig();
-    writeFileSync(CONFIG_FILE, YAML.stringify(defaults), 'utf-8');
-    return defaults;
+    // Don't auto-create config.yaml — return defaults in memory only
+    return getDefaultConfig();
   }
 
   const raw = readFileSync(CONFIG_FILE, 'utf-8');

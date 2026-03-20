@@ -35,7 +35,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const isRemote = String(credentials?.isRemote) === 'true';
 
         if (verifyLogin(password, sessionCode, isRemote)) {
-          return { id: 'local', name: 'zliu', email: 'local@forge' };
+          const { loadSettings } = await import('./settings');
+          const settings = loadSettings();
+          return { id: 'local', name: settings.displayName || 'Forge', email: settings.displayEmail || 'local@forge' };
         }
         return null;
       },

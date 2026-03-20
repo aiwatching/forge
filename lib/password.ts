@@ -11,11 +11,11 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { randomInt } from 'node:crypto';
+import { getDataDir } from './dirs';
 
-const DATA_DIR = process.env.FORGE_DATA_DIR || join(homedir(), '.forge');
+const DATA_DIR = getDataDir();
 const SESSION_CODE_FILE = join(DATA_DIR, 'session-code.json');
 
 /** Generate a random 8-digit numeric code */

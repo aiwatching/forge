@@ -31,7 +31,8 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
   const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [installTarget, setInstallTarget] = useState<{ skill: string; show: boolean }>({ skill: '', show: false });
-  const [typeFilter, setTypeFilter] = useState<'all' | 'skill' | 'command'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'skill' | 'command' | 'local'>('all');
+  const [localItems, setLocalItems] = useState<{ name: string; type: string; scope: string; fileCount: number }[]>([]);
   const [expandedSkill, setExpandedSkill] = useState<string | null>(null);
   const [skillFiles, setSkillFiles] = useState<{ name: string; path: string; type: string }[]>([]);
   const [activeFile, setActiveFile] = useState<string | null>(null);
@@ -39,10 +40,17 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
 
   const fetchSkills = useCallback(async () => {
     try {
-      const res = await fetch('/api/skills');
-      const data = await res.json();
+      const [registryRes, localRes] = await Promise.all([
+        fetch('/api/skills'),
+        fetch('/api/skills/local?action=scan'),
+      ]);
+      const data = await registryRes.json();
       setSkills(data.skills || []);
       setProjects(data.projects || []);
+      const localData = await localRes.json();
+      // Filter out items already in registry
+      const registryNames = new Set((data.skills || []).map((s: any) => s.name));
+      setLocalItems((localData.items || []).filter((i: any) => !registryNames.has(i.name)));
     } catch {}
     setLoading(false);
   }, []);
@@ -91,11 +99,16 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
     } catch { setSkillFiles([]); }
   };
 
-  const loadFile = async (skillName: string, filePath: string) => {
+  const loadFile = async (skillName: string, filePath: string, isLocalItem?: boolean, localType?: string) => {
     setActiveFile(filePath);
     setFileContent('Loading...');
     try {
-      const res = await fetch(`/api/skills?action=file&name=${encodeURIComponent(skillName)}&path=${encodeURIComponent(filePath)}`);
+      let res;
+      if (isLocalItem) {
+        res = await fetch(`/api/skills/local?action=read&name=${encodeURIComponent(skillName)}&type=${localType || 'command'}&path=${encodeURIComponent(filePath)}`);
+      } else {
+        res = await fetch(`/api/skills?action=file&name=${encodeURIComponent(skillName)}&path=${encodeURIComponent(filePath)}`);
+      }
       const data = await res.json();
       setFileContent(data.content || '(Empty)');
     } catch { setFileContent('(Failed to load)'); }
@@ -111,12 +124,13 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
   };
 
   // Filter by project and/or type
-  const filtered = skills
+  const filtered = typeFilter === 'local' ? [] : skills
     .filter(s => projectFilter ? (s.installedGlobal || s.installedProjects.includes(projectFilter)) : true)
     .filter(s => typeFilter === 'all' ? true : s.type === typeFilter);
 
   const skillCount = skills.filter(s => s.type === 'skill').length;
   const commandCount = skills.filter(s => s.type === 'command').length;
+  const localCount = localItems.length;
 
   if (loading) {
     return <div className="p-4 text-xs text-[var(--text-secondary)]">Loading skills...</div>;
@@ -129,7 +143,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-[var(--text-primary)]">Marketplace</span>
           <div className="flex items-center bg-[var(--bg-tertiary)] rounded p-0.5">
-            {([['all', `All (${skills.length})`], ['skill', `Skills (${skillCount})`], ['command', `Commands (${commandCount})`]] as const).map(([value, label]) => (
+            {([['all', `All (${skills.length})`], ['skill', `Skills (${skillCount})`], ['command', `Commands (${commandCount})`], ['local', `Local (${localCount})`]] as const).map(([value, label]) => (
               <button
                 key={value}
                 onClick={() => setTypeFilter(value)}
@@ -164,6 +178,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
         <div className="flex-1 flex min-h-0">
           {/* Left: skill list */}
           <div className="w-56 border-r border-[var(--border)] overflow-y-auto shrink-0">
+            {/* Registry items */}
             {filtered.map(skill => {
               const isInstalled = skill.installedGlobal || skill.installedProjects.length > 0;
               const isActive = expandedSkill === skill.name;
@@ -197,31 +212,90 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                 </div>
               );
             })}
+            {/* Local (global) items — shown in all tabs or dedicated Local tab */}
+            {(typeFilter === 'all' || typeFilter === 'local') && localItems.length > 0 && (
+              <>
+                {typeFilter !== 'local' && <div className="px-3 py-1 text-[8px] text-[var(--text-secondary)] uppercase bg-[var(--bg-tertiary)] border-b border-[var(--border)]/50">Global Local</div>}
+                {localItems
+                  .filter(item => typeFilter === 'local' || typeFilter === 'all' || item.type === typeFilter)
+                  .map(item => {
+                    const isActive = expandedSkill === `local:${item.name}`;
+                    return (
+                      <div
+                        key={`local:${item.name}`}
+                        className={`px-3 py-2.5 border-b border-[var(--border)]/50 cursor-pointer ${
+                          isActive ? 'bg-[var(--accent)]/10 border-l-2 border-l-[var(--accent)]' : 'hover:bg-[var(--bg-tertiary)] border-l-2 border-l-transparent'
+                        }`}
+                        onClick={() => {
+                          const key = `local:${item.name}`;
+                          if (expandedSkill === key) { setExpandedSkill(null); return; }
+                          setExpandedSkill(key);
+                          setSkillFiles([]);
+                          setActiveFile(null);
+                          setFileContent('');
+                          // Fetch files from local API
+                          fetch(`/api/skills/local?action=files&name=${encodeURIComponent(item.name)}&type=${item.type}`)
+                            .then(r => r.json())
+                            .then(d => {
+                              const files = (d.files || []).map((f: any) => ({ name: f.path.split('/').pop(), path: f.path, type: 'file' }));
+                              setSkillFiles(files);
+                              const first = files.find((f: any) => f.name?.endsWith('.md'));
+                              if (first) {
+                                setActiveFile(first.path);
+                                fetch(`/api/skills/local?action=read&name=${encodeURIComponent(item.name)}&type=${item.type}&path=${encodeURIComponent(first.path)}`)
+                                  .then(r => r.json())
+                                  .then(rd => setFileContent(rd.content || ''))
+                                  .catch(() => {});
+                              }
+                            })
+                            .catch(() => {});
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-semibold text-[var(--text-primary)] truncate flex-1">{item.name}</span>
+                          <span className="text-[7px] px-1 rounded bg-[var(--bg-secondary)] text-[var(--text-secondary)]">{item.scope}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className={`text-[7px] px-1 rounded font-medium ${
+                            item.type === 'skill' ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'
+                          }`}>{item.type === 'skill' ? 'SKILL' : 'CMD'}</span>
+                          <span className="text-[8px] text-[var(--text-secondary)]">{item.fileCount} file{item.fileCount > 1 ? 's' : ''}</span>
+                          <span className="text-[7px] px-1 rounded bg-green-500/10 text-green-400 ml-auto">local</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </>
+            )}
           </div>
 
           {/* Right: detail panel */}
           <div className="flex-1 flex flex-col min-w-0">
             {expandedSkill ? (() => {
-              const skill = skills.find(s => s.name === expandedSkill);
-              if (!skill) return null;
-              const isInstalled = skill.installedGlobal || skill.installedProjects.length > 0;
+              const isLocal = expandedSkill.startsWith('local:');
+              const itemName = isLocal ? expandedSkill.slice(6) : expandedSkill;
+              const skill = isLocal ? null : skills.find(s => s.name === expandedSkill);
+              const localItem = isLocal ? localItems.find(i => i.name === itemName) : null;
+              if (!skill && !localItem) return null;
+              const isInstalled = skill ? (skill.installedGlobal || skill.installedProjects.length > 0) : true;
               return (
                 <>
                   {/* Skill header */}
                   <div className="px-4 py-2 border-b border-[var(--border)] shrink-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-[var(--text-primary)]">{skill.displayName}</span>
+                      <span className="text-sm font-semibold text-[var(--text-primary)]">{skill?.displayName || localItem?.name || itemName}</span>
                       <span className={`text-[8px] px-1.5 py-0.5 rounded font-medium ${
-                        skill.type === 'skill' ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'
-                      }`}>{skill.type === 'skill' ? 'Skill' : 'Command'}</span>
-                      <span className="text-[9px] text-[var(--text-secondary)] font-mono">v{skill.version}</span>
-                      {skill.installedVersion && skill.installedVersion !== skill.version && (
+                        (skill?.type || localItem?.type) === 'skill' ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'
+                      }`}>{(skill?.type || localItem?.type) === 'skill' ? 'Skill' : 'Command'}</span>
+                      {isLocal && <span className="text-[7px] px-1 rounded bg-green-500/10 text-green-400">local</span>}
+                      {skill && <span className="text-[9px] text-[var(--text-secondary)] font-mono">v{skill.version}</span>}
+                      {skill?.installedVersion && skill.installedVersion !== skill.version && (
                         <span className="text-[9px] text-[var(--yellow)] font-mono">installed: v{skill.installedVersion}</span>
                       )}
-                      {skill.score > 0 && <span className="text-[9px] text-[var(--yellow)]">{skill.score}pt</span>}
+                      {skill && skill.score > 0 && <span className="text-[9px] text-[var(--yellow)]">{skill.score}pt</span>}
 
                       {/* Update button */}
-                      {skill.hasUpdate && (
+                      {skill?.hasUpdate && (
                         <button
                           onClick={async () => {
                             // Re-install to update (global if globally installed, plus all project installs)
@@ -234,8 +308,8 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                         </button>
                       )}
 
-                      {/* Install dropdown */}
-                      <div className="relative ml-auto">
+                      {/* Install dropdown — registry items only */}
+                      {skill && <div className="relative ml-auto">
                         <button
                           onClick={() => setInstallTarget(prev =>
                             prev.skill === skill.name && prev.show ? { skill: '', show: false } : { skill: skill.name, show: true }
@@ -275,11 +349,11 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                             </div>
                           </>
                         )}
-                      </div>
+                      </div>}
                     </div>
-                    <p className="text-[10px] text-[var(--text-secondary)] mt-0.5">{skill.description}</p>
+                    <p className="text-[10px] text-[var(--text-secondary)] mt-0.5">{skill?.description || ''}</p>
                     {/* Installed indicators */}
-                    {isInstalled && (
+                    {skill && isInstalled && (
                       <div className="flex items-center gap-2 mt-1">
                         {skill.installedGlobal && (
                           <span className="flex items-center gap-1 text-[8px] text-[var(--green)]">
@@ -308,7 +382,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                           f.type === 'file' ? (
                             <button
                               key={f.path}
-                              onClick={() => loadFile(skill.name, f.path)}
+                              onClick={() => loadFile(itemName, f.path, isLocal, localItem?.type)}
                               className={`w-full text-left px-2 py-1 text-[10px] truncate ${
                                 activeFile === f.path
                                   ? 'bg-[var(--accent)]/15 text-[var(--accent)]'
@@ -325,7 +399,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                           )
                         ))
                       )}
-                      {skill.sourceUrl && (
+                      {skill?.sourceUrl && (
                         <div className="border-t border-[var(--border)] p-2">
                           <a
                             href={skill.sourceUrl.replace(/\/blob\/main\/.*/, '')}

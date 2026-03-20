@@ -41,8 +41,60 @@ function resolveDir(name: string, type: string, projectPath?: string): string {
   return base;
 }
 
+/** Scan a directory for all installed skills/commands */
+function scanLocalItems(projectPath?: string): { name: string; type: 'skill' | 'command'; scope: 'global' | 'project'; fileCount: number }[] {
+  const items: { name: string; type: 'skill' | 'command'; scope: 'global' | 'project'; fileCount: number }[] = [];
+
+  // Scan skills directories
+  const skillsDirs = [
+    { dir: SKILLS_DIR, scope: 'global' as const },
+    ...(projectPath ? [{ dir: join(projectPath, '.claude', 'skills'), scope: 'project' as const }] : []),
+  ];
+  for (const { dir, scope } of skillsDirs) {
+    if (!existsSync(dir)) continue;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) {
+        const files = listFiles(join(dir, entry.name));
+        items.push({ name: entry.name, type: 'skill', scope, fileCount: files.length });
+      }
+    }
+  }
+
+  // Scan commands directories
+  const cmdDirs = [
+    { dir: COMMANDS_DIR, scope: 'global' as const },
+    ...(projectPath ? [{ dir: join(projectPath, '.claude', 'commands'), scope: 'project' as const }] : []),
+  ];
+  for (const { dir, scope } of cmdDirs) {
+    if (!existsSync(dir)) continue;
+    // Collect names, merge file + dir with same name
+    const seen = new Map<string, { name: string; type: 'command'; scope: typeof scope; fileCount: number }>();
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith('.')) continue;
+      const cmdName = entry.isFile() ? entry.name.replace(/\.md$/, '') : entry.name;
+      if (entry.isFile() && !entry.name.endsWith('.md')) continue;
+      const existing = seen.get(cmdName);
+      if (entry.isDirectory()) {
+        const files = listFiles(join(dir, entry.name));
+        const count = files.length + (existing?.fileCount || 0);
+        seen.set(cmdName, { name: cmdName, type: 'command', scope, fileCount: count });
+      } else if (entry.isFile()) {
+        if (existing) {
+          existing.fileCount += 1;
+        } else {
+          seen.set(cmdName, { name: cmdName, type: 'command', scope, fileCount: 1 });
+        }
+      }
+    }
+    items.push(...seen.values());
+  }
+
+  return items;
+}
+
 // GET /api/skills/local?name=X&type=skill|command&project=PATH
-//   action=files → list installed files
+//   action=scan → list ALL locally installed skills/commands
+//   action=files → list installed files for a specific item
 //   action=read&path=FILE → read file content + hash
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -51,21 +103,30 @@ export async function GET(req: Request) {
   const type = searchParams.get('type') || 'command';
   const projectPath = searchParams.get('project') || '';
 
+  if (action === 'scan') {
+    const items = scanLocalItems(projectPath || undefined);
+    return NextResponse.json({ items });
+  }
+
   if (action === 'files') {
     if (type === 'skill') {
       const dir = resolveDir(name, type, projectPath || undefined);
       return NextResponse.json({ files: listFiles(dir) });
     } else {
-      // Command: check single file first, then directory
+      // Command: collect both single .md file and directory contents
       const base = projectPath ? join(projectPath, '.claude', 'commands') : COMMANDS_DIR;
       const singleFile = join(base, `${name}.md`);
       const dirPath = join(base, name);
-      if (existsSync(dirPath) && statSync(dirPath).isDirectory()) {
-        return NextResponse.json({ files: listFiles(dirPath) });
-      } else if (existsSync(singleFile)) {
-        return NextResponse.json({ files: [{ path: `${name}.md`, size: statSync(singleFile).size }] });
+      const files: { path: string; size: number }[] = [];
+      // Single .md file at root
+      if (existsSync(singleFile)) {
+        files.push({ path: `${name}.md`, size: statSync(singleFile).size });
       }
-      return NextResponse.json({ files: [] });
+      // Directory contents
+      if (existsSync(dirPath) && statSync(dirPath).isDirectory()) {
+        files.push(...listFiles(dirPath).map(f => ({ path: `${name}/${f.path}`, size: f.size })));
+      }
+      return NextResponse.json({ files });
     }
   }
 
@@ -76,13 +137,10 @@ export async function GET(req: Request) {
       const dir = resolveDir(name, type, projectPath || undefined);
       fullPath = join(dir, filePath);
     } else {
+      // filePath from files action is like "name.md" or "name/sub/file.md"
+      // Resolve relative to commands base directory
       const base = projectPath ? join(projectPath, '.claude', 'commands') : COMMANDS_DIR;
-      const dirPath = join(base, name);
-      if (existsSync(dirPath) && statSync(dirPath).isDirectory()) {
-        fullPath = join(dirPath, filePath);
-      } else {
-        fullPath = join(base, filePath);
-      }
+      fullPath = join(base, filePath);
     }
 
     if (!existsSync(fullPath)) return NextResponse.json({ content: '', hash: '' });

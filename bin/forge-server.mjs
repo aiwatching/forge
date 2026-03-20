@@ -108,21 +108,29 @@ if (!isStop) {
 
     const readline = await import('node:readline');
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const ask = (q) => new Promise(resolve => rl.question(q, resolve));
+    const ask = (q) => new Promise((resolve, reject) => {
+      rl.question(q, resolve);
+      rl.once('close', () => reject(new Error('cancelled')));
+    });
 
     let pw = '';
-    while (true) {
-      pw = await ask('  Enter admin password: ');
-      if (!pw || pw.length < 4) {
-        console.log('  Password must be at least 4 characters');
-        continue;
+    try {
+      while (true) {
+        pw = await ask('  Enter admin password: ');
+        if (!pw || pw.length < 4) {
+          console.log('  Password must be at least 4 characters');
+          continue;
+        }
+        const confirm = await ask('  Confirm password: ');
+        if (pw !== confirm) {
+          console.log('  Passwords do not match, try again');
+          continue;
+        }
+        break;
       }
-      const confirm = await ask('  Confirm password: ');
-      if (pw !== confirm) {
-        console.log('  Passwords do not match, try again');
-        continue;
-      }
-      break;
+    } catch {
+      console.log('\n[forge] Cancelled');
+      process.exit(0);
     }
     rl.close();
 

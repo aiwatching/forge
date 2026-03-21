@@ -1,30 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { join } from 'node:path';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { getDataDir } from '@/lib/dirs';
+import { getDb } from '@/src/core/db/database';
+import { getDbPath } from '@/src/config';
 
-function getTabsFile(type: string): string {
-  return join(getDataDir(), `tabs-${type}.json`);
-}
+function db() { return getDb(getDbPath()); }
 
 export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get('type') || 'projects';
-  const file = getTabsFile(type);
   try {
-    if (existsSync(file)) {
-      const data = JSON.parse(readFileSync(file, 'utf-8'));
-      return NextResponse.json(data);
-    }
+    const row = db().prepare('SELECT data FROM tab_state WHERE type = ?').get(type) as any;
+    if (row?.data) return NextResponse.json(JSON.parse(row.data));
   } catch {}
   return NextResponse.json({ tabs: [], activeTabId: 0 });
 }
 
 export async function POST(req: NextRequest) {
   const type = req.nextUrl.searchParams.get('type') || 'projects';
-  const file = getTabsFile(type);
   try {
     const body = await req.json();
-    writeFileSync(file, JSON.stringify(body, null, 2));
+    db().prepare('INSERT OR REPLACE INTO tab_state (type, data) VALUES (?, ?)').run(type, JSON.stringify(body));
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e.message }, { status: 500 });

@@ -8,13 +8,14 @@ import '@xterm/xterm/css/xterm.css';
 const SESSION_NAME = 'mw-docs-claude';
 
 function getWsUrl() {
-  if (typeof window === 'undefined') return 'ws://localhost:3001';
+  if (typeof window === 'undefined') return `ws://localhost:${parseInt(process.env.TERMINAL_PORT || '3001')}`;
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsHost = window.location.hostname;
   if (wsHost !== 'localhost' && wsHost !== '127.0.0.1') {
     return `${wsProtocol}//${window.location.host}/terminal-ws`;
   }
-  return `${wsProtocol}//${wsHost}:3001`;
+  const webPort = parseInt(window.location.port) || 3000;
+  return `${wsProtocol}//${wsHost}:${webPort + 1}`;
 }
 
 export default function DocTerminal({ docRoot }: { docRoot: string }) {

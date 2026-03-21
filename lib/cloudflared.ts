@@ -129,7 +129,7 @@ function pushLog(line: string) {
   if (state.log.length > MAX_LOG_LINES) state.log.shift();
 }
 
-export async function startTunnel(localPort: number = 3000): Promise<{ url?: string; error?: string }> {
+export async function startTunnel(localPort: number = parseInt(process.env.PORT || '3000')): Promise<{ url?: string; error?: string }> {
   // Check if this worker already has a process
   if (state.process) {
     return state.url ? { url: state.url } : { error: 'Tunnel is starting...' };

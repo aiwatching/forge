@@ -28,12 +28,16 @@ import { WebSocketServer, WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { getDataDir } from './dirs';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 const PORT = Number(process.env.TERMINAL_PORT) || 3001;
-const SESSION_PREFIX = 'mw-';
+// Session prefix based on DATA_DIR hash — default instance keeps 'mw-' for backward compat
+const _dataDir = process.env.FORGE_DATA_DIR || '';
+const _isDefault = !_dataDir || _dataDir.endsWith('/data') || _dataDir.endsWith('/.forge');
+const SESSION_PREFIX = _isDefault ? 'mw-' : `mw${createHash('md5').update(_dataDir).digest('hex').slice(0, 6)}-`;
 
 // Remove CLAUDECODE env so Claude Code can run inside terminal sessions
 delete process.env.CLAUDECODE;

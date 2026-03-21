@@ -194,33 +194,39 @@ export function scanAndTrigger(config: IssueAutofixConfig): { triggered: number;
 
 // ─── Periodic scanner ────────────────────────────────────
 
-const scanTimers = new Map<string, NodeJS.Timeout>();
+// Use global symbol to prevent multiple workers from starting duplicate scanners
+const scannerKey = Symbol.for('forge-issue-scanner');
+const gAny = globalThis as any;
+if (!gAny[scannerKey]) gAny[scannerKey] = { timers: new Map<string, NodeJS.Timeout>(), started: false };
+const scannerState = gAny[scannerKey] as { timers: Map<string, NodeJS.Timeout>; started: boolean };
 
 export function startScanner() {
+  if (scannerState.started) return;
+  scannerState.started = true;
   ensureTable();
   const configs = listConfigs();
   for (const config of configs) {
-    if (config.interval > 0 && !scanTimers.has(config.projectPath)) {
+    if (config.interval > 0 && !scannerState.timers.has(config.projectPath)) {
       const timer = setInterval(() => {
         try { scanAndTrigger(config); } catch {}
       }, config.interval * 60 * 1000);
-      scanTimers.set(config.projectPath, timer);
+      scannerState.timers.set(config.projectPath, timer);
       console.log(`[issue-scanner] Started scanner for ${config.projectName} (every ${config.interval}min)`);
     }
   }
 }
 
 export function restartScanner() {
-  // Clear all existing timers
-  for (const timer of scanTimers.values()) clearInterval(timer);
-  scanTimers.clear();
+  for (const timer of scannerState.timers.values()) clearInterval(timer);
+  scannerState.timers.clear();
+  scannerState.started = false;
   startScanner();
 }
 
 export function stopScanner(projectPath: string) {
-  const timer = scanTimers.get(projectPath);
+  const timer = scannerState.timers.get(projectPath);
   if (timer) {
     clearInterval(timer);
-    scanTimers.delete(projectPath);
+    scannerState.timers.delete(projectPath);
   }
 }

@@ -395,10 +395,14 @@ export default function ProjectManager() {
     setFileContent(null);
     setGitResult(null);
     setCommitMsg('');
+    setIssueConfig(null);
+    setIssueProcessed([]);
     fetchGitInfo(p);
     fetchTree(p);
     fetchProjectSkills(p.path);
-  }, [fetchGitInfo, fetchTree, fetchProjectSkills]);
+    if (projectTab === 'issues') fetchIssueConfig(p.path);
+    if (projectTab === 'claudemd') fetchClaudeMd(p.path);
+  }, [fetchGitInfo, fetchTree, fetchProjectSkills, fetchIssueConfig, fetchClaudeMd, projectTab]);
 
   const openFile = useCallback(async (path: string) => {
     if (!selectedProject) return;
@@ -927,7 +931,7 @@ export default function ProjectManager() {
                       <input
                         type="checkbox"
                         checked={issueConfig.enabled}
-                        onChange={e => { const c = { ...issueConfig, enabled: e.target.checked }; setIssueConfig(c); saveIssueConfig(selectedProject.path, c); }}
+                        onChange={e => setIssueConfig({ ...issueConfig, enabled: e.target.checked })}
                         className="accent-[var(--accent)]"
                       />
                       <span className="text-[11px] text-[var(--text-primary)] font-semibold">Enable Issue Auto-fix</span>
@@ -951,7 +955,6 @@ export default function ProjectManager() {
                           type="number"
                           value={issueConfig.interval}
                           onChange={e => setIssueConfig({ ...issueConfig, interval: parseInt(e.target.value) || 0 })}
-                          onBlur={() => saveIssueConfig(selectedProject.path, issueConfig)}
                           className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)]"
                         />
                       </div>
@@ -961,7 +964,6 @@ export default function ProjectManager() {
                           type="text"
                           value={issueConfig.baseBranch}
                           onChange={e => setIssueConfig({ ...issueConfig, baseBranch: e.target.value })}
-                          onBlur={() => saveIssueConfig(selectedProject.path, issueConfig)}
                           placeholder="main"
                           className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)]"
                         />
@@ -972,13 +974,18 @@ export default function ProjectManager() {
                           type="text"
                           value={issueConfig.labels.join(', ')}
                           onChange={e => setIssueConfig({ ...issueConfig, labels: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
-                          onBlur={() => saveIssueConfig(selectedProject.path, issueConfig)}
                           placeholder="bug, fix"
                           className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)]"
                         />
                       </div>
                     </div>
                   )}
+                  <div className="mt-3">
+                    <button
+                      onClick={() => saveIssueConfig(selectedProject.path, issueConfig)}
+                      className="text-[10px] px-4 py-1.5 bg-[var(--accent)] text-white rounded hover:opacity-90"
+                    >Save Configuration</button>
+                  </div>
                 </div>
 
                 {/* Manual trigger */}

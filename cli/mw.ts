@@ -16,7 +16,8 @@
  *   mw watch <id>                  — live stream task output
  */
 
-const BASE = process.env.MW_URL || 'http://localhost:3000';
+const _cliPort = process.argv.find((a, i) => i > 0 && process.argv[i - 1] === '--port');
+const BASE = process.env.MW_URL || `http://localhost:${_cliPort || '3000'}`;
 
 const [, , cmd, ...args] = process.argv;
 

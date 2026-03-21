@@ -42,15 +42,16 @@ interface TabState {
 // ─── Layout persistence ──────────────────────────────────────
 
 function getWsUrl() {
-  if (typeof window === 'undefined') return 'ws://localhost:3001';
+  if (typeof window === 'undefined') return `ws://localhost:${parseInt(process.env.TERMINAL_PORT || '3001')}`;
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsHost = window.location.hostname;
   // When accessed via tunnel or non-localhost, use the Next.js proxy path
-  // so the WS goes through the same origin (no need to expose port 3001)
   if (wsHost !== 'localhost' && wsHost !== '127.0.0.1') {
     return `${wsProtocol}//${window.location.host}/terminal-ws`;
   }
-  return `${wsProtocol}//${wsHost}:3001`;
+  // Terminal port = web port + 1
+  const webPort = parseInt(window.location.port) || 3000;
+  return `${wsProtocol}//${wsHost}:${webPort + 1}`;
 }
 
 /** Load shared terminal state via API (always available, doesn't depend on terminal WebSocket server) */

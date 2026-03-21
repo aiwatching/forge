@@ -9,7 +9,8 @@ forge server start              # production via npm link/install
 forge server start --dev        # dev mode
 forge server start              # background by default, logs to ~/.forge/forge.log
 forge server start --foreground # foreground mode
-forge server stop               # stop background server
+forge server stop               # stop default instance (port 3000)
+forge server stop --port 4000 --dir ~/.forge-staging  # stop specific instance
 forge server restart            # stop + start (safe for remote)
 forge server rebuild            # force rebuild
 forge server start --port 4000 --terminal-port 4001 --dir ~/.forge-staging

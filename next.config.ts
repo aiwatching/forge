@@ -1,5 +1,7 @@
 import type { NextConfig } from 'next';
 
+const terminalPort = parseInt(process.env.TERMINAL_PORT || '') || 3001;
+
 const nextConfig: NextConfig = {
   serverExternalPackages: ['better-sqlite3'],
   async rewrites() {
@@ -7,7 +9,7 @@ const nextConfig: NextConfig = {
       {
         // Proxy terminal WebSocket through Next.js so it works via Cloudflare Tunnel
         source: '/terminal-ws',
-        destination: 'http://localhost:3001',
+        destination: `http://localhost:${terminalPort}`,
       },
     ];
   },

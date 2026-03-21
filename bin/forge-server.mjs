@@ -67,6 +67,7 @@ const terminalPort = parseInt(getArg('--terminal-port')) || (webPort + 1);
 const DATA_DIR = getArg('--dir')?.replace(/^~/, homedir()) || join(homedir(), '.forge', 'data');
 
 const PID_FILE = join(DATA_DIR, 'forge.pid');
+const PIDS_FILE = join(DATA_DIR, 'forge.pids'); // all child process PIDs
 const LOG_FILE = join(DATA_DIR, 'forge.log');
 
 process.chdir(ROOT);
@@ -208,16 +209,43 @@ if (resetTerminal) {
   }
 }
 
+// ── PID tracking for clean shutdown ──
+
+function savePids(pids) {
+  writeFileSync(PIDS_FILE, JSON.stringify(pids), 'utf-8');
+}
+
+function loadPids() {
+  try { return JSON.parse(readFileSync(PIDS_FILE, 'utf-8')); } catch { return []; }
+}
+
+function killTrackedPids() {
+  const pids = loadPids();
+  for (const pid of pids) {
+    try { process.kill(pid, 'SIGTERM'); } catch {}
+  }
+  // Give them a moment, then force kill
+  if (pids.length > 0) {
+    setTimeout(() => {
+      for (const pid of pids) {
+        try { process.kill(pid, 'SIGKILL'); } catch {}
+      }
+    }, 2000);
+  }
+  try { unlinkSync(PIDS_FILE); } catch {}
+}
+
 // ── Kill orphan standalone processes ──
 const protectedPids = new Set();
 
 function cleanupOrphans() {
+  const myPid = String(process.pid);
+  const instanceTag = `--forge-port=${webPort}`;
   try {
-    // Only kill processes on OUR ports, not other instances
+    // Kill processes on our ports
     for (const port of [webPort, terminalPort]) {
       try {
         const pids = execSync(`lsof -ti:${port}`, { encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-        const myPid = String(process.pid);
         for (const pid of pids.split('\n').filter(Boolean)) {
           const p = pid.trim();
           if (p === myPid || protectedPids.has(p)) continue;
@@ -225,20 +253,18 @@ function cleanupOrphans() {
         }
       } catch {}
     }
-    // Kill standalone processes that belong to this instance (match by FORGE_DATA_DIR)
+    // Kill standalone processes: our instance's + orphans without any tag
     try {
       const out = execSync(`ps aux | grep -E 'telegram-standalone|terminal-standalone' | grep -v grep`, {
         encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'],
       }).trim();
-      if (out) {
-        const myPid = String(process.pid);
-        for (const line of out.split('\n').filter(Boolean)) {
-          // Only kill if it matches our DATA_DIR or port
-          if (!line.includes(DATA_DIR) && !line.includes(`PORT=${webPort}`) && !line.includes(`TERMINAL_PORT=${terminalPort}`)) continue;
-          const pid = line.trim().split(/\s+/)[1];
-          if (pid === myPid || protectedPids.has(pid)) continue;
-          try { process.kill(parseInt(pid), 'SIGTERM'); } catch {}
-        }
+      for (const line of out.split('\n').filter(Boolean)) {
+        const isOurs = line.includes(instanceTag);
+        const isOrphan = !line.includes('--forge-port='); // no tag = legacy orphan
+        if (!isOurs && !isOrphan) continue; // belongs to another instance, skip
+        const pid = line.trim().split(/\s+/)[1];
+        if (pid === myPid || protectedPids.has(pid)) continue;
+        try { process.kill(parseInt(pid), 'SIGTERM'); } catch {}
       }
     } catch {}
   } catch {}
@@ -250,9 +276,11 @@ const services = [];
 function startServices() {
   cleanupOrphans();
 
+  const instanceTag = `--forge-port=${webPort}`;
+
   // Terminal server
   const termScript = join(ROOT, 'lib', 'terminal-standalone.ts');
-  const termChild = spawn('npx', ['tsx', termScript], {
+  const termChild = spawn('npx', ['tsx', termScript, instanceTag], {
     cwd: ROOT,
     stdio: ['ignore', 'inherit', 'inherit'],
     env: { ...process.env },
@@ -262,13 +290,17 @@ function startServices() {
 
   // Telegram bot
   const telegramScript = join(ROOT, 'lib', 'telegram-standalone.ts');
-  const telegramChild = spawn('npx', ['tsx', telegramScript], {
+  const telegramChild = spawn('npx', ['tsx', telegramScript, instanceTag], {
     cwd: ROOT,
     stdio: ['ignore', 'inherit', 'inherit'],
     env: { ...process.env },
   });
   services.push(telegramChild);
   console.log(`[forge] Telegram bot started (pid: ${telegramChild.pid})`);
+
+  // Track all child PIDs for clean shutdown
+  const childPids = services.map(c => c.pid).filter(Boolean);
+  savePids(childPids);
 }
 
 function stopServices() {
@@ -280,9 +312,12 @@ function stopServices() {
 }
 
 // ── Helper: stop running instance ──
-function stopServer() {
+async function stopServer() {
   stopServices();
   try { unlinkSync(join(DATA_DIR, 'tunnel-state.json')); } catch {}
+
+  // Kill all tracked child PIDs first
+  killTrackedPids();
 
   let stopped = false;
 
@@ -296,13 +331,23 @@ function stopServer() {
   try { unlinkSync(PID_FILE); } catch {}
 
   // Also kill by port (in case PID file is stale)
+  const portPids = [];
   try {
     const pids = execSync(`lsof -ti:${webPort}`, { encoding: 'utf-8', timeout: 3000 }).trim();
     for (const p of pids.split('\n').filter(Boolean)) {
-      try { process.kill(parseInt(p.trim()), 'SIGTERM'); stopped = true; } catch {}
+      const pid = parseInt(p.trim());
+      try { process.kill(pid, 'SIGTERM'); stopped = true; portPids.push(pid); } catch {}
     }
     if (pids) console.log(`[forge] Killed processes on port ${webPort}`);
   } catch {}
+
+  // Force kill after 2 seconds if SIGTERM didn't work
+  if (portPids.length > 0) {
+    await new Promise(r => setTimeout(r, 2000));
+    for (const pid of portPids) {
+      try { process.kill(pid, 'SIGKILL'); } catch {}
+    }
+  }
 
   if (!stopped) {
     console.log('[forge] No running server found');
@@ -343,13 +388,13 @@ function startBackground() {
 
 // ── Stop ──
 if (isStop) {
-  stopServer();
+  await stopServer();
   process.exit(0);
 }
 
 // ── Restart ──
 if (isRestart) {
-  stopServer();
+  await stopServer();
   // Wait for port to fully release
   const net = await import('node:net');
   for (let i = 0; i < 20; i++) {

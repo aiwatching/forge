@@ -149,10 +149,36 @@ function createTmuxSession(cols: number, rows: number): string {
 
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const name = `${SESSION_PREFIX}${id}`;
-  execSync(`${TMUX} new-session -d -s ${name} -x ${cols} -y ${rows}`, {
-    cwd: getDefaultCwd(),
-    env: { ...process.env, TERM: 'xterm-256color' },
-  });
+  try {
+    execSync(`${TMUX} new-session -d -s ${name} -x ${cols} -y ${rows}`, {
+      cwd: getDefaultCwd(),
+      env: { ...process.env, TERM: 'xterm-256color' },
+    });
+  } catch (e: any) {
+    const msg = e.stderr?.toString() || e.message || '';
+    if (msg.includes('posix_spawn') || msg.includes('fork failed') || msg.includes('No such file')) {
+      // PTY exhausted — aggressive cleanup: kill ALL idle sessions
+      console.error(`[terminal] PTY exhausted, cleaning up all idle sessions...`);
+      const all = listTmuxSessions();
+      for (const s of all) {
+        if (!s.attached) {
+          killTmuxSession(s.name);
+          console.log(`[terminal] Killed idle session: ${s.name}`);
+        }
+      }
+      // Retry once
+      try {
+        execSync(`${TMUX} new-session -d -s ${name} -x ${cols} -y ${rows}`, {
+          cwd: getDefaultCwd(),
+          env: { ...process.env, TERM: 'xterm-256color' },
+        });
+      } catch {
+        throw new Error('Failed to create terminal session. PTY devices exhausted. Run: sudo sysctl kern.tty.ptmx_max=2048');
+      }
+    } else {
+      throw e;
+    }
+  }
   // Enable mouse scrolling and set large scrollback buffer
   try {
     execSync(`${TMUX} set-option -t ${name} mouse on 2>/dev/null`);

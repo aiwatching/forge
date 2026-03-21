@@ -61,6 +61,13 @@ rm -rf .next
 pnpm build  # or forge server rebuild
 ```
 
+### npm install fails with ENOTEMPTY
+Previous install was interrupted. Clean up and retry:
+```bash
+rm -rf $(npm root -g)/@aion0/forge $(npm root -g)/@aion0/.forge-*
+npm install -g @aion0/forge
+```
+
 ## Logs
 
 - Background server: `~/.forge/data/forge.log`

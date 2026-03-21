@@ -15,7 +15,7 @@ interface DocTab {
   isImage: boolean;
 }
 
-let nextDocTabId = Date.now();
+function genTabId(): number { return Date.now() + Math.floor(Math.random() * 10000); }
 
 interface FileNode {
   name: string;
@@ -111,8 +111,6 @@ export default function DocsViewer() {
     fetch('/api/tabs?type=docs').then(r => r.json())
       .then(data => {
         if (Array.isArray(data.tabs) && data.tabs.length > 0) {
-          const maxId = Math.max(...data.tabs.map((t: any) => t.id || 0));
-          nextDocTabId = maxId + 1;
           setDocTabs(data.tabs);
           setActiveDocTabId(data.activeTabId || data.tabs[0].id);
           // Set selectedFile to active tab's file
@@ -185,7 +183,7 @@ export default function DocsViewer() {
     }
     setContent(fileContent);
 
-    const newTab: DocTab = { id: nextDocTabId++, filePath: path, fileName, rootIdx: activeRoot, isImage: isImg, content: fileContent };
+    const newTab: DocTab = { id: genTabId(), filePath: path, fileName, rootIdx: activeRoot, isImage: isImg, content: fileContent };
     setDocTabs(prev => {
       // Double-check no duplicate
       if (prev.find(t => t.filePath === path)) return prev;

@@ -21,7 +21,7 @@ interface ProjectTab {
 }
 
 const MAX_MOUNTED_TABS = 5;
-let nextTabId = 1;
+function genTabId(): number { return Date.now() + Math.floor(Math.random() * 10000); }
 
 export default function ProjectManager() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -57,7 +57,6 @@ export default function ProjectManager() {
       .then(data => {
         if (Array.isArray(data.tabs) && data.tabs.length > 0) {
           const maxId = Math.max(...data.tabs.map((t: any) => t.id || 0));
-          nextTabId = maxId + 1;
           setTabs(data.tabs.map((t: any) => ({ ...t, mountedAt: Date.now() })));
           setActiveTabId(data.activeTabId || data.tabs[0].id);
         }
@@ -112,7 +111,7 @@ export default function ProjectManager() {
       }
       // Create new tab
       const newTab: ProjectTab = {
-        id: nextTabId++,
+        id: genTabId(),
         projectPath: p.path,
         projectName: p.name,
         hasGit: p.hasGit,

@@ -2,8 +2,20 @@
 
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import MarkdownContent from './MarkdownContent';
+import TabBar from './TabBar';
 
 const DocTerminal = lazy(() => import('./DocTerminal'));
+
+interface DocTab {
+  id: number;
+  filePath: string;
+  fileName: string;
+  rootIdx: number;
+  content: string | null;
+  isImage: boolean;
+}
+
+function genTabId(): number { return Date.now() + Math.floor(Math.random() * 10000); }
 
 interface FileNode {
   name: string;
@@ -88,6 +100,141 @@ export default function DocsViewer() {
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+
+  // Doc tabs
+  const [docTabs, setDocTabs] = useState<DocTab[]>([]);
+  const [activeDocTabId, setActiveDocTabId] = useState(0);
+  const saveTimerRef = useRef<any>(null);
+
+  // Load tabs from DB on mount
+  useEffect(() => {
+    fetch('/api/tabs?type=docs').then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data.tabs) && data.tabs.length > 0) {
+          setDocTabs(data.tabs);
+          setActiveDocTabId(data.activeTabId || data.tabs[0].id);
+          // Set selectedFile to active tab's file
+          const activeId = data.activeTabId || data.tabs[0].id;
+          const active = data.tabs.find((t: any) => t.id === activeId);
+          if (active) {
+            setSelectedFile(active.filePath);
+            // Content not stored in DB, fetch it
+            if (!active.isImage) {
+              fetch(`/api/docs?root=${active.rootIdx}&file=${encodeURIComponent(active.filePath)}`)
+                .then(r => r.json())
+                .then(d => { setContent(d.content || null); })
+                .catch(() => {});
+            }
+          }
+        }
+      }).catch(() => {});
+  }, []);
+
+  // Persist tabs (debounced)
+  const persistDocTabs = useCallback((tabs: DocTab[], activeId: number) => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      fetch('/api/tabs?type=docs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tabs: tabs.map(t => ({ id: t.id, filePath: t.filePath, fileName: t.fileName, rootIdx: t.rootIdx, isImage: t.isImage })),
+          activeTabId: activeId,
+        }),
+      }).catch(() => {});
+    }, 500);
+  }, []);
+
+  // Open file in tab
+  const openFileInTab = useCallback(async (path: string) => {
+    setSelectedFile(path);
+    setEditing(false);
+    setFileWarning(null);
+
+    const isImg = isImageFile(path);
+    const fileName = path.split('/').pop() || path;
+
+    // Check if tab already exists (use functional update to get latest state)
+    let found = false;
+    setDocTabs(prev => {
+      const existing = prev.find(t => t.filePath === path);
+      if (existing) {
+        found = true;
+        setActiveDocTabId(existing.id);
+        setContent(existing.content);
+        persistDocTabs(prev, existing.id);
+      }
+      return prev;
+    });
+    if (found) return;
+
+    // Fetch content
+    let fileContent: string | null = null;
+    if (!isImg) {
+      setLoading(true);
+      const res = await fetch(`/api/docs?root=${activeRoot}&file=${encodeURIComponent(path)}`);
+      const data = await res.json();
+      if (data.tooLarge) {
+        setFileWarning(`File too large (${data.sizeLabel})`);
+      } else {
+        fileContent = data.content || null;
+      }
+      setLoading(false);
+    }
+    setContent(fileContent);
+
+    const newTab: DocTab = { id: genTabId(), filePath: path, fileName, rootIdx: activeRoot, isImage: isImg, content: fileContent };
+    setDocTabs(prev => {
+      // Double-check no duplicate
+      if (prev.find(t => t.filePath === path)) return prev;
+      const updated = [...prev, newTab];
+      setActiveDocTabId(newTab.id);
+      persistDocTabs(updated, newTab.id);
+      return updated;
+    });
+  }, [activeRoot, persistDocTabs]);
+
+  const closeDocTab = useCallback((tabId: number) => {
+    setDocTabs(prev => {
+      const updated = prev.filter(t => t.id !== tabId);
+      let newActiveId = activeDocTabId;
+      if (tabId === activeDocTabId) {
+        const idx = prev.findIndex(t => t.id === tabId);
+        const next = updated[Math.min(idx, updated.length - 1)];
+        newActiveId = next?.id || 0;
+        if (next) { setSelectedFile(next.filePath); setContent(next.content); }
+        else { setSelectedFile(null); setContent(null); }
+      }
+      setActiveDocTabId(newActiveId);
+      persistDocTabs(updated, newActiveId);
+      return updated;
+    });
+  }, [activeDocTabId, persistDocTabs]);
+
+  const activateDocTab = useCallback(async (tabId: number) => {
+    const tab = docTabs.find(t => t.id === tabId);
+    if (tab) {
+      setActiveDocTabId(tabId);
+      setSelectedFile(tab.filePath);
+      setEditing(false);
+      if (tab.rootIdx !== activeRoot) setActiveRoot(tab.rootIdx);
+      persistDocTabs(docTabs, tabId);
+
+      // Use cached content or re-fetch
+      if (tab.content) {
+        setContent(tab.content);
+      } else if (!tab.isImage) {
+        setLoading(true);
+        const res = await fetch(`/api/docs?root=${tab.rootIdx}&file=${encodeURIComponent(tab.filePath)}`);
+        const data = await res.json();
+        const fetched = data.content || null;
+        setContent(fetched);
+        // Cache in tab
+        setDocTabs(prev => prev.map(t => t.id === tabId ? { ...t, content: fetched } : t));
+        setLoading(false);
+      }
+    }
+  }, [docTabs, activeRoot, persistDocTabs]);
 
   // Fetch tree
   const fetchTree = useCallback(async (rootIdx: number) => {
@@ -223,7 +370,7 @@ export default function DocsViewer() {
                   filtered.map(f => (
                     <button
                       key={f.path}
-                      onClick={() => { openFile(f.path); setSearch(''); }}
+                      onClick={() => { openFileInTab(f.path); setSearch(''); }}
                       className={`w-full text-left px-2 py-1 rounded text-xs truncate ${
                         selectedFile === f.path ? 'bg-[var(--accent)]/20 text-[var(--accent)]' : 'hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)]'
                       }`}
@@ -236,15 +383,25 @@ export default function DocsViewer() {
                 )
               ) : (
                 tree.map(node => (
-                  <TreeNode key={node.path} node={node} depth={0} selected={selectedFile} onSelect={openFile} />
+                  <TreeNode key={node.path} node={node} depth={0} selected={selectedFile} onSelect={openFileInTab} />
                 ))
               )}
             </div>
           </aside>
         )}
 
-        {/* Main content — full width markdown */}
+        {/* Main content */}
         <main className="flex-1 flex flex-col min-w-0">
+          {/* Doc tab bar */}
+          {docTabs.length > 0 && (
+            <TabBar
+              tabs={docTabs.map(t => ({ id: t.id, label: t.fileName.replace(/\.md$/, '') }))}
+              activeId={activeDocTabId}
+              onActivate={activateDocTab}
+              onClose={closeDocTab}
+            />
+          )}
+
           {/* Top bar */}
           <div className="px-3 py-1.5 border-b border-[var(--border)] shrink-0 flex items-center gap-2">
             <button

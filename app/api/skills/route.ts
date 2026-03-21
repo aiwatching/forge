@@ -99,8 +99,6 @@ export async function GET(req: Request) {
       return NextResponse.json({ content: '(Failed to load)' });
     }
   }
-  // Refresh install state from filesystem
-  refreshInstallState(getProjectPaths());
   const skills = listSkills();
   const projects = getProjectPaths().map(p => ({ path: p, name: p.split('/').pop() || p }));
   return NextResponse.json({ skills, projects });

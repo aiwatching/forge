@@ -26,6 +26,7 @@ export interface Settings {
   skillsRepoUrl: string;              // GitHub raw URL for skills registry
   displayName: string;                  // User display name (shown in header)
   displayEmail: string;                 // User email (for session/future integrations)
+  favoriteProjects: string[];           // Favorite project paths (shown at top of sidebar)
 }
 
 const defaults: Settings = {
@@ -47,6 +48,7 @@ const defaults: Settings = {
   skillsRepoUrl: 'https://raw.githubusercontent.com/aiwatching/forge-skills/main',
   displayName: 'Forge',
   displayEmail: '',
+  favoriteProjects: [],
 };
 
 /** Load settings with secrets decrypted (for internal use) */

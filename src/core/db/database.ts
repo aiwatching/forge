@@ -149,6 +149,18 @@ function initSchema(db: Database.Database) {
       synced_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- Tab state (projects, docs, etc)
+    CREATE TABLE IF NOT EXISTS tab_state (
+      type TEXT PRIMARY KEY,
+      data TEXT NOT NULL DEFAULT '{}'
+    );
+
+    -- Project favorites
+    CREATE TABLE IF NOT EXISTS project_favorites (
+      project_path TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- Session watchers — monitor sessions and notify via Telegram
     CREATE TABLE IF NOT EXISTS session_watchers (
       id TEXT PRIMARY KEY,

@@ -189,7 +189,7 @@ if (!isStop) {
     writeFileSync(settingsFile, YAML.stringify(settings), 'utf-8');
     console.log('[forge] Admin password saved');
 
-    if (resetPassword && !isDev && !isBackground && !isRestart) {
+    if (resetPassword) {
       process.exit(0);
     }
   }

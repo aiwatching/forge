@@ -192,8 +192,17 @@ export default function ProjectManager() {
   };
 
   // Group projects by root
+  const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(new Set());
   const roots = [...new Set(projects.map(p => p.root))];
   const favoriteProjects = projects.filter(p => favorites.includes(p.path));
+
+  const toggleRoot = (root: string) => {
+    setCollapsedRoots(prev => {
+      const next = new Set(prev);
+      if (next.has(root)) next.delete(root); else next.add(root);
+      return next;
+    });
+  };
 
   return (
     <div className="flex-1 flex min-h-0">
@@ -234,10 +243,14 @@ export default function ProjectManager() {
           {/* Favorites section */}
           {favoriteProjects.length > 0 && (
             <div>
-              <div className="px-3 py-1 text-[9px] text-[var(--yellow)] uppercase bg-[var(--bg-tertiary)] flex items-center gap-1">
-                <span>★</span> Favorites
-              </div>
-              {favoriteProjects.map(p => (
+              <button
+                onClick={() => toggleRoot('__favorites__')}
+                className="w-full px-3 py-1 text-[9px] text-[var(--yellow)] uppercase bg-[var(--bg-tertiary)] flex items-center gap-1 hover:bg-[var(--border)]/30"
+              >
+                <span className="text-[8px]">{collapsedRoots.has('__favorites__') ? '▸' : '▾'}</span>
+                <span>★</span> Favorites ({favoriteProjects.length})
+              </button>
+              {!collapsedRoots.has('__favorites__') && favoriteProjects.map(p => (
                 <button
                   key={`fav-${p.path}`}
                   onClick={() => openProjectTab(p)}
@@ -262,12 +275,17 @@ export default function ProjectManager() {
           {roots.map(root => {
             const rootName = root.split('/').pop() || root;
             const rootProjects = projects.filter(p => p.root === root).sort((a, b) => a.name.localeCompare(b.name));
+            const isCollapsed = collapsedRoots.has(root);
             return (
               <div key={root}>
-                <div className="px-3 py-1 text-[9px] text-[var(--text-secondary)] uppercase bg-[var(--bg-tertiary)]">
-                  {rootName}
-                </div>
-                {rootProjects.map(p => (
+                <button
+                  onClick={() => toggleRoot(root)}
+                  className="w-full px-3 py-1 text-[9px] text-[var(--text-secondary)] uppercase bg-[var(--bg-tertiary)] flex items-center gap-1 hover:bg-[var(--border)]/30"
+                >
+                  <span className="text-[8px]">{isCollapsed ? '▸' : '▾'}</span>
+                  {rootName} ({rootProjects.length})
+                </button>
+                {!isCollapsed && rootProjects.map(p => (
                   <button
                     key={p.path}
                     onClick={() => openProjectTab(p)}

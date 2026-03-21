@@ -30,8 +30,10 @@ export interface WorkflowNode {
   id: string;
   project: string;
   prompt: string;
+  mode?: 'claude' | 'shell';  // default: 'claude' (claude -p), 'shell' runs raw shell command
+  branch?: string;             // auto checkout this branch before running (supports templates)
   dependsOn: string[];
-  outputs: { name: string; extract: 'result' | 'git_diff' }[];
+  outputs: { name: string; extract: 'result' | 'git_diff' | 'stdout' }[];
   routes: { condition: string; next: string }[];
   maxIterations: number;
 }
@@ -70,21 +72,175 @@ export interface Pipeline {
 
 // ─── Workflow Loading ─────────────────────────────────────
 
-export function listWorkflows(): Workflow[] {
-  if (!existsSync(WORKFLOWS_DIR)) return [];
-  return readdirSync(WORKFLOWS_DIR)
-    .filter(f => f.endsWith('.yaml') || f.endsWith('.yml'))
-    .map(f => {
-      try {
-        return parseWorkflow(readFileSync(join(WORKFLOWS_DIR, f), 'utf-8'));
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean) as Workflow[];
+// ─── Built-in workflows ──────────────────────────────────
+
+export const BUILTIN_WORKFLOWS: Record<string, string> = {
+  'issue-auto-fix': `
+name: issue-auto-fix
+description: "Fetch a GitHub issue → fix code on a new branch → create PR"
+input:
+  issue_id: "GitHub issue number"
+  project: "Project name"
+  base_branch: "Base branch (default: auto-detect)"
+  extra_context: "Additional instructions for the fix (optional)"
+nodes:
+  setup:
+    mode: shell
+    project: "{{input.project}}"
+    prompt: |
+      cd "$(git rev-parse --show-toplevel)" && \
+      if [ -n "$(git status --porcelain)" ]; then echo "ERROR: Working directory has uncommitted changes. Please commit or stash first." && exit 1; fi && \
+      REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || git remote get-url origin | sed 's/.*github.com[:/]//;s/.git$//') && \
+      BASE={{input.base_branch}} && \
+      if [ -z "$BASE" ] || [ "$BASE" = "auto-detect" ]; then BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo main); fi && \
+      git checkout "$BASE" 2>/dev/null || true && \
+      git pull origin "$BASE" 2>/dev/null || true && \
+      OLD_BRANCH=$(git branch --list "fix/{{input.issue_id}}-*" | head -1 | tr -d ' *') && \
+      if [ -n "$OLD_BRANCH" ]; then git branch -D "$OLD_BRANCH" 2>/dev/null || true; fi && \
+      echo "REPO=$REPO" && echo "BASE=$BASE"
+    outputs:
+      - name: info
+        extract: stdout
+  fetch-issue:
+    mode: shell
+    project: "{{input.project}}"
+    depends_on: [setup]
+    prompt: |
+      REPO=$(echo '{{nodes.setup.outputs.info}}' | grep REPO= | cut -d= -f2) && \
+      gh issue view {{input.issue_id}} --json title,body,labels,number -R "$REPO"
+    outputs:
+      - name: issue_json
+        extract: stdout
+  fix-code:
+    project: "{{input.project}}"
+    depends_on: [fetch-issue]
+    prompt: |
+      A GitHub issue needs to be fixed. Here is the issue data:
+
+      {{nodes.fetch-issue.outputs.issue_json}}
+
+      Steps:
+      1. Create a new branch from the current branch (which is already on the base). Name format: fix/{{input.issue_id}}-<short-description> (e.g. fix/3-add-validation, fix/15-null-pointer). Any old branch for this issue has been cleaned up.
+      2. Analyze the issue and fix the code.
+      3. Stage and commit with a message referencing #{{input.issue_id}}.
+
+      Base branch info: {{nodes.setup.outputs.info}}
+
+      Additional context from user: {{input.extra_context}}
+    outputs:
+      - name: summary
+        extract: result
+      - name: diff
+        extract: git_diff
+  push-and-pr:
+    mode: shell
+    project: "{{input.project}}"
+    depends_on: [fix-code]
+    prompt: |
+      REPO=$(echo '{{nodes.setup.outputs.info}}' | grep REPO= | cut -d= -f2) && \
+      BRANCH=$(git branch --show-current) && \
+      git push -u origin "$BRANCH" --force-with-lease 2>&1 && \
+      PR_URL=$(gh pr create --title 'Fix #{{input.issue_id}}' \
+        --body 'Auto-fix by Forge Pipeline for issue #{{input.issue_id}}.' -R "$REPO" 2>/dev/null || \
+        gh pr view "$BRANCH" --json url -q .url -R "$REPO" 2>/dev/null) && \
+      echo "$PR_URL"
+    outputs:
+      - name: pr_url
+        extract: stdout
+  notify:
+    mode: shell
+    project: "{{input.project}}"
+    depends_on: [push-and-pr]
+    prompt: "echo 'PR created for issue #{{input.issue_id}}: {{nodes.push-and-pr.outputs.pr_url}}'"
+`,
+  'pr-review': `
+name: pr-review
+description: "Review a PR → approve or request changes → notify"
+input:
+  pr_number: "Pull request number"
+  project: "Project name"
+nodes:
+  setup:
+    mode: shell
+    project: "{{input.project}}"
+    prompt: |
+      REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || git remote get-url origin | sed 's/.*github.com[:/]//;s/.git$//') && \
+      echo "REPO=$REPO"
+    outputs:
+      - name: info
+        extract: stdout
+  fetch-pr:
+    mode: shell
+    project: "{{input.project}}"
+    depends_on: [setup]
+    prompt: |
+      REPO=$(echo '{{nodes.setup.outputs.info}}' | grep REPO= | cut -d= -f2) && \
+      gh pr diff {{input.pr_number}} -R "$REPO"
+    outputs:
+      - name: diff
+        extract: stdout
+  review:
+    project: "{{input.project}}"
+    depends_on: [fetch-pr]
+    prompt: |
+      Review the following pull request diff carefully. Check for:
+      - Bugs and logic errors
+      - Security vulnerabilities
+      - Performance issues
+      - Code style and best practices
+
+      PR #{{input.pr_number}} diff:
+      {{nodes.fetch-pr.outputs.diff}}
+
+      Respond with:
+      1. APPROVED or CHANGES_REQUESTED
+      2. Detailed list of specific issues found with file paths and line numbers
+      3. Suggestions for improvement
+    outputs:
+      - name: review_result
+        extract: result
+  post-review:
+    mode: shell
+    project: "{{input.project}}"
+    depends_on: [review]
+    prompt: "echo 'Review complete for PR #{{input.pr_number}}'"
+    outputs:
+      - name: status
+        extract: stdout
+`,
+};
+
+export interface WorkflowWithMeta extends Workflow {
+  builtin?: boolean;
 }
 
-export function getWorkflow(name: string): Workflow | null {
+export function listWorkflows(): WorkflowWithMeta[] {
+  // User workflows
+  const userWorkflows: WorkflowWithMeta[] = [];
+  if (existsSync(WORKFLOWS_DIR)) {
+    for (const f of readdirSync(WORKFLOWS_DIR).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'))) {
+      try {
+        userWorkflows.push({ ...parseWorkflow(readFileSync(join(WORKFLOWS_DIR, f), 'utf-8')), builtin: false });
+      } catch {}
+    }
+  }
+
+  // Built-in workflows (don't override user ones with same name)
+  const userNames = new Set(userWorkflows.map(w => w.name));
+  const builtins: WorkflowWithMeta[] = [];
+  for (const [, yaml] of Object.entries(BUILTIN_WORKFLOWS)) {
+    try {
+      const w = parseWorkflow(yaml);
+      if (!userNames.has(w.name)) {
+        builtins.push({ ...w, builtin: true });
+      }
+    } catch {}
+  }
+
+  return [...builtins, ...userWorkflows];
+}
+
+export function getWorkflow(name: string): WorkflowWithMeta | null {
   return listWorkflows().find(w => w.name === name) || null;
 }
 
@@ -98,6 +254,8 @@ function parseWorkflow(raw: string): Workflow {
       id,
       project: n.project || '',
       prompt: n.prompt || '',
+      mode: n.mode || 'claude',
+      branch: n.branch || undefined,
       dependsOn: n.depends_on || n.dependsOn || [],
       outputs: (n.outputs || []).map((o: any) => ({
         name: o.name,
@@ -167,29 +325,59 @@ export function listPipelines(): Pipeline[] {
 
 // ─── Template Resolution ──────────────────────────────────
 
+/** Escape a string for safe embedding in shell commands (single-quote wrapping) */
+function shellEscape(s: string): string {
+  // Replace single quotes with '\'' (end quote, escaped quote, start quote)
+  return s.replace(/'/g, "'\\''");
+}
+
 function resolveTemplate(template: string, ctx: {
   input: Record<string, string>;
   vars: Record<string, string>;
   nodes: Record<string, PipelineNodeState>;
-}): string {
+}, shellMode?: boolean): string {
   return template.replace(/\{\{(.*?)\}\}/g, (_, expr) => {
     const path = expr.trim();
+    let value = '';
 
     // {{input.xxx}}
-    if (path.startsWith('input.')) return ctx.input[path.slice(6)] || '';
-
+    if (path.startsWith('input.')) value = ctx.input[path.slice(6)] || '';
     // {{vars.xxx}}
-    if (path.startsWith('vars.')) return ctx.vars[path.slice(5)] || '';
-
+    else if (path.startsWith('vars.')) value = ctx.vars[path.slice(5)] || '';
     // {{nodes.xxx.outputs.yyy}}
-    const nodeMatch = path.match(/^nodes\.(\w+)\.outputs\.(\w+)$/);
-    if (nodeMatch) {
-      const [, nodeId, outputName] = nodeMatch;
-      return ctx.nodes[nodeId]?.outputs[outputName] || '';
+    else {
+      const nodeMatch = path.match(/^nodes\.([\w-]+)\.outputs\.([\w-]+)$/);
+      if (nodeMatch) {
+        const [, nodeId, outputName] = nodeMatch;
+        value = ctx.nodes[nodeId]?.outputs[outputName] || '';
+      } else {
+        return `{{${path}}}`;
+      }
     }
 
-    return `{{${path}}}`;
+    return shellMode ? shellEscape(value) : value;
   });
+}
+
+// ─── Project-level pipeline lock ─────────────────────────
+const projectPipelineLocks = new Map<string, string>(); // projectPath → pipelineId
+
+function acquireProjectLock(projectPath: string, pipelineId: string): boolean {
+  const existing = projectPipelineLocks.get(projectPath);
+  if (existing && existing !== pipelineId) {
+    // Check if the existing pipeline is still running
+    const p = getPipeline(existing);
+    if (p && p.status === 'running') return false;
+    // Stale lock, clear it
+  }
+  projectPipelineLocks.set(projectPath, pipelineId);
+  return true;
+}
+
+function releaseProjectLock(projectPath: string, pipelineId: string) {
+  if (projectPipelineLocks.get(projectPath) === pipelineId) {
+    projectPipelineLocks.delete(projectPath);
+  }
 }
 
 // ─── Pipeline Execution ───────────────────────────────────
@@ -254,7 +442,7 @@ function recoverStuckPipelines() {
           const nodeDef = workflow.nodes[nodeId];
           if (nodeDef) {
             for (const outputDef of nodeDef.outputs) {
-              if (outputDef.extract === 'result') node.outputs[outputDef.name] = task.resultSummary || '';
+              if (outputDef.extract === 'result' || outputDef.extract === 'stdout') node.outputs[outputDef.name] = task.resultSummary || '';
               else if (outputDef.extract === 'git_diff') node.outputs[outputDef.name] = task.gitDiff || '';
             }
           }
@@ -337,8 +525,9 @@ function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
     if (!depsReady) continue;
 
     // Resolve templates
+    const isShell = nodeDef.mode === 'shell';
     const project = resolveTemplate(nodeDef.project, ctx);
-    const prompt = resolveTemplate(nodeDef.prompt, ctx);
+    const prompt = resolveTemplate(nodeDef.prompt, ctx, isShell);
 
     const projectInfo = getProjectInfo(project);
     if (!projectInfo) {
@@ -349,16 +538,41 @@ function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
       continue;
     }
 
-    // Create task with pipeline model
+    // Auto checkout branch if specified
+    if (nodeDef.branch) {
+      const branchName = resolveTemplate(nodeDef.branch, ctx);
+      try {
+        const { execSync } = require('node:child_process');
+        // Create branch if not exists, or switch to it
+        try {
+          execSync(`git checkout -b ${branchName}`, { cwd: projectInfo.path, stdio: 'pipe' });
+        } catch {
+          execSync(`git checkout ${branchName}`, { cwd: projectInfo.path, stdio: 'pipe' });
+        }
+        console.log(`[pipeline] Checked out branch: ${branchName}`);
+      } catch (e: any) {
+        nodeState.status = 'failed';
+        nodeState.error = `Branch checkout failed: ${e.message}`;
+        savePipeline(pipeline);
+        notifyStep(pipeline, nodeId, 'failed', nodeState.error);
+        continue;
+      }
+    }
+
+    // Create task — mode: 'shell' runs raw command, 'claude' runs claude -p
+    const taskMode = nodeDef.mode === 'shell' ? 'shell' : 'prompt';
     const task = createTask({
       projectName: projectInfo.name,
       projectPath: projectInfo.path,
       prompt,
+      mode: taskMode as any,
     });
     pipelineTaskIds.add(task.id);
-    const pipelineModel = loadSettings().pipelineModel;
-    if (pipelineModel && pipelineModel !== 'default') {
-      taskModelOverrides.set(task.id, pipelineModel);
+    if (taskMode !== 'shell') {
+      const pipelineModel = loadSettings().pipelineModel;
+      if (pipelineModel && pipelineModel !== 'default') {
+        taskModelOverrides.set(task.id, pipelineModel);
+      }
     }
 
     nodeState.status = 'running';
@@ -384,6 +598,50 @@ function checkPipelineCompletion(pipeline: Pipeline) {
     pipeline.completedAt = new Date().toISOString();
     savePipeline(pipeline);
     notifyPipelineComplete(pipeline);
+
+    // Update issue_autofix_processed status
+    if (pipeline.workflowName === 'issue-auto-fix') {
+      try {
+        const { updateProcessedStatus } = require('./issue-scanner');
+        const issueId = parseInt(pipeline.input.issue_id);
+        const projectInfo = getProjectInfo(pipeline.input.project);
+        if (projectInfo && issueId) {
+          const prOutput = pipeline.nodes['push-and-pr']?.outputs?.pr_url || '';
+          const prMatch = prOutput.match(/\/pull\/(\d+)/);
+          const prNumber = prMatch ? parseInt(prMatch[1]) : undefined;
+          updateProcessedStatus(projectInfo.path, issueId, pipeline.status, prNumber);
+        }
+      } catch {}
+    }
+
+    // Auto-chain: issue-auto-fix → pr-review
+    if (pipeline.workflowName === 'issue-auto-fix' && pipeline.status === 'done') {
+      try {
+        // Extract PR number from push-and-pr output
+        const prOutput = pipeline.nodes['push-and-pr']?.outputs?.pr_url || '';
+        const prMatch = prOutput.match(/\/pull\/(\d+)/);
+        if (prMatch) {
+          const prNumber = prMatch[1];
+          console.log(`[pipeline] Auto-triggering pr-review for PR #${prNumber}`);
+          startPipeline('pr-review', {
+            pr_number: prNumber,
+            project: pipeline.input.project || '',
+          });
+        }
+      } catch (e) {
+        console.error('[pipeline] Failed to auto-trigger pr-review:', e);
+      }
+    }
+
+    // Release project lock
+    const workflow = getWorkflow(pipeline.workflowName);
+    if (workflow) {
+      const projectNames = new Set(Object.values(workflow.nodes).map(n => n.project));
+      for (const pName of projectNames) {
+        const pInfo = getProjectInfo(resolveTemplate(pName, { input: pipeline.input, vars: pipeline.vars, nodes: pipeline.nodes }));
+        if (pInfo) releaseProjectLock(pInfo.path, pipeline.id);
+      }
+    }
   }
 }
 
@@ -421,6 +679,8 @@ function setupTaskListener(pipelineId: string) {
       // Extract outputs
       for (const outputDef of nodeDef.outputs) {
         if (outputDef.extract === 'result') {
+          nodeState.outputs[outputDef.name] = task.resultSummary || '';
+        } else if (outputDef.extract === 'stdout') {
           nodeState.outputs[outputDef.name] = task.resultSummary || '';
         } else if (outputDef.extract === 'git_diff') {
           nodeState.outputs[outputDef.name] = task.gitDiff || '';

@@ -284,16 +284,30 @@ function stopServer() {
   stopServices();
   try { unlinkSync(join(DATA_DIR, 'tunnel-state.json')); } catch {}
 
+  let stopped = false;
+
+  // Try PID file first
   try {
     const pid = parseInt(readFileSync(PID_FILE, 'utf-8').trim());
     process.kill(pid, 'SIGTERM');
-    unlinkSync(PID_FILE);
     console.log(`[forge] Stopped (pid ${pid})`);
-    return true;
-  } catch {
+    stopped = true;
+  } catch {}
+  try { unlinkSync(PID_FILE); } catch {}
+
+  // Also kill by port (in case PID file is stale)
+  try {
+    const pids = execSync(`lsof -ti:${webPort}`, { encoding: 'utf-8', timeout: 3000 }).trim();
+    for (const p of pids.split('\n').filter(Boolean)) {
+      try { process.kill(parseInt(p.trim()), 'SIGTERM'); stopped = true; } catch {}
+    }
+    if (pids) console.log(`[forge] Killed processes on port ${webPort}`);
+  } catch {}
+
+  if (!stopped) {
     console.log('[forge] No running server found');
-    return false;
   }
+  return stopped;
 }
 
 // ── Helper: start background server ──

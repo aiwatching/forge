@@ -77,7 +77,13 @@ export default function ProjectManager() {
   const [diffFile, setDiffFile] = useState<string | null>(null);
   const [projectSkills, setProjectSkills] = useState<{ name: string; displayName: string; type: string; scope: string; version: string; installedVersion: string; hasUpdate: boolean; source: 'registry' | 'local' }[]>([]);
   const [showSkillsDetail, setShowSkillsDetail] = useState(false);
-  const [projectTab, setProjectTab] = useState<'code' | 'skills' | 'claudemd'>('code');
+  const [projectTab, setProjectTab] = useState<'code' | 'skills' | 'claudemd' | 'issues'>('code');
+  // Issue autofix state
+  const [issueConfig, setIssueConfig] = useState<{ enabled: boolean; interval: number; labels: string[]; baseBranch: string } | null>(null);
+  const [issueProcessed, setIssueProcessed] = useState<{ issueNumber: number; pipelineId: string; prNumber: number | null; status: string; createdAt: string }[]>([]);
+  const [issueScanning, setIssueScanning] = useState(false);
+  const [issueManualId, setIssueManualId] = useState('');
+  const [retryModal, setRetryModal] = useState<{ issueNumber: number; context: string } | null>(null);
   const [claudeMdContent, setClaudeMdContent] = useState('');
   const [claudeMdExists, setClaudeMdExists] = useState(false);
   const [claudeTemplates, setClaudeTemplates] = useState<{ id: string; name: string; description: string; tags: string[]; builtin: boolean; content: string }[]>([]);
@@ -221,6 +227,57 @@ export default function ProjectManager() {
       body: JSON.stringify({ action: 'uninstall', name, target }),
     });
     if (selectedProject) fetchProjectSkills(selectedProject.path);
+  };
+
+  const fetchIssueConfig = useCallback(async (projectPath: string) => {
+    try {
+      const res = await fetch(`/api/issue-scanner?project=${encodeURIComponent(projectPath)}`);
+      const data = await res.json();
+      setIssueConfig(data.config || { enabled: false, interval: 30, labels: [], baseBranch: '' });
+      setIssueProcessed(data.processed || []);
+    } catch {}
+  }, []);
+
+  const saveIssueConfig = async (projectPath: string, config: any) => {
+    await fetch('/api/issue-scanner', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save-config', projectPath, projectName: selectedProject?.name, ...config }),
+    });
+    fetchIssueConfig(projectPath);
+  };
+
+  const scanNow = async (projectPath: string) => {
+    setIssueScanning(true);
+    try {
+      const res = await fetch('/api/issue-scanner', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'scan', projectPath }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+      } else if (data.triggered > 0) {
+        alert(`Triggered ${data.triggered} issue fix(es): #${data.issues.join(', #')}`);
+      } else {
+        alert(`Scanned ${data.total} open issues — no new issues to process`);
+      }
+      await fetchIssueConfig(projectPath);
+    } catch (e) {
+      alert('Scan failed');
+    }
+    setIssueScanning(false);
+  };
+
+  const triggerIssue = async (projectPath: string, issueId: string) => {
+    await fetch('/api/issue-scanner', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'trigger', projectPath, issueId, projectName: selectedProject?.name }),
+    });
+    setIssueManualId('');
+    fetchIssueConfig(projectPath);
   };
 
   const fetchClaudeMd = useCallback(async (projectPath: string) => {
@@ -543,6 +600,15 @@ export default function ProjectManager() {
                     CLAUDE.md
                     {claudeMdExists && <span className="ml-1 text-[8px] text-[var(--green)]">•</span>}
                   </button>
+                  <button
+                    onClick={() => { setProjectTab('issues'); if (selectedProject) fetchIssueConfig(selectedProject.path); }}
+                    className={`text-[9px] px-2 py-0.5 rounded transition-colors ${
+                      projectTab === 'issues' ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    Issues
+                    {issueConfig?.enabled && <span className="ml-1 text-[8px] text-[var(--green)]">•</span>}
+                  </button>
                 </div>
               </div>
               {projectTab === 'code' && gitInfo?.lastCommit && (
@@ -851,6 +917,134 @@ export default function ProjectManager() {
               </div>
             )}
 
+            {/* Issues tab — auto-fix config + history */}
+            {projectTab === 'issues' && selectedProject && issueConfig && (
+              <div className="flex-1 overflow-auto p-4 space-y-4">
+                {/* Config */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={issueConfig.enabled}
+                        onChange={e => { const c = { ...issueConfig, enabled: e.target.checked }; setIssueConfig(c); saveIssueConfig(selectedProject.path, c); }}
+                        className="accent-[var(--accent)]"
+                      />
+                      <span className="text-[11px] text-[var(--text-primary)] font-semibold">Enable Issue Auto-fix</span>
+                    </label>
+                    {issueConfig.enabled && (
+                      <button
+                        onClick={() => scanNow(selectedProject.path)}
+                        disabled={issueScanning}
+                        className="text-[9px] px-2 py-0.5 border border-[var(--accent)] text-[var(--accent)] rounded hover:bg-[var(--accent)] hover:text-white disabled:opacity-50"
+                      >
+                        {issueScanning ? 'Scanning...' : 'Scan Now'}
+                      </button>
+                    )}
+                  </div>
+
+                  {issueConfig.enabled && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[9px] text-[var(--text-secondary)] block mb-1">Scan Interval (minutes, 0=manual)</label>
+                        <input
+                          type="number"
+                          value={issueConfig.interval}
+                          onChange={e => setIssueConfig({ ...issueConfig, interval: parseInt(e.target.value) || 0 })}
+                          onBlur={() => saveIssueConfig(selectedProject.path, issueConfig)}
+                          className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-[var(--text-secondary)] block mb-1">Base Branch (empty=auto)</label>
+                        <input
+                          type="text"
+                          value={issueConfig.baseBranch}
+                          onChange={e => setIssueConfig({ ...issueConfig, baseBranch: e.target.value })}
+                          onBlur={() => saveIssueConfig(selectedProject.path, issueConfig)}
+                          placeholder="main"
+                          className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)]"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-[9px] text-[var(--text-secondary)] block mb-1">Labels Filter (comma-separated, empty=all)</label>
+                        <input
+                          type="text"
+                          value={issueConfig.labels.join(', ')}
+                          onChange={e => setIssueConfig({ ...issueConfig, labels: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                          onBlur={() => saveIssueConfig(selectedProject.path, issueConfig)}
+                          placeholder="bug, fix"
+                          className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)]"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Manual trigger */}
+                <div className="border-t border-[var(--border)] pt-3">
+                  <div className="text-[9px] text-[var(--text-secondary)] uppercase mb-2">Manual Trigger</div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={issueManualId}
+                      onChange={e => setIssueManualId(e.target.value)}
+                      placeholder="Issue #"
+                      className="w-24 px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)]"
+                    />
+                    <button
+                      onClick={() => issueManualId && triggerIssue(selectedProject.path, issueManualId)}
+                      disabled={!issueManualId}
+                      className="text-[9px] px-3 py-1 bg-[var(--accent)] text-white rounded hover:opacity-90 disabled:opacity-50"
+                    >Fix Issue</button>
+                  </div>
+                </div>
+
+                {/* History */}
+                {issueProcessed.length > 0 && (
+                  <div className="border-t border-[var(--border)] pt-3">
+                    <div className="text-[9px] text-[var(--text-secondary)] uppercase mb-2">Processed Issues</div>
+                    <div className="border border-[var(--border)] rounded overflow-hidden">
+                      {issueProcessed.map(p => (
+                        <div key={p.issueNumber} className="border-b border-[var(--border)]/30 last:border-b-0">
+                          <div className="flex items-center gap-2 px-3 py-1.5 text-[10px]">
+                            <span className="text-[var(--text-primary)] font-mono">#{p.issueNumber}</span>
+                            <span className={`text-[8px] px-1 rounded ${
+                              p.status === 'done' ? 'bg-green-500/10 text-green-400' :
+                              p.status === 'failed' ? 'bg-red-500/10 text-red-400' :
+                              'bg-yellow-500/10 text-yellow-400'
+                            }`}>{p.status}</span>
+                            {p.prNumber && <span className="text-[var(--accent)]">PR #{p.prNumber}</span>}
+                            <span className="text-[var(--text-secondary)] text-[8px]">{p.createdAt}</span>
+                            <div className="ml-auto flex gap-1">
+                              {(p.status === 'failed' || p.status === 'done' || p.status === 'processing') && (
+                                <button
+                                  onClick={() => setRetryModal({ issueNumber: p.issueNumber, context: '' })}
+                                  className="text-[8px] text-[var(--accent)] hover:underline"
+                                >Retry</button>
+                              )}
+                              <button
+                                onClick={async () => {
+                                  if (!confirm(`Reset issue #${p.issueNumber}? It will be picked up again on next scan.`)) return;
+                                  await fetch('/api/issue-scanner', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'reset', projectPath: selectedProject!.path, issueId: p.issueNumber }),
+                                  });
+                                  fetchIssueConfig(selectedProject!.path);
+                                }}
+                                className="text-[8px] text-[var(--text-secondary)] hover:text-[var(--red)]"
+                              >Reset</button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Git panel — bottom (code tab only) */}
             {projectTab === 'code' && gitInfo && (
               <div className="border-t border-[var(--border)] shrink-0">
@@ -938,6 +1132,52 @@ export default function ProjectManager() {
           </div>
         )}
       </div>
+
+      {/* Retry modal */}
+      {retryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setRetryModal(null)}>
+          <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg shadow-xl w-[420px] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-[var(--border)]">
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Retry Issue #{retryModal.issueNumber}</h3>
+              <p className="text-[10px] text-[var(--text-secondary)] mt-0.5">Add context to help the AI fix the issue better this time.</p>
+            </div>
+            <div className="p-4">
+              <textarea
+                value={retryModal.context}
+                onChange={e => setRetryModal({ ...retryModal, context: e.target.value })}
+                placeholder="e.g. The previous fix caused a merge conflict. Rebase from main first, then fix only the validation logic in src/utils.ts..."
+                className="w-full h-32 px-3 py-2 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 resize-none focus:outline-none focus:border-[var(--accent)]"
+                autoFocus
+              />
+            </div>
+            <div className="px-4 py-3 border-t border-[var(--border)] flex justify-end gap-2">
+              <button
+                onClick={() => setRetryModal(null)}
+                className="text-[11px] px-3 py-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              >Cancel</button>
+              <button
+                onClick={async () => {
+                  if (!selectedProject) return;
+                  await fetch('/api/issue-scanner', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      action: 'retry',
+                      projectPath: selectedProject.path,
+                      projectName: selectedProject.name,
+                      issueId: retryModal.issueNumber,
+                      context: retryModal.context,
+                    }),
+                  });
+                  setRetryModal(null);
+                  fetchIssueConfig(selectedProject.path);
+                }}
+                className="text-[11px] px-4 py-1.5 bg-[var(--accent)] text-white rounded hover:opacity-90"
+              >Retry</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

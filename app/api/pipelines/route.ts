@@ -24,9 +24,17 @@ export async function GET(req: Request) {
       const filePath = join(FLOWS_DIR, `${name}.yaml`);
       const altPath = join(FLOWS_DIR, `${name}.yml`);
       const path = existsSync(filePath) ? filePath : existsSync(altPath) ? altPath : null;
-      if (!path) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-      const yaml = readFileSync(path, 'utf-8');
-      return NextResponse.json({ yaml });
+      if (path) {
+        return NextResponse.json({ yaml: readFileSync(path, 'utf-8') });
+      }
+      // Check built-in workflows
+      const workflow = listWorkflows().find(w => w.name === name);
+      if (workflow?.builtin) {
+        const { BUILTIN_WORKFLOWS } = await import('@/lib/pipeline');
+        const yaml = BUILTIN_WORKFLOWS[name];
+        if (yaml) return NextResponse.json({ yaml: yaml.trim(), builtin: true });
+      }
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
     } catch {
       return NextResponse.json({ error: 'Failed to read' }, { status: 500 });
     }

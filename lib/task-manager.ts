@@ -235,7 +235,46 @@ async function processNextTask() {
   }
 }
 
+function executeShellTask(task: Task): Promise<void> {
+  return new Promise((resolve) => {
+    updateTaskStatus(task.id, 'running');
+    db().prepare('UPDATE tasks SET started_at = datetime(\'now\') WHERE id = ?').run(task.id);
+    console.log(`[task:shell] ${task.projectName}: "${task.prompt.slice(0, 80)}"`);
+
+    const child = spawn('bash', ['-c', task.prompt], {
+      cwd: task.projectPath,
+      env: { ...process.env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      const text = chunk.toString();
+      stdout += text;
+      appendLog(task.id, { type: 'system', subtype: 'text', content: text, timestamp: new Date().toISOString() });
+    });
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    child.on('exit', (code) => {
+      if (code === 0) {
+        db().prepare('UPDATE tasks SET status = ?, result_summary = ?, completed_at = datetime(\'now\') WHERE id = ?')
+          .run('done', stdout.trim(), task.id);
+        emit(task.id, 'status', 'done');
+      } else {
+        const errMsg = stderr.trim() || `Exit code ${code}`;
+        db().prepare('UPDATE tasks SET status = ?, error = ?, completed_at = datetime(\'now\') WHERE id = ?')
+          .run('failed', errMsg, task.id);
+        emit(task.id, 'status', 'failed');
+      }
+      resolve();
+    });
+  });
+}
+
 function executeTask(task: Task): Promise<void> {
+  if (task.mode === 'shell') return executeShellTask(task);
+
   return new Promise((resolve, reject) => {
     const settings = loadSettings();
     const claudePath = settings.claudePath || process.env.CLAUDE_PATH || 'claude';

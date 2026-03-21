@@ -76,7 +76,7 @@ export interface UsageRecord {
 }
 
 export type TaskStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
-export type TaskMode = 'prompt' | 'monitor';
+export type TaskMode = 'prompt' | 'monitor' | 'shell';
 
 export interface WatchConfig {
   condition: 'change' | 'idle' | 'complete' | 'error' | 'keyword';

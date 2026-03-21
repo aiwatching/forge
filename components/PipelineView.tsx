@@ -17,6 +17,7 @@ interface WorkflowNode {
 interface Workflow {
   name: string;
   description?: string;
+  builtin?: boolean;
   vars: Record<string, string>;
   input: Record<string, string>;
   nodes: Record<string, WorkflowNode>;
@@ -168,7 +169,7 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
           >
             <option value="">Editor ▾</option>
             <option value="">+ New workflow</option>
-            {workflows.map(w => <option key={w.name} value={w.name}>{w.name}</option>)}
+            {workflows.map(w => <option key={w.name} value={w.name}>{w.builtin ? '⚙ ' : ''}{w.name}</option>)}
           </select>
           <button
             onClick={() => setShowCreate(v => !v)}
@@ -188,7 +189,7 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
             >
               <option value="">Select workflow...</option>
               {workflows.map(w => (
-                <option key={w.name} value={w.name}>{w.name}{w.description ? ` — ${w.description}` : ''}</option>
+                <option key={w.name} value={w.name}>{w.builtin ? '[Built-in] ' : ''}{w.name}{w.description ? ` — ${w.description}` : ''}</option>
               ))}
             </select>
 

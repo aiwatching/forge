@@ -92,6 +92,12 @@ export function ensureInitialized() {
   // Session watcher is safe (file-based, idempotent)
   startWatcherLoop();
 
+  // Issue scanner — auto-scan GitHub issues for configured projects
+  try {
+    const { startScanner } = require('./issue-scanner');
+    startScanner();
+  } catch {}
+
   // If services are managed externally (forge-server), skip
   if (process.env.FORGE_EXTERNAL_SERVICES === '1') {
     // Password display

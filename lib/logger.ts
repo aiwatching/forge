@@ -7,11 +7,12 @@
 import { appendFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-let initialized = false;
+// Use globalThis to prevent double-init across forge-server.mjs and init.ts
+const loggerKey = Symbol.for('forge-logger-init');
 
 export function initLogger() {
-  if (initialized) return;
-  initialized = true;
+  if ((globalThis as any)[loggerKey]) return;
+  (globalThis as any)[loggerKey] = true;
 
   // Determine log file path
   let logFile: string | null = null;

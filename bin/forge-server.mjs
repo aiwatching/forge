@@ -72,14 +72,22 @@ const LOG_FILE = join(DATA_DIR, 'forge.log');
 
 process.chdir(ROOT);
 
-// ── Add timestamps to all console output ──
-const origLog = console.log;
-const origError = console.error;
-const origWarn = console.warn;
-const ts = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
-console.log = (...args) => origLog(`[${ts()}]`, ...args);
-console.error = (...args) => origError(`[${ts()}]`, ...args);
-console.warn = (...args) => origWarn(`[${ts()}]`, ...args);
+// ── Init logger (timestamps + file output) ──
+try {
+  const { initLogger } = await import('../lib/logger.ts');
+  initLogger();
+} catch {
+  // logger.ts is TypeScript, may not load directly in .mjs — fallback inline
+  const _key = Symbol.for('forge-logger-init');
+  if (!globalThis[_key]) {
+    globalThis[_key] = true;
+    const _origLog = console.log, _origErr = console.error, _origWarn = console.warn;
+    const _ts = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
+    console.log = (...a) => _origLog(`[${_ts()}]`, ...a);
+    console.error = (...a) => _origErr(`[${_ts()}]`, ...a);
+    console.warn = (...a) => _origWarn(`[${_ts()}]`, ...a);
+  }
+}
 
 // ── Migrate old layout (~/.forge/*) to new (~/.forge/data/*) ──
 if (!getArg('--dir')) {

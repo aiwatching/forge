@@ -19,6 +19,7 @@ const ProjectManager = lazy(() => import('./ProjectManager'));
 const PreviewPanel = lazy(() => import('./PreviewPanel'));
 const PipelineView = lazy(() => import('./PipelineView'));
 const HelpDialog = lazy(() => import('./HelpDialog'));
+const LogViewer = lazy(() => import('./LogViewer'));
 const SkillsPanel = lazy(() => import('./SkillsPanel'));
 
 interface UsageSummary {
@@ -42,7 +43,7 @@ interface ProjectInfo {
 }
 
 export default function Dashboard({ user }: { user: any }) {
-  const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal' | 'docs' | 'projects' | 'preview' | 'pipelines' | 'skills'>('terminal');
+  const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal' | 'docs' | 'projects' | 'preview' | 'pipelines' | 'skills' | 'logs'>('terminal');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
@@ -427,6 +428,12 @@ export default function Dashboard({ user }: { user: any }) {
                   >
                     Settings
                   </button>
+                  <button
+                    onClick={() => { setViewMode('logs'); setShowUserMenu(false); }}
+                    className="w-full text-left text-[11px] px-3 py-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]"
+                  >
+                    Logs
+                  </button>
                   <div className="border-t border-[var(--border)] my-1" />
                   <button
                     onClick={() => signOut({ callbackUrl: '/login' })}
@@ -570,6 +577,13 @@ export default function Dashboard({ user }: { user: any }) {
         {viewMode === 'skills' && (
           <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
             <SkillsPanel />
+          </Suspense>
+        )}
+
+        {/* Logs */}
+        {viewMode === 'logs' && (
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
+            <LogViewer />
           </Suspense>
         )}
 

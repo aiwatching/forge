@@ -47,6 +47,21 @@ forge watch <id>         # live stream task output
 - npm package: `@aion0/forge`
 - GitHub: `github.com/aiwatching/forge`
 
+### Help Docs Rule
+When adding or changing a feature, check if `lib/help-docs/` needs updating. Each file covers one module:
+- `00-overview.md` — install, start, data paths
+- `01-settings.md` — all settings fields
+- `02-telegram.md` — bot setup and commands
+- `03-tunnel.md` — remote access
+- `04-tasks.md` — background tasks
+- `05-pipelines.md` — DAG workflows
+- `06-skills.md` — marketplace
+- `07-projects.md` — project management
+- `08-rules.md` — CLAUDE.md templates
+- `09-issue-autofix.md` — GitHub issue scanner
+- `10-troubleshooting.md` — common issues
+If a feature change affects user-facing behavior, update the corresponding help doc in the same commit.
+
 ### Architecture
 - `forge-server.mjs` starts: Next.js + terminal-standalone + telegram-standalone
 - `pnpm dev` / `start.sh dev` starts: Next.js (init.ts spawns terminal + telegram)

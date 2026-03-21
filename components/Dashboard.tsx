@@ -18,6 +18,7 @@ const CodeViewer = lazy(() => import('./CodeViewer'));
 const ProjectManager = lazy(() => import('./ProjectManager'));
 const PreviewPanel = lazy(() => import('./PreviewPanel'));
 const PipelineView = lazy(() => import('./PipelineView'));
+const HelpDialog = lazy(() => import('./HelpDialog'));
 const SkillsPanel = lazy(() => import('./SkillsPanel'));
 
 interface UsageSummary {
@@ -47,6 +48,7 @@ export default function Dashboard({ user }: { user: any }) {
   const [showNewTask, setShowNewTask] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showMonitor, setShowMonitor] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [usage, setUsage] = useState<UsageSummary[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
@@ -262,6 +264,15 @@ export default function Dashboard({ user }: { user: any }) {
               + New Task
             </button>
           )}
+          {/* Help */}
+          <button
+            onClick={() => setShowHelp(v => !v)}
+            className={`text-[10px] px-2 py-0.5 border rounded transition-colors ${
+              showHelp
+                ? 'border-[var(--accent)] text-[var(--accent)]'
+                : 'border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-secondary)]'
+            }`}
+          >?</button>
           {/* Preview + Tunnel */}
           <button
             onClick={() => setViewMode('preview')}
@@ -596,6 +607,11 @@ export default function Dashboard({ user }: { user: any }) {
 
       {showSettings && (
         <SettingsModal onClose={() => { setShowSettings(false); fetchData(); refreshDisplayName(); }} />
+      )}
+      {showHelp && (
+        <Suspense fallback={null}>
+          <HelpDialog onClose={() => setShowHelp(false)} />
+        </Suspense>
       )}
     </div>
   );

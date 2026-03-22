@@ -171,8 +171,9 @@ function pushLog(line: string) {
 
 export async function startTunnel(localPort: number = parseInt(process.env.PORT || '3000')): Promise<{ url?: string; error?: string }> {
   console.log(`[tunnel] Starting tunnel on port ${localPort}...`);
-  // Check if this worker already has a process
-  if (state.process) {
+  // Prevent concurrent starts: state.process is already spawned, or another call is
+  // mid-flight between the guard and spawn (the async download window).
+  if (state.process || state.status === 'starting') {
     return state.url ? { url: state.url } : { error: 'Tunnel is starting...' };
   }
 
@@ -182,6 +183,13 @@ export async function startTunnel(localPort: number = parseInt(process.env.PORT 
     try { process.kill(saved.pid, 0); return { url: saved.url }; } catch {}
   }
 
+  // Claim 'starting' before any async work so concurrent callers are blocked
+  // from this point onward (pgrep kill + download can take seconds).
+  state.status = 'starting';
+  state.url = null;
+  state.error = null;
+  state.log = [];
+
   // Kill ALL existing cloudflared processes to prevent duplicates
   try {
     const { execSync } = require('node:child_process');
@@ -190,11 +198,6 @@ export async function startTunnel(localPort: number = parseInt(process.env.PORT 
       try { process.kill(parseInt(pid), 'SIGTERM'); } catch {}
     }
   } catch {}
-
-  state.status = 'starting';
-  state.url = null;
-  state.error = null;
-  state.log = [];
 
   // Generate new session code for remote login 2FA
   try {

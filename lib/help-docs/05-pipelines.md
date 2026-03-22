@@ -50,15 +50,12 @@ nodes:
 
 ## Built-in Workflows
 
-### issue-auto-fix
-Fetches a GitHub issue → fixes code on new branch → creates PR.
+### issue-fix-and-review
+Complete issue resolution pipeline: fetch issue → fix code → create PR → review code → notify.
 
-Input: `issue_id`, `project`, `base_branch` (optional)
+Steps: setup → fetch-issue → fix-code → push-and-pr → review → cleanup
 
-### pr-review
-Fetches PR diff → AI code review → posts result.
-
-Input: `pr_number`, `project`
+Input: `issue_id`, `project`, `base_branch` (optional), `extra_context` (optional)
 
 ## CLI
 

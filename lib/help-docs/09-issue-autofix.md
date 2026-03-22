@@ -28,7 +28,7 @@ Scan → Fetch Issue → Fix Code (new branch) → Push → Create PR → Auto R
 1. **Scan**: `gh issue list` finds open issues matching labels
 2. **Fix**: Claude Code analyzes issue and fixes code on `fix/<id>-<description>` branch
 3. **PR**: Pushes branch and creates Pull Request
-4. **Review**: Automatically triggers `pr-review` pipeline
+4. **Review**: AI reviews the code changes in the same pipeline
 5. **Notify**: Results sent via Telegram (if configured)
 
 ## Manual Trigger

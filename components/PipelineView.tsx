@@ -8,6 +8,8 @@ interface WorkflowNode {
   id: string;
   project: string;
   prompt: string;
+  mode?: 'claude' | 'shell';
+  branch?: string;
   dependsOn: string[];
   outputs: { name: string; extract: string }[];
   routes: { condition: string; next: string }[];
@@ -65,8 +67,10 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [selectedPipeline, setSelectedPipeline] = useState<Pipeline | null>(null);
+  const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null); // selected workflow in left panel
   const [showCreate, setShowCreate] = useState(false);
   const [selectedWorkflow, setSelectedWorkflow] = useState<string>('');
+  const [projects, setProjects] = useState<{ name: string; path: string }[]>([]);
   const [inputValues, setInputValues] = useState<Record<string, string>>({});
   const [creating, setCreating] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
@@ -75,14 +79,17 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
   const [importYaml, setImportYaml] = useState('');
 
   const fetchData = useCallback(async () => {
-    const [pRes, wRes] = await Promise.all([
+    const [pRes, wRes, projRes] = await Promise.all([
       fetch('/api/pipelines'),
       fetch('/api/pipelines?type=workflows'),
+      fetch('/api/projects'),
     ]);
     const pData = await pRes.json();
     const wData = await wRes.json();
+    const projData = await projRes.json();
     if (Array.isArray(pData)) setPipelines(pData);
     if (Array.isArray(wData)) setWorkflows(wData);
+    if (Array.isArray(projData)) setProjects(projData.map((p: any) => ({ name: p.name, path: p.path })));
   }, []);
 
   useEffect(() => {
@@ -150,41 +157,18 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
 
   return (
     <div className="flex-1 flex min-h-0">
-      {/* Left — Pipeline list */}
-      <aside className="w-72 border-r border-[var(--border)] flex flex-col shrink-0">
-        <div className="px-3 py-2 border-b border-[var(--border)] flex items-center justify-between">
-          <span className="text-[11px] font-semibold text-[var(--text-primary)]">Pipelines</span>
-          <select
-            onChange={async (e) => {
-              const name = e.target.value;
-              if (!name) { setEditorYaml(undefined); setShowEditor(true); return; }
-              try {
-                const res = await fetch(`/api/pipelines?type=workflow-yaml&name=${encodeURIComponent(name)}`);
-                const data = await res.json();
-                setEditorYaml(data.yaml || undefined);
-              } catch { setEditorYaml(undefined); }
-              setShowEditor(true);
-              e.target.value = '';
-            }}
-            className="text-[10px] px-1 py-0.5 rounded text-green-400 bg-transparent hover:bg-green-400/10 cursor-pointer"
-            defaultValue=""
-          >
-            <option value="">Editor ▾</option>
-            <option value="">+ New workflow</option>
-            {workflows.map(w => <option key={w.name} value={w.name}>{w.builtin ? '⚙ ' : ''}{w.name}</option>)}
-          </select>
-          <button
-            onClick={() => setShowCreate(v => !v)}
-            className={`text-[10px] px-2 py-0.5 rounded ${showCreate ? 'text-white bg-[var(--accent)]' : 'text-[var(--accent)] hover:bg-[var(--accent)]/10'}`}
-          >
-            + Run
-          </button>
+      {/* Left — Workflow list */}
+      <aside className="w-64 border-r border-[var(--border)] flex flex-col shrink-0">
+        <div className="px-3 py-2 border-b border-[var(--border)] flex items-center gap-1.5">
+          <span className="text-[11px] font-semibold text-[var(--text-primary)] flex-1">Workflows</span>
           <button
             onClick={() => setShowImport(v => !v)}
-            className={`text-[10px] px-2 py-0.5 rounded ${showImport ? 'text-white bg-green-600' : 'text-green-400 hover:bg-green-400/10'}`}
-          >
-            Import
-          </button>
+            className="text-[9px] text-green-400 hover:underline"
+          >Import</button>
+          <button
+            onClick={() => { setEditorYaml(undefined); setShowEditor(true); }}
+            className="text-[9px] text-[var(--accent)] hover:underline"
+          >+ New</button>
         </div>
 
         {/* Import form */}
@@ -243,17 +227,28 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
               ))}
             </select>
 
-            {/* Input fields */}
+            {/* Input fields — project fields get a dropdown */}
             {currentWorkflow && Object.keys(currentWorkflow.input).length > 0 && (
               <div className="space-y-1.5">
                 {Object.entries(currentWorkflow.input).map(([key, desc]) => (
                   <div key={key}>
                     <label className="text-[9px] text-[var(--text-secondary)]">{key}: {desc}</label>
-                    <input
-                      value={inputValues[key] || ''}
-                      onChange={e => setInputValues(prev => ({ ...prev, [key]: e.target.value }))}
-                      className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
-                    />
+                    {key.toLowerCase() === 'project' ? (
+                      <select
+                        value={inputValues[key] || ''}
+                        onChange={e => setInputValues(prev => ({ ...prev, [key]: e.target.value }))}
+                        className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1.5 text-[var(--text-primary)]"
+                      >
+                        <option value="">Select project...</option>
+                        {projects.map(p => <option key={p.path} value={p.name}>{p.name}</option>)}
+                      </select>
+                    ) : (
+                      <input
+                        value={inputValues[key] || ''}
+                        onChange={e => setInputValues(prev => ({ ...prev, [key]: e.target.value }))}
+                        className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+                      />
+                    )}
                   </div>
                 ))}
               </div>
@@ -288,44 +283,111 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
           </div>
         )}
 
-        {/* Pipeline list */}
+        {/* Workflow list + execution history */}
         <div className="flex-1 overflow-y-auto">
-          {pipelines.map(p => (
-            <button
-              key={p.id}
-              onClick={() => setSelectedPipeline(p)}
-              className={`w-full text-left px-3 py-2 border-b border-[var(--border)]/30 hover:bg-[var(--bg-tertiary)] ${
-                selectedPipeline?.id === p.id ? 'bg-[var(--bg-tertiary)]' : ''
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span className={`text-[10px] ${STATUS_COLOR[p.status]}`}>●</span>
-                <span className="text-xs font-medium truncate">{p.workflowName}</span>
-                <span className="text-[9px] text-[var(--text-secondary)] ml-auto">{p.id}</span>
+          {workflows.map(w => {
+            const isActive = activeWorkflow === w.name;
+            const runs = pipelines.filter(p => p.workflowName === w.name);
+            return (
+              <div key={w.name}>
+                <div
+                  onClick={() => { setActiveWorkflow(isActive ? null : w.name); setSelectedPipeline(null); }}
+                  className={`w-full text-left px-3 py-2 border-b border-[var(--border)]/30 flex items-center gap-2 cursor-pointer ${
+                    isActive ? 'bg-[var(--accent)]/10 border-l-2 border-l-[var(--accent)]' : 'hover:bg-[var(--bg-tertiary)] border-l-2 border-l-transparent'
+                  }`}
+                >
+                  <span className="text-[8px] text-[var(--text-secondary)]">{isActive ? '▾' : '▸'}</span>
+                  {w.builtin && <span className="text-[7px] text-[var(--text-secondary)]">⚙</span>}
+                  <span className="text-[11px] text-[var(--text-primary)] truncate flex-1">{w.name}</span>
+                  {runs.length > 0 && <span className="text-[8px] text-[var(--text-secondary)]">{runs.length}</span>}
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setSelectedWorkflow(w.name);
+                      setInputValues({});
+                      setShowCreate(true);
+                      setActiveWorkflow(w.name);
+                    }}
+                    className="text-[8px] text-[var(--accent)] hover:underline shrink-0"
+                    title="Run this workflow"
+                  >Run</button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        const res = await fetch(`/api/pipelines?type=workflow-yaml&name=${encodeURIComponent(w.name)}`);
+                        const data = await res.json();
+                        setEditorYaml(data.yaml || undefined);
+                      } catch { setEditorYaml(undefined); }
+                      setShowEditor(true);
+                    }}
+                    className="text-[8px] text-green-400 hover:underline shrink-0"
+                    title={w.builtin ? 'View YAML' : 'Edit'}
+                  >{w.builtin ? 'View' : 'Edit'}</button>
+                </div>
+                {/* Execution history for this workflow */}
+                {isActive && (
+                  <div className="bg-[var(--bg-tertiary)]/50">
+                    {runs.length === 0 ? (
+                      <div className="px-4 py-2 text-[9px] text-[var(--text-secondary)]">No runs yet</div>
+                    ) : (
+                      runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 20).map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => setSelectedPipeline(p)}
+                          className={`w-full text-left px-4 py-1.5 border-b border-[var(--border)]/20 hover:bg-[var(--bg-tertiary)] ${
+                            selectedPipeline?.id === p.id ? 'bg-[var(--accent)]/5' : ''
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-[9px] ${STATUS_COLOR[p.status]}`}>●</span>
+                            <span className="text-[9px] text-[var(--text-secondary)] font-mono">{p.id.slice(0, 8)}</span>
+                            <div className="flex gap-0.5 ml-1">
+                              {p.nodeOrder.map(nodeId => (
+                                <span key={nodeId} className={`text-[8px] ${STATUS_COLOR[p.nodes[nodeId]?.status || 'pending']}`}>
+                                  {STATUS_ICON[p.nodes[nodeId]?.status || 'pending']}
+                                </span>
+                              ))}
+                            </div>
+                            <span className="text-[8px] text-[var(--text-secondary)] ml-auto">
+                              {new Date(p.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-1 mt-0.5 pl-4">
-                {p.nodeOrder.map(nodeId => (
-                  <span key={nodeId} className={`text-[9px] ${STATUS_COLOR[p.nodes[nodeId]?.status || 'pending']}`}>
-                    {STATUS_ICON[p.nodes[nodeId]?.status || 'pending']}
-                  </span>
-                ))}
-                <span className="text-[8px] text-[var(--text-secondary)] ml-auto">
-                  {new Date(p.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                </span>
-              </div>
-            </button>
-          ))}
-          {pipelines.length === 0 && (
+            );
+          })}
+          {workflows.length === 0 && (
             <div className="p-4 text-center text-xs text-[var(--text-secondary)]">
-              No pipelines yet
+              No workflows. Click Import or + New to create one.
             </div>
           )}
         </div>
       </aside>
 
-      {/* Right — Pipeline detail */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        {selectedPipeline ? (
+      {/* Right — Pipeline detail / Editor */}
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {showEditor ? (
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-xs text-[var(--text-secondary)]">Loading editor...</div>}>
+            <PipelineEditor
+              initialYaml={editorYaml}
+              onSave={async (yaml) => {
+                await fetch('/api/pipelines', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ action: 'save-workflow', yaml }),
+                });
+                setShowEditor(false);
+                fetchData();
+              }}
+              onClose={() => setShowEditor(false)}
+            />
+          </Suspense>
+        ) : selectedPipeline ? (
           <>
             {/* Header */}
             <div className="px-4 py-3 border-b border-[var(--border)] shrink-0">
@@ -433,74 +495,87 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
               })}
             </div>
           </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">
-            <div className="text-center space-y-2">
-              <p className="text-sm">Select a pipeline or create a new one</p>
-              <p className="text-xs">Define workflows in <code className="text-[var(--accent)]">~/.forge/flows/*.yaml</code></p>
-              <details className="text-left text-[10px] mt-4 max-w-md">
-                <summary className="cursor-pointer text-[var(--accent)]">Example workflow YAML</summary>
-                <pre className="mt-2 p-3 bg-[var(--bg-tertiary)] rounded overflow-auto whitespace-pre text-[var(--text-secondary)]">{`name: feature-build
-description: "Design → Implement → Review"
+        ) : activeWorkflow ? (() => {
+          const w = workflows.find(wf => wf.name === activeWorkflow);
+          if (!w) return null;
+          const nodeEntries = Object.entries(w.nodes);
+          return (
+            <div className="flex-1 flex flex-col overflow-y-auto">
+              {/* Workflow header */}
+              <div className="px-4 py-3 border-b border-[var(--border)] shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-[var(--text-primary)]">{w.name}</span>
+                  {w.builtin && <span className="text-[8px] px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">built-in</span>}
+                  <div className="ml-auto flex gap-2">
+                    <button
+                      onClick={() => { setSelectedWorkflow(w.name); setInputValues({}); setShowCreate(true); }}
+                      className="text-[10px] px-3 py-1 bg-[var(--accent)] text-white rounded hover:opacity-90"
+                    >Run</button>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await fetch(`/api/pipelines?type=workflow-yaml&name=${encodeURIComponent(w.name)}`);
+                          const data = await res.json();
+                          setEditorYaml(data.yaml || undefined);
+                        } catch { setEditorYaml(undefined); }
+                        setShowEditor(true);
+                      }}
+                      className="text-[10px] px-3 py-1 border border-[var(--border)] text-[var(--text-secondary)] rounded hover:text-[var(--text-primary)]"
+                    >{w.builtin ? 'View YAML' : 'Edit'}</button>
+                  </div>
+                </div>
+                {w.description && <p className="text-[10px] text-[var(--text-secondary)] mt-1">{w.description}</p>}
+                {Object.keys(w.input).length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {Object.entries(w.input).map(([k, v]) => (
+                      <span key={k} className="text-[8px] px-1.5 py-0.5 rounded bg-[var(--accent)]/10 text-[var(--accent)]">{k}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
 
-input:
-  requirement: "Feature description"
-
-vars:
-  project: my-app
-
-nodes:
-  architect:
-    project: "{{vars.project}}"
-    prompt: |
-      Analyze this requirement and create
-      a technical design document:
-      {{input.requirement}}
-    outputs:
-      - name: design_doc
-        extract: result
-
-  implement:
-    project: "{{vars.project}}"
-    depends_on: [architect]
-    prompt: |
-      Implement this design:
-      {{nodes.architect.outputs.design_doc}}
-    outputs:
-      - name: diff
-        extract: git_diff
-
-  review:
-    project: "{{vars.project}}"
-    depends_on: [implement]
-    prompt: |
-      Review this code change:
-      {{nodes.implement.outputs.diff}}`}</pre>
-              </details>
+              {/* Node flow visualization */}
+              <div className="p-4 space-y-2">
+                {nodeEntries.map(([nodeId, node], i) => (
+                  <div key={nodeId}>
+                    {/* Connection line */}
+                    {i > 0 && (
+                      <div className="flex items-center justify-center py-1">
+                        <div className="w-px h-4 bg-[var(--border)]" />
+                      </div>
+                    )}
+                    {/* Node card */}
+                    <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--bg-tertiary)]">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                          node.mode === 'shell' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-purple-500/20 text-purple-400'
+                        }`}>{node.mode === 'shell' ? 'shell' : 'claude'}</span>
+                        <span className="text-[11px] font-semibold text-[var(--text-primary)]">{nodeId}</span>
+                        {node.project && <span className="text-[9px] text-[var(--text-secondary)] ml-auto">{node.project}</span>}
+                      </div>
+                      {node.dependsOn.length > 0 && (
+                        <div className="text-[8px] text-[var(--text-secondary)] mt-1">depends: {node.dependsOn.join(', ')}</div>
+                      )}
+                      <p className="text-[9px] text-[var(--text-secondary)] mt-1 line-clamp-2">{node.prompt.slice(0, 120)}{node.prompt.length > 120 ? '...' : ''}</p>
+                      {node.outputs.length > 0 && (
+                        <div className="flex gap-1 mt-1">
+                          {node.outputs.map(o => (
+                            <span key={o.name} className="text-[7px] px-1 rounded bg-green-500/10 text-green-400">{o.name}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
+          );
+        })() : (
+          <div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">
+            <p className="text-xs">Select a workflow to view details or run</p>
           </div>
         )}
       </main>
-
-      {/* Visual Editor */}
-      {showEditor && (
-        <Suspense fallback={null}>
-          <PipelineEditor
-            initialYaml={editorYaml}
-            onSave={async (yaml) => {
-              // Save YAML to ~/.forge/flows/
-              await fetch('/api/pipelines', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'save-workflow', yaml }),
-              });
-              setShowEditor(false);
-              fetchData();
-            }}
-            onClose={() => setShowEditor(false)}
-          />
-        </Suspense>
-      )}
     </div>
   );
 }

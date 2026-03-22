@@ -34,6 +34,7 @@ function initSchema(db: Database.Database) {
   migrate("ALTER TABLE skills ADD COLUMN installed_version TEXT NOT NULL DEFAULT ''");
   migrate('ALTER TABLE skills ADD COLUMN rating REAL DEFAULT 0');
   migrate('ALTER TABLE skills ADD COLUMN deleted_remotely INTEGER NOT NULL DEFAULT 0');
+  migrate('ALTER TABLE project_pipelines ADD COLUMN last_run_at TEXT');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -153,6 +154,29 @@ function initSchema(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS tab_state (
       type TEXT PRIMARY KEY,
       data TEXT NOT NULL DEFAULT '{}'
+    );
+
+    -- Project pipeline bindings (which workflows are attached to which projects)
+    CREATE TABLE IF NOT EXISTS project_pipelines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_path TEXT NOT NULL,
+      project_name TEXT NOT NULL,
+      workflow_name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      config TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(project_path, workflow_name)
+    );
+
+    -- Pipeline execution log (per project, replaces issue_autofix_processed)
+    CREATE TABLE IF NOT EXISTS pipeline_runs (
+      id TEXT PRIMARY KEY,
+      project_path TEXT NOT NULL,
+      workflow_name TEXT NOT NULL,
+      pipeline_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      summary TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     -- Project favorites

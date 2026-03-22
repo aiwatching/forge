@@ -64,15 +64,13 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [diffFile, setDiffFile] = useState<string | null>(null);
   const [projectSkills, setProjectSkills] = useState<{ name: string; displayName: string; type: string; scope: string; version: string; installedVersion: string; hasUpdate: boolean; source: 'registry' | 'local' }[]>([]);
   const [showSkillsDetail, setShowSkillsDetail] = useState(false);
-  const [projectTab, setProjectTab] = useState<'code' | 'skills' | 'claudemd' | 'issues'>('code');
-  // Issue autofix state
-  const [issueConfig, setIssueConfig] = useState<{ enabled: boolean; interval: number; labels: string[]; baseBranch: string } | null>(null);
-  const [issueProcessed, setIssueProcessed] = useState<{ issueNumber: number; pipelineId: string; prNumber: number | null; status: string; createdAt: string }[]>([]);
-  const [issueScanning, setIssueScanning] = useState(false);
-  const [issueManualId, setIssueManualId] = useState('');
-  const [issueNextScan, setIssueNextScan] = useState<string | null>(null);
-  const [issueLastScan, setIssueLastScan] = useState<string | null>(null);
-  const [retryModal, setRetryModal] = useState<{ issueNumber: number; context: string } | null>(null);
+  const [projectTab, setProjectTab] = useState<'code' | 'skills' | 'claudemd' | 'pipelines'>('code');
+  // Pipeline bindings state
+  const [pipelineBindings, setPipelineBindings] = useState<{ id: number; workflowName: string; enabled: boolean; config: any; lastRunAt: string | null; nextRunAt: string | null }[]>([]);
+  const [pipelineRuns, setPipelineRuns] = useState<{ id: string; workflowName: string; pipelineId: string; status: string; summary: string; createdAt: string }[]>([]);
+  const [availableWorkflows, setAvailableWorkflows] = useState<{ name: string; description?: string; builtin?: boolean }[]>([]);
+  const [showAddPipeline, setShowAddPipeline] = useState(false);
+  const [triggerInput, setTriggerInput] = useState<Record<string, string>>({});
   const [claudeMdContent, setClaudeMdContent] = useState('');
   const [claudeMdExists, setClaudeMdExists] = useState(false);
   const [claudeTemplates, setClaudeTemplates] = useState<{ id: string; name: string; description: string; tags: string[]; builtin: boolean; content: string }[]>([]);
@@ -220,57 +218,28 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
     fetchProjectSkills();
   };
 
-  const fetchIssueConfig = useCallback(async () => {
+  const fetchPipelineBindings = useCallback(async () => {
     try {
-      const res = await fetch(`/api/issue-scanner?project=${encodeURIComponent(projectPath)}`);
+      const res = await fetch(`/api/project-pipelines?project=${encodeURIComponent(projectPath)}`);
+      if (!res.ok) return;
       const data = await res.json();
-      setIssueConfig(data.config || { enabled: false, interval: 30, labels: [], baseBranch: '' });
-      setIssueProcessed(data.processed || []);
-      setIssueLastScan(data.lastScan || null);
-      setIssueNextScan(data.nextScan || null);
+      setPipelineBindings(data.bindings || []);
+      setPipelineRuns(data.runs || []);
+      setAvailableWorkflows(data.workflows || []);
     } catch {}
   }, [projectPath]);
 
-  const saveIssueConfig = async (config: any) => {
-    await fetch('/api/issue-scanner', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save-config', projectPath, projectName, ...config }),
-    });
-    fetchIssueConfig();
-  };
-
-  const scanNow = async () => {
-    setIssueScanning(true);
+  const triggerProjectPipeline = async (workflowName: string, input?: Record<string, string>) => {
     try {
-      const res = await fetch('/api/issue-scanner', {
+      const res = await fetch('/api/project-pipelines', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'scan', projectPath }),
+        body: JSON.stringify({ action: 'trigger', projectPath, projectName, workflowName, input }),
       });
       const data = await res.json();
-      if (data.error) {
-        alert(data.error);
-      } else if (data.triggered > 0) {
-        alert(`Triggered ${data.triggered} issue fix(es): #${data.issues.join(', #')}`);
-      } else {
-        alert(`Scanned ${data.total} open issues — no new issues to process`);
-      }
-      await fetchIssueConfig();
-    } catch (e) {
-      alert('Scan failed');
-    }
-    setIssueScanning(false);
-  };
-
-  const triggerIssue = async (issueId: string) => {
-    await fetch('/api/issue-scanner', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'trigger', projectPath, issueId, projectName }),
-    });
-    setIssueManualId('');
-    fetchIssueConfig();
+      if (data.ok) { fetchPipelineBindings(); }
+      else { alert(data.error || 'Failed'); }
+    } catch { alert('Failed to trigger pipeline'); }
   };
 
   const fetchClaudeMd = useCallback(async () => {
@@ -409,9 +378,9 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   // Lazy load tab-specific data only when switching to that tab
   useEffect(() => {
     if (projectTab === 'skills') fetchProjectSkills();
-    if (projectTab === 'issues') fetchIssueConfig();
+    if (projectTab === 'pipelines') fetchPipelineBindings();
     if (projectTab === 'claudemd') fetchClaudeMd();
-  }, [projectTab, fetchProjectSkills, fetchIssueConfig, fetchClaudeMd]);
+  }, [projectTab, fetchProjectSkills, fetchPipelineBindings, fetchClaudeMd]);
 
   return (
     <>
@@ -481,13 +450,13 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
               {claudeMdExists && <span className="ml-1 text-[8px] text-[var(--green)]">•</span>}
             </button>
             <button
-              onClick={() => setProjectTab('issues')}
+              onClick={() => setProjectTab('pipelines')}
               className={`text-[9px] px-2 py-0.5 rounded transition-colors ${
-                projectTab === 'issues' ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                projectTab === 'pipelines' ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
-              Issues
-              {issueConfig?.enabled && <span className="ml-1 text-[8px] text-[var(--green)]">•</span>}
+              Pipelines
+              {pipelineBindings.length > 0 && <span className="ml-1 text-[8px] text-[var(--text-secondary)]">({pipelineBindings.length})</span>}
             </button>
           </div>
         </div>
@@ -797,149 +766,157 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
         </div>
       )}
 
-      {/* Issues tab */}
-      {projectTab === 'issues' && issueConfig && (
+      {/* Pipelines tab */}
+      {projectTab === 'pipelines' && (
         <div className="flex-1 overflow-auto p-4 space-y-4">
-          {/* Config */}
+          {/* Bound workflows */}
           <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={issueConfig.enabled}
-                  onChange={e => setIssueConfig({ ...issueConfig, enabled: e.target.checked })}
-                  className="accent-[var(--accent)]"
-                />
-                <span className="text-[11px] text-[var(--text-primary)] font-semibold">Enable Issue Auto-fix</span>
-              </label>
-              {issueConfig.enabled && (<>
-                <button
-                  onClick={() => scanNow()}
-                  disabled={issueScanning}
-                  className="text-[9px] px-2 py-0.5 border border-[var(--accent)] text-[var(--accent)] rounded hover:bg-[var(--accent)] hover:text-white disabled:opacity-50"
-                >
-                  {issueScanning ? 'Scanning...' : 'Scan Now'}
-                </button>
-                {issueLastScan && (
-                  <span className="text-[8px] text-[var(--text-secondary)]">
-                    Last: {new Date(issueLastScan).toLocaleTimeString()}
-                  </span>
-                )}
-                {issueNextScan && (
-                  <span className="text-[8px] text-[var(--text-secondary)]">
-                    Next: {new Date(issueNextScan).toLocaleTimeString()}
-                  </span>
-                )}
-              </> )}
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-[var(--text-primary)]">Bound Pipelines</span>
+              <button
+                onClick={() => setShowAddPipeline(v => !v)}
+                className="text-[9px] px-2 py-0.5 bg-[var(--accent)] text-white rounded hover:opacity-90 ml-auto"
+              >+ Add</button>
             </div>
 
-            {issueConfig.enabled && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[9px] text-[var(--text-secondary)] block mb-1">Scan Interval (minutes, 0=manual)</label>
-                  <input
-                    type="number"
-                    value={issueConfig.interval}
-                    onChange={e => setIssueConfig({ ...issueConfig, interval: parseInt(e.target.value) || 0 })}
-                    className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)]"
-                  />
-                </div>
-                <div>
-                  <label className="text-[9px] text-[var(--text-secondary)] block mb-1">Base Branch (empty=auto)</label>
-                  <input
-                    type="text"
-                    value={issueConfig.baseBranch}
-                    onChange={e => setIssueConfig({ ...issueConfig, baseBranch: e.target.value })}
-                    placeholder="main"
-                    className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)]"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <label className="text-[9px] text-[var(--text-secondary)] block mb-1">Labels Filter (comma-separated, empty=all)</label>
-                  <input
-                    type="text"
-                    value={issueConfig.labels.join(', ')}
-                    onChange={e => setIssueConfig({ ...issueConfig, labels: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
-                    placeholder="bug, fix"
-                    className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)]"
-                  />
-                </div>
+            {/* Add pipeline form */}
+            {showAddPipeline && (
+              <div className="border border-[var(--border)] rounded p-2 space-y-2">
+                {availableWorkflows.filter(w => !pipelineBindings.find(b => b.workflowName === w.name)).map(w => (
+                  <button
+                    key={w.name}
+                    onClick={async () => {
+                      await fetch('/api/project-pipelines', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'add', projectPath, projectName, workflowName: w.name }),
+                      });
+                      setShowAddPipeline(false);
+                      fetchPipelineBindings();
+                    }}
+                    className="w-full text-left px-2 py-1.5 rounded hover:bg-[var(--bg-tertiary)] text-[10px] flex items-center gap-2"
+                  >
+                    {w.builtin && <span className="text-[7px] text-[var(--text-secondary)]">⚙</span>}
+                    <span className="text-[var(--text-primary)]">{w.name}</span>
+                    {w.description && <span className="text-[var(--text-secondary)] truncate ml-auto text-[8px]">{w.description}</span>}
+                  </button>
+                ))}
+                {availableWorkflows.filter(w => !pipelineBindings.find(b => b.workflowName === w.name)).length === 0 && (
+                  <p className="text-[9px] text-[var(--text-secondary)] p-2">All workflows already bound</p>
+                )}
               </div>
             )}
-            <div className="mt-3">
-              <button
-                onClick={() => saveIssueConfig(issueConfig)}
-                className="text-[10px] px-4 py-1.5 bg-[var(--accent)] text-white rounded hover:opacity-90"
-              >Save Configuration</button>
-            </div>
+
+            {/* Bound pipeline list */}
+            {pipelineBindings.length === 0 ? (
+              <p className="text-[10px] text-[var(--text-secondary)]">No pipelines bound. Click + Add to attach a workflow.</p>
+            ) : (
+              pipelineBindings.map(b => (
+                <div key={b.workflowName} className="border border-[var(--border)] rounded p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-semibold text-[var(--text-primary)]">{b.workflowName}</span>
+                    <label className="flex items-center gap-1 text-[9px] text-[var(--text-secondary)] cursor-pointer ml-auto">
+                      <input type="checkbox" checked={b.enabled} onChange={async (e) => {
+                        await fetch('/api/project-pipelines', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'update', projectPath, workflowName: b.workflowName, enabled: e.target.checked }),
+                        });
+                        fetchPipelineBindings();
+                      }} className="accent-[var(--accent)]" />
+                      Enabled
+                    </label>
+                    <button
+                      onClick={() => triggerProjectPipeline(b.workflowName, triggerInput)}
+                      className="text-[9px] px-2 py-0.5 border border-[var(--accent)] text-[var(--accent)] rounded hover:bg-[var(--accent)] hover:text-white"
+                    >Run</button>
+                    <button
+                      onClick={async () => {
+                        if (!confirm(`Remove "${b.workflowName}" from this project?`)) return;
+                        await fetch('/api/project-pipelines', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'remove', projectPath, workflowName: b.workflowName }),
+                        });
+                        fetchPipelineBindings();
+                      }}
+                      className="text-[9px] text-[var(--red)] hover:underline"
+                    >Remove</button>
+                  </div>
+                  {/* Schedule config */}
+                  <div className="flex items-center gap-2 text-[9px]">
+                    <span className="text-[var(--text-secondary)]">Schedule:</span>
+                    <select
+                      value={b.config.interval || 0}
+                      onChange={async (e) => {
+                        const interval = Number(e.target.value);
+                        const newConfig = { ...b.config, interval };
+                        await fetch('/api/project-pipelines', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'update', projectPath, workflowName: b.workflowName, config: newConfig }),
+                        });
+                        fetchPipelineBindings();
+                      }}
+                      className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[9px] text-[var(--text-primary)]"
+                    >
+                      <option value={0}>Manual only</option>
+                      <option value={15}>Every 15 min</option>
+                      <option value={30}>Every 30 min</option>
+                      <option value={60}>Every 1 hour</option>
+                      <option value={120}>Every 2 hours</option>
+                      <option value={360}>Every 6 hours</option>
+                      <option value={720}>Every 12 hours</option>
+                      <option value={1440}>Every 24 hours</option>
+                    </select>
+                    {b.config.interval > 0 && b.nextRunAt && (
+                      <span className="text-[8px] text-[var(--text-secondary)]">
+                        Next: {new Date(b.nextRunAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                    {b.lastRunAt && (
+                      <span className="text-[8px] text-[var(--text-secondary)] ml-auto">
+                        Last: {new Date(b.lastRunAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
 
-          {/* Manual trigger */}
-          <div className="border-t border-[var(--border)] pt-3">
-            <div className="text-[9px] text-[var(--text-secondary)] uppercase mb-2">Manual Trigger</div>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={issueManualId}
-                onChange={e => setIssueManualId(e.target.value)}
-                placeholder="Issue #"
-                className="w-24 px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[10px] text-[var(--text-primary)]"
-              />
-              <button
-                onClick={() => issueManualId && triggerIssue(issueManualId)}
-                disabled={!issueManualId}
-                className="text-[9px] px-3 py-1 bg-[var(--accent)] text-white rounded hover:opacity-90 disabled:opacity-50"
-              >Fix Issue</button>
-            </div>
-          </div>
-
-          {/* History */}
-          {issueProcessed.length > 0 && (
+          {/* Execution history */}
+          {pipelineRuns.length > 0 && (
             <div className="border-t border-[var(--border)] pt-3">
-              <div className="text-[9px] text-[var(--text-secondary)] uppercase mb-2">Processed Issues</div>
+              <div className="text-[9px] text-[var(--text-secondary)] uppercase mb-2">Execution History</div>
               <div className="border border-[var(--border)] rounded overflow-hidden">
-                {issueProcessed.map(p => (
-                  <div key={p.issueNumber} className="border-b border-[var(--border)]/30 last:border-b-0">
-                    <div className="flex items-center gap-2 px-3 py-1.5 text-[10px]">
-                      <span className="text-[var(--text-primary)] font-mono">#{p.issueNumber}</span>
-                      <span className={`text-[8px] px-1 rounded ${
-                        p.status === 'done' ? 'bg-green-500/10 text-green-400' :
-                        p.status === 'failed' ? 'bg-red-500/10 text-red-400' :
-                        'bg-yellow-500/10 text-yellow-400'
-                      }`}>{p.status}</span>
-                      {p.prNumber && <span className="text-[var(--accent)]">PR #{p.prNumber}</span>}
-                      {p.pipelineId && (
-                        <button
-                          onClick={() => {
-                            const event = new CustomEvent('forge:view-pipeline', { detail: { pipelineId: p.pipelineId } });
-                            window.dispatchEvent(event);
-                          }}
-                          className="text-[8px] text-[var(--text-secondary)] hover:text-[var(--accent)] font-mono"
-                          title="View pipeline"
-                        >{p.pipelineId.slice(0, 8)}</button>
-                      )}
-                      <span className="text-[var(--text-secondary)] text-[8px]">{p.createdAt}</span>
-                      <div className="ml-auto flex gap-1">
-                        {(p.status === 'failed' || p.status === 'done' || p.status === 'processing') && (
-                          <button
-                            onClick={() => setRetryModal({ issueNumber: p.issueNumber, context: '' })}
-                            className="text-[8px] text-[var(--accent)] hover:underline"
-                          >Retry</button>
-                        )}
-                        <button
-                          onClick={async () => {
-                            if (!confirm(`Delete record for issue #${p.issueNumber}?`)) return;
-                            await fetch('/api/issue-scanner', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ action: 'reset', projectPath, issueId: p.issueNumber }),
-                            });
-                            fetchIssueConfig();
-                          }}
-                          className="text-[8px] text-[var(--text-secondary)] hover:text-[var(--red)]"
-                        >Delete</button>
+                {pipelineRuns.map(run => (
+                  <div key={run.id} className="flex items-start gap-2 px-3 py-2 border-b border-[var(--border)]/30 last:border-b-0 text-[10px]">
+                    <span className={`shrink-0 ${
+                      run.status === 'done' ? 'text-green-400' : run.status === 'failed' ? 'text-red-400' : 'text-yellow-400'
+                    }`}>●</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[var(--text-primary)] font-medium">{run.workflowName}</span>
+                        <span className="text-[8px] text-[var(--text-secondary)] font-mono">{run.pipelineId.slice(0, 8)}</span>
+                        <span className="text-[8px] text-[var(--text-secondary)] ml-auto">{new Date(run.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
+                      {run.summary && (
+                        <pre className="text-[9px] text-[var(--text-secondary)] mt-1 whitespace-pre-wrap break-words line-clamp-3">{run.summary}</pre>
+                      )}
                     </div>
+                    <button
+                      onClick={async () => {
+                        if (!confirm('Delete this run?')) return;
+                        await fetch('/api/project-pipelines', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'delete-run', id: run.id }),
+                        });
+                        fetchPipelineBindings();
+                      }}
+                      className="text-[8px] text-[var(--text-secondary)] hover:text-[var(--red)] shrink-0"
+                    >×</button>
                   </div>
                 ))}
               </div>
@@ -1026,50 +1003,6 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
         </div>
       )}
 
-      {/* Retry modal */}
-      {retryModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setRetryModal(null)}>
-          <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg shadow-xl w-[420px] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="px-4 py-3 border-b border-[var(--border)]">
-              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Retry Issue #{retryModal.issueNumber}</h3>
-              <p className="text-[10px] text-[var(--text-secondary)] mt-0.5">Add context to help the AI fix the issue better this time.</p>
-            </div>
-            <div className="p-4">
-              <textarea
-                value={retryModal.context}
-                onChange={e => setRetryModal({ ...retryModal, context: e.target.value })}
-                placeholder="e.g. The previous fix caused a merge conflict. Rebase from main first, then fix only the validation logic in src/utils.ts..."
-                className="w-full h-32 px-3 py-2 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 resize-none focus:outline-none focus:border-[var(--accent)]"
-                autoFocus
-              />
-            </div>
-            <div className="px-4 py-3 border-t border-[var(--border)] flex justify-end gap-2">
-              <button
-                onClick={() => setRetryModal(null)}
-                className="text-[11px] px-3 py-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-              >Cancel</button>
-              <button
-                onClick={async () => {
-                  await fetch('/api/issue-scanner', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      action: 'retry',
-                      projectPath,
-                      projectName,
-                      issueId: retryModal.issueNumber,
-                      context: retryModal.context,
-                    }),
-                  });
-                  setRetryModal(null);
-                  fetchIssueConfig();
-                }}
-                className="text-[11px] px-4 py-1.5 bg-[var(--accent)] text-white rounded hover:opacity-90"
-              >Retry</button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 });

@@ -61,7 +61,7 @@ export async function POST(req: Request) {
     const config = getConfig(body.projectPath);
     const projectName = config?.projectName || body.projectName;
     try {
-      const pipeline = startPipeline('issue-auto-fix', {
+      const pipeline = startPipeline('issue-fix-and-review', {
         issue_id: String(body.issueId),
         project: projectName,
         base_branch: config?.baseBranch || body.baseBranch || 'auto-detect',
@@ -93,7 +93,7 @@ export async function POST(req: Request) {
     // Reset the processed record first, then re-create with new pipeline
     resetProcessedIssue(body.projectPath, body.issueId);
     try {
-      const pipeline = startPipeline('issue-auto-fix', {
+      const pipeline = startPipeline('issue-fix-and-review', {
         issue_id: String(body.issueId),
         project: projectName,
         base_branch: config?.baseBranch || 'auto-detect',

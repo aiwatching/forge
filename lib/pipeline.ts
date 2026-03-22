@@ -75,9 +75,9 @@ export interface Pipeline {
 // ─── Built-in workflows ──────────────────────────────────
 
 export const BUILTIN_WORKFLOWS: Record<string, string> = {
-  'issue-auto-fix': `
-name: issue-auto-fix
-description: "Fetch a GitHub issue → fix code on a new branch → create PR"
+  'issue-fix-and-review': `
+name: issue-fix-and-review
+description: "Fetch GitHub issue → fix code → create PR → review PR → notify"
 input:
   issue_id: "GitHub issue number"
   project: "Project name"
@@ -107,8 +107,10 @@ nodes:
     project: "{{input.project}}"
     depends_on: [setup]
     prompt: |
+      ISSUE_ID="{{input.issue_id}}" && \
+      if [ -z "$ISSUE_ID" ]; then echo "__SKIP__ No issue_id provided" && exit 0; fi && \
       REPO=$(echo '{{nodes.setup.outputs.info}}' | grep REPO= | cut -d= -f2) && \
-      gh issue view {{input.issue_id}} --json title,body,labels,number -R "$REPO"
+      gh issue view "$ISSUE_ID" --json title,body,labels,number -R "$REPO"
     outputs:
       - name: issue_json
         extract: stdout
@@ -148,72 +150,43 @@ nodes:
     outputs:
       - name: pr_url
         extract: stdout
-  notify:
-    mode: shell
+  review:
     project: "{{input.project}}"
     depends_on: [push-and-pr]
     prompt: |
-      ORIG=$(echo '{{nodes.setup.outputs.info}}' | grep ORIG_BRANCH= | cut -d= -f2) && \
-      if [ -n "$(git status --porcelain)" ]; then
-        echo "PR created for issue #{{input.issue_id}}: {{nodes.push-and-pr.outputs.pr_url}} (staying on $(git branch --show-current) - uncommitted changes)"
-      else
-        git checkout "$ORIG" 2>/dev/null || true
-        echo "PR created for issue #{{input.issue_id}}: {{nodes.push-and-pr.outputs.pr_url}} (switched back to $ORIG)"
-      fi
-`,
-  'pr-review': `
-name: pr-review
-description: "Review a PR → approve or request changes → notify"
-input:
-  pr_number: "Pull request number"
-  project: "Project name"
-nodes:
-  setup:
-    mode: shell
-    project: "{{input.project}}"
-    prompt: |
-      REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || git remote get-url origin | sed 's/.*github.com[:/]//;s/.git$//') && \
-      echo "REPO=$REPO"
-    outputs:
-      - name: info
-        extract: stdout
-  fetch-pr:
-    mode: shell
-    project: "{{input.project}}"
-    depends_on: [setup]
-    prompt: |
-      REPO=$(echo '{{nodes.setup.outputs.info}}' | grep REPO= | cut -d= -f2) && \
-      gh pr diff {{input.pr_number}} -R "$REPO"
-    outputs:
-      - name: diff
-        extract: stdout
-  review:
-    project: "{{input.project}}"
-    depends_on: [fetch-pr]
-    prompt: |
-      Review the following pull request diff carefully. Check for:
+      Review the code changes for issue #{{input.issue_id}}.
+
+      Fix summary: {{nodes.fix-code.outputs.summary}}
+
+      Git diff:
+      {{nodes.fix-code.outputs.diff}}
+
+      Check for:
       - Bugs and logic errors
       - Security vulnerabilities
       - Performance issues
-      - Code style and best practices
-
-      PR #{{input.pr_number}} diff:
-      {{nodes.fetch-pr.outputs.diff}}
+      - Whether the fix actually addresses the issue
 
       Respond with:
       1. APPROVED or CHANGES_REQUESTED
-      2. Detailed list of specific issues found with file paths and line numbers
-      3. Suggestions for improvement
+      2. Specific issues found with file paths and line numbers
     outputs:
       - name: review_result
         extract: result
-  post-review:
+  cleanup:
     mode: shell
     project: "{{input.project}}"
     depends_on: [review]
-    prompt: "echo 'Review complete for PR #{{input.pr_number}}'"
+    prompt: |
+      ORIG=$(echo '{{nodes.setup.outputs.info}}' | grep ORIG_BRANCH= | cut -d= -f2) && \
+      if [ -n "$(git status --porcelain)" ]; then
+        echo "Issue #{{input.issue_id}} — PR: {{nodes.push-and-pr.outputs.pr_url}} | Review: {{nodes.review.outputs.review_result}} (staying on $(git branch --show-current))"
+      else
+        git checkout "$ORIG" 2>/dev/null || true
+        echo "Issue #{{input.issue_id}} — PR: {{nodes.push-and-pr.outputs.pr_url}} | Review: {{nodes.review.outputs.review_result}} (switched back to $ORIG)"
+      fi
     outputs:
-      - name: status
+      - name: result
         extract: stdout
 `,
 };
@@ -607,39 +580,11 @@ function checkPipelineCompletion(pipeline: Pipeline) {
     savePipeline(pipeline);
     notifyPipelineComplete(pipeline);
 
-    // Update issue_autofix_processed status
-    if (pipeline.workflowName === 'issue-auto-fix') {
-      try {
-        const { updateProcessedStatus } = require('./issue-scanner');
-        const issueId = parseInt(pipeline.input.issue_id);
-        const projectInfo = getProjectInfo(pipeline.input.project);
-        if (projectInfo && issueId) {
-          const prOutput = pipeline.nodes['push-and-pr']?.outputs?.pr_url || '';
-          const prMatch = prOutput.match(/\/pull\/(\d+)/);
-          const prNumber = prMatch ? parseInt(prMatch[1]) : undefined;
-          updateProcessedStatus(projectInfo.path, issueId, pipeline.status, prNumber);
-        }
-      } catch {}
-    }
-
-    // Auto-chain: issue-auto-fix → pr-review
-    if (pipeline.workflowName === 'issue-auto-fix' && pipeline.status === 'done') {
-      try {
-        // Extract PR number from push-and-pr output
-        const prOutput = pipeline.nodes['push-and-pr']?.outputs?.pr_url || '';
-        const prMatch = prOutput.match(/\/pull\/(\d+)/);
-        if (prMatch) {
-          const prNumber = prMatch[1];
-          console.log(`[pipeline] Auto-triggering pr-review for PR #${prNumber}`);
-          startPipeline('pr-review', {
-            pr_number: prNumber,
-            project: pipeline.input.project || '',
-          });
-        }
-      } catch (e) {
-        console.error('[pipeline] Failed to auto-trigger pr-review:', e);
-      }
-    }
+    // Sync run status to project pipeline runs
+    try {
+      const { syncRunStatus } = require('./pipeline-scheduler');
+      syncRunStatus(pipeline.id);
+    } catch {}
 
     // Release project lock
     const workflow = getWorkflow(pipeline.workflowName);
@@ -693,6 +638,17 @@ function setupTaskListener(pipelineId: string) {
         } else if (outputDef.extract === 'git_diff') {
           nodeState.outputs[outputDef.name] = task.gitDiff || '';
         }
+      }
+
+      // Convention: if stdout contains __SKIP__, mark node as skipped (downstream nodes will also skip)
+      const outputStr = task.resultSummary || '';
+      if (outputStr.includes('__SKIP__')) {
+        nodeState.status = 'skipped';
+        nodeState.completedAt = new Date().toISOString();
+        savePipeline(pipeline);
+        scheduleReadyNodes(pipeline, workflow);
+        checkPipelineCompletion(pipeline);
+        return;
       }
 
       // Check routes for conditional next step

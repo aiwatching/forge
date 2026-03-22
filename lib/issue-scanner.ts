@@ -1,6 +1,6 @@
 /**
  * Issue Scanner — periodically scans GitHub issues for configured projects
- * and triggers issue-auto-fix pipeline for new issues.
+ * and triggers issue-fix-and-review pipeline for new issues.
  *
  * Per-project config stored in DB:
  *   - enabled: boolean
@@ -196,7 +196,7 @@ export function scanAndTrigger(config: IssueAutofixConfig): { triggered: number;
     if (isProcessed(config.projectPath, issue.number)) continue;
 
     try {
-      const pipeline = startPipeline('issue-auto-fix', {
+      const pipeline = startPipeline('issue-fix-and-review', {
         issue_id: String(issue.number),
         project: config.projectName,
         base_branch: config.baseBranch || 'auto-detect',

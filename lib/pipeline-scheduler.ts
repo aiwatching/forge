@@ -15,6 +15,14 @@ import { randomUUID } from 'node:crypto';
 
 function db() { return getDb(getDbPath()); }
 
+/** Normalize SQLite datetime('now') → ISO 8601 UTC string. */
+function toIsoUTC(s: string | null): string | null {
+  if (!s) return null;
+  // SQLite datetime('now') → 'YYYY-MM-DD HH:MM:SS' (UTC, no indicator)
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s.replace(' ', 'T') + 'Z';
+  return s;
+}
+
 export interface ProjectPipelineBinding {
   id: number;
   projectPath: string;
@@ -47,8 +55,8 @@ export function getBindings(projectPath: string): ProjectPipelineBinding[] {
       workflowName: r.workflow_name,
       enabled: !!r.enabled,
       config: JSON.parse(r.config || '{}'),
-      lastRunAt: r.last_run_at || null,
-      createdAt: r.created_at,
+      lastRunAt: toIsoUTC(r.last_run_at),
+      createdAt: toIsoUTC(r.created_at) ?? r.created_at,
     }));
 }
 
@@ -61,8 +69,8 @@ export function getAllScheduledBindings(): ProjectPipelineBinding[] {
       workflowName: r.workflow_name,
       enabled: true,
       config: JSON.parse(r.config || '{}'),
-      lastRunAt: r.last_run_at || null,
-      createdAt: r.created_at,
+      lastRunAt: toIsoUTC(r.last_run_at),
+      createdAt: toIsoUTC(r.created_at) ?? r.created_at,
     })).filter(b => b.config.interval && b.config.interval > 0);
 }
 
@@ -127,7 +135,7 @@ export function getRuns(projectPath: string, workflowName?: string, limit = 20):
     pipelineId: r.pipeline_id,
     status: r.status,
     summary: r.summary || '',
-    createdAt: r.created_at,
+    createdAt: toIsoUTC(r.created_at) ?? r.created_at,
   }));
 }
 

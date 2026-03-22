@@ -12,6 +12,13 @@ import { loadSettings } from './settings';
 import { notifyTaskComplete, notifyTaskFailed } from './notify';
 import type { Task, TaskLogEntry, TaskStatus, TaskMode, WatchConfig } from '@/src/types';
 
+/** Normalize SQLite datetime('now') → ISO 8601 UTC string. */
+function toIsoUTC(s: string | null | undefined): string | null {
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s.replace(' ', 'T') + 'Z';
+  return s;
+}
+
 const runnerKey = Symbol.for('mw-task-runner');
 const gRunner = globalThis as any;
 if (!gRunner[runnerKey]) gRunner[runnerKey] = { runner: null, currentTaskId: null };
@@ -601,10 +608,10 @@ function rowToTask(row: any): Task {
     gitBranch: row.git_branch || undefined,
     costUSD: row.cost_usd || undefined,
     error: row.error || undefined,
-    createdAt: row.created_at,
-    startedAt: row.started_at || undefined,
-    completedAt: row.completed_at || undefined,
-    scheduledAt: row.scheduled_at || undefined,
+    createdAt: toIsoUTC(row.created_at) ?? row.created_at,
+    startedAt: toIsoUTC(row.started_at) ?? undefined,
+    completedAt: toIsoUTC(row.completed_at) ?? undefined,
+    scheduledAt: toIsoUTC(row.scheduled_at) ?? undefined,
   };
 }
 

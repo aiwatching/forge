@@ -65,8 +65,10 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [selectedPipeline, setSelectedPipeline] = useState<Pipeline | null>(null);
+  const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null); // selected workflow in left panel
   const [showCreate, setShowCreate] = useState(false);
   const [selectedWorkflow, setSelectedWorkflow] = useState<string>('');
+  const [projects, setProjects] = useState<{ name: string; path: string }[]>([]);
   const [inputValues, setInputValues] = useState<Record<string, string>>({});
   const [creating, setCreating] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
@@ -75,14 +77,17 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
   const [importYaml, setImportYaml] = useState('');
 
   const fetchData = useCallback(async () => {
-    const [pRes, wRes] = await Promise.all([
+    const [pRes, wRes, projRes] = await Promise.all([
       fetch('/api/pipelines'),
       fetch('/api/pipelines?type=workflows'),
+      fetch('/api/projects'),
     ]);
     const pData = await pRes.json();
     const wData = await wRes.json();
+    const projData = await projRes.json();
     if (Array.isArray(pData)) setPipelines(pData);
     if (Array.isArray(wData)) setWorkflows(wData);
+    if (Array.isArray(projData)) setProjects(projData.map((p: any) => ({ name: p.name, path: p.path })));
   }, []);
 
   useEffect(() => {
@@ -150,41 +155,18 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
 
   return (
     <div className="flex-1 flex min-h-0">
-      {/* Left — Pipeline list */}
-      <aside className="w-72 border-r border-[var(--border)] flex flex-col shrink-0">
-        <div className="px-3 py-2 border-b border-[var(--border)] flex items-center justify-between">
-          <span className="text-[11px] font-semibold text-[var(--text-primary)]">Pipelines</span>
-          <select
-            onChange={async (e) => {
-              const name = e.target.value;
-              if (!name) { setEditorYaml(undefined); setShowEditor(true); return; }
-              try {
-                const res = await fetch(`/api/pipelines?type=workflow-yaml&name=${encodeURIComponent(name)}`);
-                const data = await res.json();
-                setEditorYaml(data.yaml || undefined);
-              } catch { setEditorYaml(undefined); }
-              setShowEditor(true);
-              e.target.value = '';
-            }}
-            className="text-[10px] px-1 py-0.5 rounded text-green-400 bg-transparent hover:bg-green-400/10 cursor-pointer"
-            defaultValue=""
-          >
-            <option value="">Editor ▾</option>
-            <option value="">+ New workflow</option>
-            {workflows.map(w => <option key={w.name} value={w.name}>{w.builtin ? '⚙ ' : ''}{w.name}</option>)}
-          </select>
-          <button
-            onClick={() => setShowCreate(v => !v)}
-            className={`text-[10px] px-2 py-0.5 rounded ${showCreate ? 'text-white bg-[var(--accent)]' : 'text-[var(--accent)] hover:bg-[var(--accent)]/10'}`}
-          >
-            + Run
-          </button>
+      {/* Left — Workflow list */}
+      <aside className="w-64 border-r border-[var(--border)] flex flex-col shrink-0">
+        <div className="px-3 py-2 border-b border-[var(--border)] flex items-center gap-1.5">
+          <span className="text-[11px] font-semibold text-[var(--text-primary)] flex-1">Workflows</span>
           <button
             onClick={() => setShowImport(v => !v)}
-            className={`text-[10px] px-2 py-0.5 rounded ${showImport ? 'text-white bg-green-600' : 'text-green-400 hover:bg-green-400/10'}`}
-          >
-            Import
-          </button>
+            className="text-[9px] text-green-400 hover:underline"
+          >Import</button>
+          <button
+            onClick={() => { setEditorYaml(undefined); setShowEditor(true); }}
+            className="text-[9px] text-[var(--accent)] hover:underline"
+          >+ New</button>
         </div>
 
         {/* Import form */}
@@ -243,17 +225,28 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
               ))}
             </select>
 
-            {/* Input fields */}
+            {/* Input fields — project fields get a dropdown */}
             {currentWorkflow && Object.keys(currentWorkflow.input).length > 0 && (
               <div className="space-y-1.5">
                 {Object.entries(currentWorkflow.input).map(([key, desc]) => (
                   <div key={key}>
                     <label className="text-[9px] text-[var(--text-secondary)]">{key}: {desc}</label>
-                    <input
-                      value={inputValues[key] || ''}
-                      onChange={e => setInputValues(prev => ({ ...prev, [key]: e.target.value }))}
-                      className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
-                    />
+                    {key.toLowerCase() === 'project' ? (
+                      <select
+                        value={inputValues[key] || ''}
+                        onChange={e => setInputValues(prev => ({ ...prev, [key]: e.target.value }))}
+                        className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1.5 text-[var(--text-primary)]"
+                      >
+                        <option value="">Select project...</option>
+                        {projects.map(p => <option key={p.path} value={p.name}>{p.name}</option>)}
+                      </select>
+                    ) : (
+                      <input
+                        value={inputValues[key] || ''}
+                        onChange={e => setInputValues(prev => ({ ...prev, [key]: e.target.value }))}
+                        className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+                      />
+                    )}
                   </div>
                 ))}
               </div>
@@ -288,36 +281,89 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
           </div>
         )}
 
-        {/* Pipeline list */}
+        {/* Workflow list + execution history */}
         <div className="flex-1 overflow-y-auto">
-          {pipelines.map(p => (
-            <button
-              key={p.id}
-              onClick={() => setSelectedPipeline(p)}
-              className={`w-full text-left px-3 py-2 border-b border-[var(--border)]/30 hover:bg-[var(--bg-tertiary)] ${
-                selectedPipeline?.id === p.id ? 'bg-[var(--bg-tertiary)]' : ''
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span className={`text-[10px] ${STATUS_COLOR[p.status]}`}>●</span>
-                <span className="text-xs font-medium truncate">{p.workflowName}</span>
-                <span className="text-[9px] text-[var(--text-secondary)] ml-auto">{p.id}</span>
+          {workflows.map(w => {
+            const isActive = activeWorkflow === w.name;
+            const runs = pipelines.filter(p => p.workflowName === w.name);
+            return (
+              <div key={w.name}>
+                <button
+                  onClick={() => { setActiveWorkflow(isActive ? null : w.name); setSelectedPipeline(null); }}
+                  className={`w-full text-left px-3 py-2 border-b border-[var(--border)]/30 flex items-center gap-2 ${
+                    isActive ? 'bg-[var(--accent)]/10 border-l-2 border-l-[var(--accent)]' : 'hover:bg-[var(--bg-tertiary)] border-l-2 border-l-transparent'
+                  }`}
+                >
+                  <span className="text-[8px] text-[var(--text-secondary)]">{isActive ? '▾' : '▸'}</span>
+                  {w.builtin && <span className="text-[7px] text-[var(--text-secondary)]">⚙</span>}
+                  <span className="text-[11px] text-[var(--text-primary)] truncate flex-1">{w.name}</span>
+                  {runs.length > 0 && <span className="text-[8px] text-[var(--text-secondary)]">{runs.length}</span>}
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setSelectedWorkflow(w.name);
+                      setInputValues({});
+                      setShowCreate(true);
+                      setActiveWorkflow(w.name);
+                    }}
+                    className="text-[8px] text-[var(--accent)] hover:underline shrink-0"
+                    title="Run this workflow"
+                  >Run</button>
+                  {!w.builtin && (
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          const res = await fetch(`/api/pipelines?type=workflow-yaml&name=${encodeURIComponent(w.name)}`);
+                          const data = await res.json();
+                          setEditorYaml(data.yaml || undefined);
+                        } catch { setEditorYaml(undefined); }
+                        setShowEditor(true);
+                      }}
+                      className="text-[8px] text-green-400 hover:underline shrink-0"
+                      title="Edit"
+                    >Edit</button>
+                  )}
+                </button>
+                {/* Execution history for this workflow */}
+                {isActive && (
+                  <div className="bg-[var(--bg-tertiary)]/50">
+                    {runs.length === 0 ? (
+                      <div className="px-4 py-2 text-[9px] text-[var(--text-secondary)]">No runs yet</div>
+                    ) : (
+                      runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 20).map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => setSelectedPipeline(p)}
+                          className={`w-full text-left px-4 py-1.5 border-b border-[var(--border)]/20 hover:bg-[var(--bg-tertiary)] ${
+                            selectedPipeline?.id === p.id ? 'bg-[var(--accent)]/5' : ''
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-[9px] ${STATUS_COLOR[p.status]}`}>●</span>
+                            <span className="text-[9px] text-[var(--text-secondary)] font-mono">{p.id.slice(0, 8)}</span>
+                            <div className="flex gap-0.5 ml-1">
+                              {p.nodeOrder.map(nodeId => (
+                                <span key={nodeId} className={`text-[8px] ${STATUS_COLOR[p.nodes[nodeId]?.status || 'pending']}`}>
+                                  {STATUS_ICON[p.nodes[nodeId]?.status || 'pending']}
+                                </span>
+                              ))}
+                            </div>
+                            <span className="text-[8px] text-[var(--text-secondary)] ml-auto">
+                              {new Date(p.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-1 mt-0.5 pl-4">
-                {p.nodeOrder.map(nodeId => (
-                  <span key={nodeId} className={`text-[9px] ${STATUS_COLOR[p.nodes[nodeId]?.status || 'pending']}`}>
-                    {STATUS_ICON[p.nodes[nodeId]?.status || 'pending']}
-                  </span>
-                ))}
-                <span className="text-[8px] text-[var(--text-secondary)] ml-auto">
-                  {new Date(p.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                </span>
-              </div>
-            </button>
-          ))}
-          {pipelines.length === 0 && (
+            );
+          })}
+          {workflows.length === 0 && (
             <div className="p-4 text-center text-xs text-[var(--text-secondary)]">
-              No pipelines yet
+              No workflows. Click Import or + New to create one.
             </div>
           )}
         </div>

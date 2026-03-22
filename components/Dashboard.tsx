@@ -166,7 +166,7 @@ export default function Dashboard({ user }: { user: any }) {
       {/* Top bar */}
       <header className="h-12 border-b-2 border-[var(--border)] flex items-center justify-between px-4 shrink-0 bg-[var(--bg-secondary)]">
         <div className="flex items-center gap-4">
-          <img src="/icon.png" alt="Forge" width={24} height={24} className="rounded" />
+          <img src="/icon.png" alt="Forge" width={28} height={28} className="rounded" />
           <span className="text-sm font-bold text-[var(--accent)]">Forge</span>
           {versionInfo && (
             <span className="flex items-center gap-1.5">

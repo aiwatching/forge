@@ -137,18 +137,16 @@ export default function Dashboard({ user }: { user: any }) {
   }, []);
 
   const fetchData = useCallback(async () => {
-    const [tasksRes, statusRes, projectsRes] = await Promise.all([
-      fetch('/api/tasks'),
-      fetch('/api/status'),
-      fetch('/api/projects'),
-    ]);
-    const tasksData = await tasksRes.json();
-    const statusData = await statusRes.json();
-    const projectsData = await projectsRes.json();
-    setTasks(tasksData);
-    setProviders(statusData.providers);
-    setUsage(statusData.usage);
-    setProjects(projectsData);
+    try {
+      const [tasksRes, statusRes, projectsRes] = await Promise.all([
+        fetch('/api/tasks'),
+        fetch('/api/status'),
+        fetch('/api/projects'),
+      ]);
+      if (tasksRes.ok) setTasks(await tasksRes.json());
+      if (statusRes.ok) { const s = await statusRes.json(); setProviders(s.providers); setUsage(s.usage); }
+      if (projectsRes.ok) setProjects(await projectsRes.json());
+    } catch {}
   }, []);
 
   useEffect(() => {

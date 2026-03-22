@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, memo } from 'react';
+import { useSidebarResize } from '@/hooks/useSidebarResize';
 
 // ─── Syntax highlighting ─────────────────────────────────
 const KEYWORDS = new Set([
@@ -49,6 +50,7 @@ interface GitInfo {
 }
 
 export default memo(function ProjectDetail({ projectPath, projectName, hasGit }: { projectPath: string; projectName: string; hasGit: boolean }) {
+  const { sidebarWidth, onSidebarDragStart } = useSidebarResize({ defaultWidth: 208, minWidth: 120, maxWidth: 400 });
   const [gitInfo, setGitInfo] = useState<GitInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [commitMsg, setCommitMsg] = useState('');
@@ -490,11 +492,17 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
       {/* Code content area */}
       {projectTab === 'code' && <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* File tree */}
-        <div className="w-52 border-r border-[var(--border)] overflow-y-auto p-1 shrink-0">
+        <div style={{ width: sidebarWidth }} className="overflow-y-auto p-1 shrink-0">
           {fileTree.map((node: any) => (
             <FileTreeNode key={node.path} node={node} depth={0} selected={selectedFile} onSelect={openFile} />
           ))}
         </div>
+
+        {/* Sidebar resize handle */}
+        <div
+          onMouseDown={onSidebarDragStart}
+          className="w-1 bg-[var(--border)] cursor-col-resize shrink-0 hover:bg-[var(--accent)]/50 transition-colors"
+        />
 
         {/* File content */}
         <div className="flex-1 min-w-0 overflow-auto bg-[var(--bg-primary)]" style={{ width: 0 }}>
@@ -543,7 +551,7 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
       {projectTab === 'skills' && (
         <div className="flex-1 flex min-h-0 overflow-hidden">
           {/* Left: skill/command tree */}
-          <div className="w-52 border-r border-[var(--border)] overflow-y-auto p-1 shrink-0">
+          <div style={{ width: sidebarWidth }} className="overflow-y-auto p-1 shrink-0">
             {projectSkills.length === 0 ? (
               <p className="text-[9px] text-[var(--text-secondary)] p-2">No skills or commands installed</p>
             ) : (
@@ -590,6 +598,12 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
               ))
             )}
           </div>
+
+          {/* Sidebar resize handle */}
+          <div
+            onMouseDown={onSidebarDragStart}
+            className="w-1 bg-[var(--border)] cursor-col-resize shrink-0 hover:bg-[var(--accent)]/50 transition-colors"
+          />
 
           {/* Right: file content / editor */}
           <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-[var(--bg-primary)]">
@@ -658,7 +672,7 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
       {projectTab === 'claudemd' && (
         <div className="flex-1 flex min-h-0 overflow-hidden">
           {/* Left: templates list */}
-          <div className="w-52 border-r border-[var(--border)] overflow-y-auto shrink-0 flex flex-col">
+          <div style={{ width: sidebarWidth }} className="overflow-y-auto shrink-0 flex flex-col">
             <button
               onClick={() => { setClaudeSelectedTemplate(null); setClaudeEditing(false); }}
               className={`w-full px-2 py-1.5 border-b border-[var(--border)] text-[10px] text-left flex items-center gap-1 ${
@@ -702,6 +716,12 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
               })}
             </div>
           </div>
+
+          {/* Sidebar resize handle */}
+          <div
+            onMouseDown={onSidebarDragStart}
+            className="w-1 bg-[var(--border)] cursor-col-resize shrink-0 hover:bg-[var(--accent)]/50 transition-colors"
+          />
 
           {/* Right: CLAUDE.md content or template preview */}
           <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-[var(--bg-primary)]">

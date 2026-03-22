@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSidebarResize } from '@/hooks/useSidebarResize';
 import MarkdownContent from './MarkdownContent';
 
 interface SessionEntry {
@@ -42,6 +43,7 @@ export default function SessionView({
   projects: { name: string; path: string; language: string | null }[];
   onOpenInTerminal?: (sessionId: string, projectPath: string) => void;
 }) {
+  const { sidebarWidth, onSidebarDragStart } = useSidebarResize({ defaultWidth: 288, minWidth: 160, maxWidth: 480 });
   // Tree data: project → sessions
   const [sessionTree, setSessionTree] = useState<Record<string, ClaudeSessionInfo[]>>({});
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
@@ -285,7 +287,7 @@ export default function SessionView({
   return (
     <div className="flex h-full">
       {/* Left: tree view */}
-      <div className="w-72 border-r border-[var(--border)] flex flex-col shrink-0">
+      <div style={{ width: sidebarWidth }} className="flex flex-col shrink-0 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-2 border-b border-[var(--border)]">
           <span className="text-[10px] font-semibold text-[var(--text-secondary)] uppercase">Sessions</span>
@@ -450,6 +452,12 @@ export default function SessionView({
           )}
         </div>
       </div>
+
+      {/* Sidebar resize handle */}
+      <div
+        onMouseDown={onSidebarDragStart}
+        className="w-1 bg-[var(--border)] cursor-col-resize shrink-0 hover:bg-[var(--accent)]/50 transition-colors"
+      />
 
       {/* Right: session content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import { useSidebarResize } from '@/hooks/useSidebarResize';
 import MarkdownContent from './MarkdownContent';
 import TabBar from './TabBar';
 
@@ -100,6 +101,7 @@ export default function DocsViewer() {
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+  const { sidebarWidth, onSidebarDragStart } = useSidebarResize({ defaultWidth: 224, minWidth: 120, maxWidth: 480 });
 
   // Doc tabs
   const [docTabs, setDocTabs] = useState<DocTab[]>([]);
@@ -324,7 +326,7 @@ export default function DocsViewer() {
       <div className="flex-1 flex min-h-0">
         {/* Collapsible sidebar — file tree */}
         {sidebarOpen && (
-          <aside className="w-56 border-r border-[var(--border)] flex flex-col shrink-0">
+          <aside style={{ width: sidebarWidth }} className="flex flex-col shrink-0 overflow-hidden">
             {/* Root selector */}
             {roots.length > 0 && (
               <div className="p-2 border-b border-[var(--border)]">
@@ -388,6 +390,14 @@ export default function DocsViewer() {
               )}
             </div>
           </aside>
+        )}
+
+        {/* Sidebar resize handle */}
+        {sidebarOpen && (
+          <div
+            onMouseDown={onSidebarDragStart}
+            className="w-1 bg-[var(--border)] cursor-col-resize shrink-0 hover:bg-[var(--accent)]/50 transition-colors"
+          />
         )}
 
         {/* Main content */}

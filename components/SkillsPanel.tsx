@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useSidebarResize } from '@/hooks/useSidebarResize';
 
 type ItemType = 'skill' | 'command';
 
@@ -28,6 +29,7 @@ interface ProjectInfo {
 }
 
 export default function SkillsPanel({ projectFilter }: { projectFilter?: string }) {
+  const { sidebarWidth, onSidebarDragStart } = useSidebarResize({ defaultWidth: 224, minWidth: 140, maxWidth: 400 });
   const [skills, setSkills] = useState<Skill[]>([]);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [syncing, setSyncing] = useState(false);
@@ -282,7 +284,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
       ) : (
         <div className="flex-1 flex min-h-0">
           {/* Left: skill list */}
-          <div className="w-56 border-r border-[var(--border)] overflow-y-auto shrink-0">
+          <div style={{ width: sidebarWidth }} className="overflow-y-auto shrink-0">
             {/* Registry items */}
             {filtered.map(skill => {
               const isInstalled = skill.installedGlobal || skill.installedProjects.length > 0;
@@ -400,6 +402,12 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
               </>
             )}
           </div>
+
+          {/* Sidebar resize handle */}
+          <div
+            onMouseDown={onSidebarDragStart}
+            className="w-1 bg-[var(--border)] cursor-col-resize shrink-0 hover:bg-[var(--accent)]/50 transition-colors"
+          />
 
           {/* Right: detail panel */}
           <div className="flex-1 flex flex-col min-w-0">

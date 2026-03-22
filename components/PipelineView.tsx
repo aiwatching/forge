@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useSidebarResize } from '@/hooks/useSidebarResize';
 
 const PipelineEditor = lazy(() => import('./PipelineEditor'));
 
@@ -64,6 +65,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: string) => void }) {
+  const { sidebarWidth, onSidebarDragStart } = useSidebarResize({ defaultWidth: 256, minWidth: 140, maxWidth: 480 });
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [selectedPipeline, setSelectedPipeline] = useState<Pipeline | null>(null);
@@ -158,7 +160,7 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
   return (
     <div className="flex-1 flex min-h-0">
       {/* Left — Workflow list */}
-      <aside className="w-64 border-r border-[var(--border)] flex flex-col shrink-0">
+      <aside style={{ width: sidebarWidth }} className="flex flex-col shrink-0 overflow-hidden">
         <div className="px-3 py-2 border-b border-[var(--border)] flex items-center gap-1.5">
           <span className="text-[11px] font-semibold text-[var(--text-primary)] flex-1">Workflows</span>
           <button
@@ -368,6 +370,12 @@ export default function PipelineView({ onViewTask }: { onViewTask?: (taskId: str
           )}
         </div>
       </aside>
+
+      {/* Sidebar resize handle */}
+      <div
+        onMouseDown={onSidebarDragStart}
+        className="w-1 bg-[var(--border)] cursor-col-resize shrink-0 hover:bg-[var(--accent)]/50 transition-colors"
+      />
 
       {/* Right — Pipeline detail / Editor */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">

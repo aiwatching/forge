@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import type { WebTerminalHandle, WebTerminalProps } from './WebTerminal';
+import { useSidebarResize } from '@/hooks/useSidebarResize';
 
 const WebTerminal = lazy(() => import('./WebTerminal'));
 
@@ -196,6 +197,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
   const [activeSession, setActiveSession] = useState<string | null>(null);
   const [taskNotification, setTaskNotification] = useState<{ id: string; status: string; prompt: string; sessionId?: string } | null>(null);
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+  const { sidebarWidth, onSidebarDragStart } = useSidebarResize({ defaultWidth: 224, minWidth: 120, maxWidth: 480 });
   const lastDirRef = useRef<string | null>(null);
   const lastTaskCheckRef = useRef<string>('');
 
@@ -437,7 +439,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
       {codeOpen && <div className="flex-1 flex min-h-0 min-w-0 overflow-hidden">
         {/* Sidebar */}
         {sidebarOpen && (
-          <aside className="w-56 border-r border-[var(--border)] flex flex-col shrink-0">
+          <aside style={{ width: sidebarWidth }} className="flex flex-col shrink-0 overflow-hidden">
             {/* Directory name + git */}
             <div className="px-3 py-2 border-b border-[var(--border)]">
               <div className="flex items-center gap-2">
@@ -609,6 +611,14 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
               </div>
             )}
           </aside>
+        )}
+
+        {/* Sidebar resize handle */}
+        {sidebarOpen && (
+          <div
+            onMouseDown={onSidebarDragStart}
+            className="w-1 bg-[var(--border)] cursor-col-resize shrink-0 hover:bg-[var(--accent)]/50 transition-colors"
+          />
         )}
 
         {/* Code viewer */}

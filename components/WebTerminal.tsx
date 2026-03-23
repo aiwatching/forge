@@ -1120,8 +1120,7 @@ const MemoTerminalPane = memo(function TerminalPane({
     if (!containerRef.current) return;
 
     let disposed = false; // guard against post-cleanup writes (React Strict Mode)
-    let bellIdleTimer = 0;
-    let bellActivityBytes = 0;
+    let bellOutputBuffer = '';
 
     // Read terminal theme from CSS variables
     const cs = getComputedStyle(document.documentElement);
@@ -1258,14 +1257,16 @@ const MemoTerminalPane = memo(function TerminalPane({
           const msg = JSON.parse(event.data);
           if (msg.type === 'output') {
             try { term.write(msg.data); } catch {};
-            // Bell idle detection
-            bellActivityBytes += (msg.data as string).length;
-            clearTimeout(bellIdleTimer);
-            if (bellActivityBytes >= 200 && bellEnabledPanes.has(id)) {
-              bellIdleTimer = window.setTimeout(() => {
-                bellActivityBytes = 0;
+            // Bell: detect claude completion (cost summary or prompt after activity)
+            if (bellEnabledPanes.has(id)) {
+              bellOutputBuffer += msg.data as string;
+              // Keep only last 500 chars
+              if (bellOutputBuffer.length > 500) bellOutputBuffer = bellOutputBuffer.slice(-500);
+              // Claude outputs cost/token info when done, or returns to prompt ❯
+              if (bellOutputBuffer.includes('input tokens') || bellOutputBuffer.includes('output tokens') || bellOutputBuffer.includes('api_cost')) {
+                bellOutputBuffer = '';
                 fireBellNotification(id);
-              }, 8000);
+              }
             }
           } else if (msg.type === 'connected') {
             connectedSession = msg.sessionName;
@@ -1415,7 +1416,6 @@ const MemoTerminalPane = memo(function TerminalPane({
       visObserver.disconnect();
       clearTimeout(resizeTimer);
       clearTimeout(reconnectTimer);
-      clearTimeout(bellIdleTimer);
       window.removeEventListener('terminal-drag-end', onDragEnd);
       resizeObserver.disconnect();
       // Strict Mode cleanup: if disposed within 2s of mount and we created a

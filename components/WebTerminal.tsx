@@ -1121,6 +1121,7 @@ const MemoTerminalPane = memo(function TerminalPane({
 
     let disposed = false; // guard against post-cleanup writes (React Strict Mode)
     let bellOutputBuffer = '';
+    let bellFired = true; // start suppressed — only fire after user sends new input
 
     // Read terminal theme from CSS variables
     const cs = getComputedStyle(document.documentElement);
@@ -1263,18 +1264,18 @@ const MemoTerminalPane = memo(function TerminalPane({
               bellOutputBuffer += text;
               if (bellOutputBuffer.length > 1000) bellOutputBuffer = bellOutputBuffer.slice(-1000);
               // Claude completion markers:
-              // - "Cogitated for" / "Canoodling" + time = finished thinking
-              // - "input tokens" / "output tokens" / "api_cost" = cost summary
-              // - Prompt ❯ appearing after substantial output (>500 bytes)
-              if (
-                bellOutputBuffer.includes('Cogitated for') ||
-                bellOutputBuffer.includes('input tokens') ||
-                bellOutputBuffer.includes('output tokens') ||
-                bellOutputBuffer.includes('api_cost') ||
-                (bellOutputBuffer.length > 500 && text.includes('❯'))
-              ) {
-                bellOutputBuffer = '';
-                fireBellNotification(id);
+              // - "Cogitated for" = finished thinking (new Claude Code format)
+              // - "input tokens" / "output tokens" / "api_cost" = cost summary (old format)
+              if (!bellFired) {
+                const hasCostInfo = bellOutputBuffer.includes('Cogitated for') ||
+                  bellOutputBuffer.includes('input tokens') ||
+                  bellOutputBuffer.includes('output tokens') ||
+                  bellOutputBuffer.includes('api_cost');
+                if (hasCostInfo) {
+                  bellOutputBuffer = '';
+                  bellFired = true;
+                  fireBellNotification(id);
+                }
               }
             }
           } else if (msg.type === 'connected') {
@@ -1367,6 +1368,9 @@ const MemoTerminalPane = memo(function TerminalPane({
 
     term.onData((data) => {
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
+      // Reset bell after user types (new interaction = allow bell to fire again)
+      bellFired = false;
+      bellOutputBuffer = '';
     });
 
     // ── Resize handling ──

@@ -1,18 +1,13 @@
-# Forge v0.4.10
+# Forge v0.4.11
 
-Released: 2026-03-22
+Released: 2026-03-23
 
-## Changes since v0.4.9
+## Changes since v0.4.10
 
-### Features
-- feat: browser panel refactor, pane close UX, help AI data dir, terminal resume fix
-
-### Bug Fixes
-- fix: auto-retry failed issues, batch dedup, gh auth hint
-- feat: browser panel refactor, pane close UX, help AI data dir, terminal resume fix
-
-### Refactoring
-- refactor: Browser as independent panel with float/left/right modes
+### Other
+- mobile page
+- init version for mobile page
+- change sync period time
 
 
-**Full Changelog**: https://github.com/aiwatching/forge/compare/v0.4.9...v0.4.10
+**Full Changelog**: https://github.com/aiwatching/forge/compare/v0.4.10...v0.4.11

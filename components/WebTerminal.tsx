@@ -1368,10 +1368,12 @@ const MemoTerminalPane = memo(function TerminalPane({
 
     term.onData((data) => {
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
-      // Reset bell after user types (new interaction = allow bell to fire again)
-      bellFired = false;
-      bellOutputBuffer = '';
-      bellNewBytes = 0;
+      // Reset bell only on Enter (user submitted a new prompt to claude)
+      if (data === '\r' || data === '\n') {
+        bellFired = false;
+        bellOutputBuffer = '';
+        bellNewBytes = 0;
+      }
     });
 
     // ── Resize handling ──

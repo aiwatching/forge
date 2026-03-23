@@ -103,7 +103,7 @@ export function ensureInitialized() {
   try {
     const { syncSkills } = require('./skills');
     syncSkills().catch(() => {});
-    setInterval(() => { syncSkills().catch(() => {}); }, 30 * 60 * 1000);
+    setInterval(() => { syncSkills().catch(() => {}); }, 60 * 60 * 1000);
   } catch {}
 
   // Task runner is safe in every worker (DB-level coordination)

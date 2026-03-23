@@ -1122,6 +1122,7 @@ const MemoTerminalPane = memo(function TerminalPane({
     let bellArmed = false; // armed after user presses Enter
     let bellNewBytes = 0;
     let bellIdleTimer = 0;
+    let bellArmedAt = 0; // timestamp when armed
 
     // Read terminal theme from CSS variables
     const cs = getComputedStyle(document.documentElement);
@@ -1263,12 +1264,18 @@ const MemoTerminalPane = memo(function TerminalPane({
             if (bellEnabledPanes.has(id) && bellArmed) {
               bellNewBytes += (msg.data as string).length;
               clearTimeout(bellIdleTimer);
-              // After 2000+ bytes of output, start idle timer
               if (bellNewBytes > 2000) {
+                // 10s idle = claude finished
                 bellIdleTimer = window.setTimeout(() => {
                   bellArmed = false;
                   fireBellNotification(id);
-                }, 15000); // 15s no output = claude finished
+                }, 10000);
+                // Fallback: if 90s since armed with activity, force fire
+                if (Date.now() - bellArmedAt > 90000) {
+                  bellArmed = false;
+                  clearTimeout(bellIdleTimer);
+                  fireBellNotification(id);
+                }
               }
             }
           } else if (msg.type === 'connected') {
@@ -1365,6 +1372,7 @@ const MemoTerminalPane = memo(function TerminalPane({
       if (data === '\r' || data === '\n') {
         bellArmed = true;
         bellNewBytes = 0;
+        bellArmedAt = Date.now();
         clearTimeout(bellIdleTimer);
       }
     });

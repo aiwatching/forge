@@ -257,8 +257,8 @@ export function tailSessionFile(
 
   watcher.on('error', (err) => onError?.(err));
 
-  // Poll every 5 seconds as fallback
-  const pollTimer = setInterval(readNewBytes, 5000);
+  // Poll every 1 second as fallback (fs.watch is unreliable on macOS)
+  const pollTimer = setInterval(readNewBytes, 1000);
 
   return () => {
     watcher.close();

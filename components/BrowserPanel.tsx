@@ -29,10 +29,17 @@ export default function BrowserPanel({ onClose }: { onClose?: () => void }) {
     return () => clearInterval(timer);
   }, [fetchPreviews]);
 
+  const normalizeUrl = (val: string): string => {
+    if (/^\d+$/.test(val)) return `http://localhost:${val}`;
+    if (!/^https?:\/\//i.test(val)) return `http://${val}`;
+    return val;
+  };
+
   const navigate = (url: string) => {
-    setBrowserUrl(url);
-    localStorage.setItem('forge-browser-url', url);
-    if (browserUrlRef.current) browserUrlRef.current.value = url;
+    const normalized = normalizeUrl(url);
+    setBrowserUrl(normalized);
+    localStorage.setItem('forge-browser-url', normalized);
+    if (browserUrlRef.current) browserUrlRef.current.value = normalized;
     setBrowserKey(k => k + 1);
   };
 
@@ -96,8 +103,7 @@ export default function BrowserPanel({ onClose }: { onClose?: () => void }) {
             if (e.key === 'Enter') {
               const val = (e.target as HTMLInputElement).value.trim();
               if (!val) return;
-              const url = /^\d+$/.test(val) ? `http://localhost:${val}` : val;
-              navigate(url);
+              navigate(val);
             }
           }}
           className="flex-1 bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-2 py-0.5 text-[10px] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)] min-w-0"

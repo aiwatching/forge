@@ -999,11 +999,11 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
                   {/* Issue scan config (for issue-fix-and-review workflow) */}
                   {(b.workflowName === 'issue-auto-fix' || b.workflowName === 'issue-fix-and-review') && (
                     <div className="space-y-1.5 pt-1 border-t border-[var(--border)]/30">
-                      {b.config.interval > 0 && (
-                        <div className="text-[8px] text-[var(--text-secondary)]">
-                          Scheduled mode: auto-scans GitHub issues and fixes new ones
-                        </div>
-                      )}
+                      <div className="text-[8px] text-[var(--text-secondary)]">
+                        {b.config.interval > 0
+                          ? 'Scheduled mode: auto-scans GitHub issues and fixes new ones'
+                          : 'Requires: gh auth login (run in terminal first)'}
+                      </div>
                       <div className="flex items-center gap-2 text-[9px]">
                           <label className="text-[var(--text-secondary)]">Labels:</label>
                           <input

@@ -150,9 +150,11 @@ export function deleteRun(id: string): void {
 
 function isDuplicate(projectPath: string, workflowName: string, dedupKey: string): boolean {
   const row = db().prepare(
-    'SELECT 1 FROM pipeline_runs WHERE project_path = ? AND workflow_name = ? AND dedup_key = ?'
-  ).get(projectPath, workflowName, dedupKey);
-  return !!row;
+    'SELECT status FROM pipeline_runs WHERE project_path = ? AND workflow_name = ? AND dedup_key = ? ORDER BY created_at DESC LIMIT 1'
+  ).get(projectPath, workflowName, dedupKey) as { status: string } | undefined;
+  if (!row) return false;
+  // Failed runs are not duplicates — allow retry
+  return row.status !== 'failed';
 }
 
 export function resetDedup(projectPath: string, workflowName: string, dedupKey: string): void {
@@ -222,7 +224,7 @@ function fetchOpenIssues(projectPath: string, labels: string[]): { number: numbe
   if (!repo) return [{ number: -1, title: '', error: 'Could not detect GitHub repo. Run: gh auth login' }];
   try {
     const labelFilter = labels.length > 0 ? ` --label "${labels.join(',')}"` : '';
-    const out = execSync(`gh issue list --state open --json number,title${labelFilter} -R ${repo}`, {
+    const out = execSync(`gh issue list --state open --limit 30 --json number,title${labelFilter} -R ${repo}`, {
       cwd: projectPath, encoding: 'utf-8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'],
     });
     return JSON.parse(out) || [];
@@ -246,11 +248,18 @@ export function scanAndTriggerIssues(binding: ProjectPipelineBinding): { trigger
   const recentRuns = getRuns(binding.projectPath, binding.workflowName, 5);
   const hasRunning = recentRuns.some(r => r.status === 'running');
 
+  // Batch dedup check — one query instead of N
+  const processedKeys = new Set(
+    (db().prepare(
+      'SELECT dedup_key FROM pipeline_runs WHERE project_path = ? AND workflow_name = ? AND dedup_key IS NOT NULL AND status != ?'
+    ).all(binding.projectPath, binding.workflowName, 'failed') as { dedup_key: string }[])
+    .map(r => r.dedup_key)
+  );
+
   const newIssues: { number: number; title: string }[] = [];
   for (const issue of issues) {
     if (issue.number < 0) continue;
-    const dedupKey = `issue:${issue.number}`;
-    if (!isDuplicate(binding.projectPath, binding.workflowName, dedupKey)) {
+    if (!processedKeys.has(`issue:${issue.number}`)) {
       newIssues.push(issue);
     }
   }
@@ -269,6 +278,9 @@ export function scanAndTriggerIssues(binding: ProjectPipelineBinding): { trigger
 
   const issue = newIssues[0];
   const dedupKey = `issue:${issue.number}`;
+  // Remove old failed run so new dedup_key insert won't conflict
+  db().prepare('DELETE FROM pipeline_runs WHERE project_path = ? AND workflow_name = ? AND dedup_key = ? AND status = ?')
+    .run(binding.projectPath, binding.workflowName, dedupKey, 'failed');
   try {
     triggerPipeline(
       binding.projectPath, binding.projectName, binding.workflowName,

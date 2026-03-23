@@ -40,7 +40,7 @@ export function getNotifications(limit = 50, offset = 0): Notification[] {
     body: r.body,
     read: !!r.read,
     taskId: r.task_id,
-    createdAt: r.created_at,
+    createdAt: r.created_at ? (r.created_at.endsWith('Z') ? r.created_at : r.created_at.replace(' ', 'T') + 'Z') : r.created_at,
   }));
 }
 

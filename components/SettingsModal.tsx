@@ -477,55 +477,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        {/* Model Settings */}
-        <div className="space-y-2">
-          <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">
-            Models
-          </label>
-          <p className="text-[10px] text-[var(--text-secondary)]">
-            Claude model for each feature. Uses your Claude Code subscription. Options: sonnet, opus, haiku, or default (subscription default).
-          </p>
-          <div className="grid grid-cols-3 gap-2">
-            <div>
-              <label className="text-[9px] text-[var(--text-secondary)] block mb-0.5">Tasks</label>
-              <select
-                value={settings.taskModel || 'sonnet'}
-                onChange={e => setSettings({ ...settings, taskModel: e.target.value })}
-                className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-[var(--text-primary)]"
-              >
-                <option value="default">Default</option>
-                <option value="sonnet">Sonnet</option>
-                <option value="opus">Opus</option>
-                <option value="haiku">Haiku</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-[9px] text-[var(--text-secondary)] block mb-0.5">Pipelines</label>
-              <select
-                value={settings.pipelineModel || 'sonnet'}
-                onChange={e => setSettings({ ...settings, pipelineModel: e.target.value })}
-                className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-[var(--text-primary)]"
-              >
-                <option value="default">Default</option>
-                <option value="sonnet">Sonnet</option>
-                <option value="opus">Opus</option>
-                <option value="haiku">Haiku</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-[9px] text-[var(--text-secondary)] block mb-0.5">Telegram</label>
-              <select
-                value={settings.telegramModel || 'sonnet'}
-                onChange={e => setSettings({ ...settings, telegramModel: e.target.value })}
-                className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-[var(--text-primary)]"
-              >
-                <option value="default">Default</option>
-                <option value="sonnet">Sonnet</option>
-                <option value="opus">Opus</option>
-                <option value="haiku">Haiku</option>
-              </select>
-            </div>
-          </div>
+        {/* Model note */}
+        <div className="text-[9px] text-[var(--text-secondary)] bg-[var(--bg-tertiary)] rounded p-2">
+          Model configuration is now per-agent. Expand an agent above to set its model.
         </div>
 
         {/* Permissions */}
@@ -840,6 +794,7 @@ interface AgentEntry {
   interactiveCmd: string;  // e.g., "claude -c"
   resumeFlag: string;      // e.g., "-c" or "--resume"
   outputFormat: string;    // stream-json | json | text
+  model: string;           // model name (e.g., "sonnet", "opus", or "default")
   detected: boolean;
 }
 
@@ -848,7 +803,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
   const [loading, setLoading] = useState(true);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [newAgent, setNewAgent] = useState({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text' });
+  const [newAgent, setNewAgent] = useState({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', model: 'default' });
 
   // Fetch detected + configured agents
   useEffect(() => {
@@ -875,7 +830,8 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
             interactiveCmd: cfg.interactiveCmd || a.path,
             resumeFlag: cfg.resumeFlag || (a.capabilities?.supportsResume ? '-c' : ''),
             outputFormat: cfg.outputFormat || (a.capabilities?.supportsStreamJson ? 'stream-json' : 'text'),
-            detected: a.detected !== false, // use API's detection status
+            model: cfg.model || 'default',
+            detected: a.detected !== false,
           });
         }
 
@@ -892,6 +848,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
             interactiveCmd: cfg.interactiveCmd || cfg.path || '',
             resumeFlag: cfg.resumeFlag || '',
             outputFormat: cfg.outputFormat || 'text',
+            model: cfg.model || 'default',
             detected: false,
           });
         }
@@ -915,6 +872,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
         interactiveCmd: a.interactiveCmd,
         resumeFlag: a.resumeFlag,
         outputFormat: a.outputFormat,
+        model: a.model || 'default',
       };
     }
     // Keep claudePath in sync for backward compat
@@ -947,7 +905,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
     setAgents(updated);
     saveAgentConfig(updated);
     setShowAdd(false);
-    setNewAgent({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text' });
+    setNewAgent({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', model: 'default' });
   };
 
   const inputClass = "w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]";
@@ -1047,6 +1005,10 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
                         <option value="text">text</option>
                       </select>
                     </div>
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-[var(--text-secondary)]">Model <span className="text-[8px]">(default = agent&apos;s default, or type model name)</span></label>
+                    <input value={a.model} onChange={e => updateAgent(a.id, 'model', e.target.value)} placeholder="default" className={inputClass} />
                   </div>
                   {a.id !== 'claude' && (
                     <button onClick={() => removeAgent(a.id)} className="text-[9px] text-red-400 hover:underline">Remove Agent</button>

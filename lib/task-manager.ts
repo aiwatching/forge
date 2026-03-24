@@ -291,7 +291,9 @@ function executeTask(task: Task): Promise<void> {
     const agentId = (task as any).agent || settings.defaultAgent || 'claude';
     const adapter = getAgent(agentId);
 
-    const model = taskModelOverrides.get(task.id) || settings.taskModel;
+    // Model: per-task override > agent config > global fallback
+    const agentCfg = settings.agents?.[agentId];
+    const model = taskModelOverrides.get(task.id) || agentCfg?.model || settings.taskModel;
     const supportsModel = adapter.config.capabilities?.supportsModel;
     const spawnOpts = adapter.buildTaskSpawn({
       projectPath: task.projectPath,

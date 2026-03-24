@@ -358,6 +358,8 @@ function executeTask(task: Task): Promise<void> {
           jsonParsed = true;
           const entries = parseStreamJson(parsed);
           for (const entry of entries) {
+            // Skip Claude's Model init line for non-claude agents (we already logged our own)
+            if (entry.subtype === 'init' && agentId !== 'claude' && entry.content?.startsWith('Model:')) continue;
             appendLog(task.id, entry);
           }
 

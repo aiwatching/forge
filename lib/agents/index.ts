@@ -78,13 +78,23 @@ export function getAgent(id?: AgentId): AgentAdapter {
   const config = agents.find(a => a.id === agentId && a.enabled);
 
   if (!config) {
-    // Fallback: try to create claude adapter with default path
-    const fallback = detectClaude() || {
-      id: 'claude', name: 'Claude Code', path: 'claude', enabled: true,
-      type: 'claude-code' as const,
-      capabilities: { supportsResume: true, supportsStreamJson: true, supportsModel: true, supportsSkipPermissions: true, hasSessionFiles: true },
+    // If specifically requested agent not found, only fallback for 'claude' (default)
+    if (agentId === 'claude' || agentId === getDefaultAgentId()) {
+      const fallback = detectClaude() || {
+        id: 'claude', name: 'Claude Code', path: 'claude', enabled: true,
+        type: 'claude-code' as const,
+        capabilities: { supportsResume: true, supportsStreamJson: true, supportsModel: true, supportsSkipPermissions: true, hasSessionFiles: true },
+      };
+      const adapter = createClaudeAdapter(fallback);
+      adapterCache.set(agentId, adapter);
+      return adapter;
+    }
+    // Non-default agent not found — create generic with the ID as path (will fail if not installed)
+    const notFound: AgentConfig = {
+      id: agentId, name: agentId, path: agentId, enabled: true, type: 'generic',
+      capabilities: { supportsResume: false, supportsStreamJson: false, supportsModel: false, supportsSkipPermissions: false, hasSessionFiles: false },
     };
-    const adapter = createClaudeAdapter(fallback);
+    const adapter = createGenericAdapter(notFound);
     adapterCache.set(agentId, adapter);
     return adapter;
   }

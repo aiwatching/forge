@@ -9,8 +9,8 @@
  *   forge-server --stop                   Stop background server
  *   forge-server --restart                Stop + start (safe for remote)
  *   forge-server --rebuild                Force rebuild
- *   forge-server --port 4000              Custom web port (default: 3000)
- *   forge-server --terminal-port 4001     Custom terminal port (default: 3001)
+ *   forge-server --port 4000              Custom web port (default: 8403)
+ *   forge-server --terminal-port 4001     Custom terminal port (default: 8404)
  *   forge-server --dir ~/.forge-test      Custom data directory (default: ~/.forge)
  *   forge-server --reset-terminal         Kill terminal server before start (loses tmux sessions)
  *
@@ -62,7 +62,7 @@ const isRebuild = process.argv.includes('--rebuild');
 const resetTerminal = process.argv.includes('--reset-terminal');
 const resetPassword = process.argv.includes('--reset-password');
 
-const webPort = parseInt(getArg('--port')) || 3000;
+const webPort = parseInt(getArg('--port')) || 8403;
 const terminalPort = parseInt(getArg('--terminal-port')) || (webPort + 1);
 const DATA_DIR = getArg('--dir')?.replace(/^~/, homedir()) || join(homedir(), '.forge', 'data');
 
@@ -379,6 +379,11 @@ function startBackground() {
   startServices();
 
   console.log(`[forge] Started in background (pid ${child.pid})`);
+  console.log(`[forge] ⚠️  Default port changed: 3000 → ${webPort}`);
+  console.log(`[forge] ⚠️  Default port changed: 3000 → ${webPort}`);
+  console.log(`[forge] ⚠️  Default port changed: 3000 → ${webPort}`);
+  console.log(`[forge] ⚠️  Default port changed: 3000 → ${webPort}`);
+  console.log(`[forge] ⚠️  Default port changed: 3000 → ${webPort}`);
   console.log(`[forge] Web: http://localhost:${webPort}`);
   console.log(`[forge] Terminal: ws://localhost:${terminalPort}`);
   console.log(`[forge] Data: ${DATA_DIR}`);

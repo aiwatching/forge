@@ -1,6 +1,6 @@
 /**
  * Terminal Server — standalone WebSocket PTY server.
- * Runs on port 3001 alongside the Next.js dev server on 3000.
+ * Runs on port 8404 alongside the Next.js server on 8403.
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
@@ -9,7 +9,7 @@ import { homedir } from 'node:os';
 
 let wss: WebSocketServer | null = null;
 
-export function startTerminalServer(port = 3001) {
+export function startTerminalServer(port = 8404) {
   if (wss) return;
 
   wss = new WebSocketServer({ port });

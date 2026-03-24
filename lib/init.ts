@@ -182,7 +182,7 @@ function startTelegramProcess() {
   const script = join(process.cwd(), 'lib', 'telegram-standalone.ts');
   telegramChild = spawn('npx', ['tsx', script], {
     stdio: ['ignore', 'inherit', 'inherit'],
-    env: { ...process.env, PORT: String(process.env.PORT || 3000) },
+    env: { ...process.env, PORT: String(process.env.PORT || 8403) },
     detached: false,
   });
   telegramChild.on('exit', () => { telegramChild = null; });
@@ -194,7 +194,7 @@ let terminalChild: ReturnType<typeof spawn> | null = null;
 function startTerminalProcess() {
   if (terminalChild) return;
 
-  const termPort = Number(process.env.TERMINAL_PORT) || 3001;
+  const termPort = Number(process.env.TERMINAL_PORT) || 8404;
 
   const net = require('node:net');
   const tester = net.createServer();

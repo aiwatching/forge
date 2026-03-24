@@ -9,7 +9,7 @@ npm install -g @aion0/forge
 forge server start
 ```
 
-Open `http://localhost:3000`. First launch prompts you to set an admin password.
+Open `http://localhost:8403`. First launch prompts you to set an admin password.
 
 ## Requirements
 - Node.js >= 20

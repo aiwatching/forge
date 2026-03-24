@@ -61,7 +61,7 @@ async function poll() {
 
           // Forward to Next.js API for processing
           try {
-            await fetch(`http://localhost:${process.env.PORT || 3000}/api/telegram`, {
+            await fetch(`http://localhost:${process.env.PORT || 8403}/api/telegram`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'x-telegram-secret': TOKEN },
               body: JSON.stringify(update.message),

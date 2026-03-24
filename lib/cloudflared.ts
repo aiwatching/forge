@@ -169,7 +169,7 @@ function pushLog(line: string) {
   if (state.log.length > MAX_LOG_LINES) state.log.shift();
 }
 
-export async function startTunnel(localPort: number = parseInt(process.env.PORT || '3000')): Promise<{ url?: string; error?: string }> {
+export async function startTunnel(localPort: number = parseInt(process.env.PORT || '8403')): Promise<{ url?: string; error?: string }> {
   console.log(`[tunnel] Starting tunnel on port ${localPort}...`);
   // Prevent concurrent starts: state.process is already spawned, or another call is
   // mid-flight between the guard and spawn (the async download window).

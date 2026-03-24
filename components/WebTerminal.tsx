@@ -43,7 +43,7 @@ interface TabState {
 // ─── Layout persistence ──────────────────────────────────────
 
 function getWsUrl() {
-  if (typeof window === 'undefined') return `ws://localhost:${parseInt(process.env.TERMINAL_PORT || '3001')}`;
+  if (typeof window === 'undefined') return `ws://localhost:${parseInt(process.env.TERMINAL_PORT || '8404')}`;
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsHost = window.location.hostname;
   // When accessed via tunnel or non-localhost, use the Next.js proxy path
@@ -51,7 +51,7 @@ function getWsUrl() {
     return `${wsProtocol}//${window.location.host}/terminal-ws`;
   }
   // Terminal port = web port + 1
-  const webPort = parseInt(window.location.port) || 3000;
+  const webPort = parseInt(window.location.port) || 8403;
   return `${wsProtocol}//${wsHost}:${webPort + 1}`;
 }
 

@@ -33,7 +33,7 @@ import { getDataDir } from './dirs';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-const PORT = Number(process.env.TERMINAL_PORT) || 3001;
+const PORT = Number(process.env.TERMINAL_PORT) || 8404;
 // Session prefix based on DATA_DIR hash — default instance keeps 'mw-' for backward compat
 const _dataDir = process.env.FORGE_DATA_DIR || '';
 const _isDefault = !_dataDir || _dataDir.endsWith('/data') || _dataDir.endsWith('/.forge');

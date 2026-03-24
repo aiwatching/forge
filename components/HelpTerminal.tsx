@@ -8,13 +8,13 @@ import '@xterm/xterm/css/xterm.css';
 const SESSION_NAME = 'mw-forge-help';
 
 function getWsUrl() {
-  if (typeof window === 'undefined') return `ws://localhost:${parseInt(process.env.TERMINAL_PORT || '3001')}`;
+  if (typeof window === 'undefined') return `ws://localhost:${parseInt(process.env.TERMINAL_PORT || '8404')}`;
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsHost = window.location.hostname;
   if (wsHost !== 'localhost' && wsHost !== '127.0.0.1') {
     return `${wsProtocol}//${window.location.host}/terminal-ws`;
   }
-  const webPort = parseInt(window.location.port) || 3000;
+  const webPort = parseInt(window.location.port) || 8403;
   return `${wsProtocol}//${wsHost}:${webPort + 1}`;
 }
 

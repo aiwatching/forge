@@ -12,6 +12,7 @@ const CAPABILITIES = {
   supportsModel: true,
   supportsSkipPermissions: true,
   hasSessionFiles: true,
+  requiresTTY: false,
 };
 
 /** Resolve claude binary path (symlink → real .js → node) */

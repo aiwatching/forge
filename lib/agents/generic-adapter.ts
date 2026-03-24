@@ -57,6 +57,7 @@ export function detectAgent(id: string, name: string, binaryName: string, flags?
         supportsModel: false,
         supportsSkipPermissions: false,
         hasSessionFiles: false,
+        requiresTTY: false,
       },
     };
   } catch { return null; }

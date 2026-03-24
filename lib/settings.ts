@@ -33,6 +33,7 @@ export interface Settings {
     flags?: string[]; taskFlags?: string; interactiveCmd?: string; resumeFlag?: string; outputFormat?: string;
     models?: { terminal?: string; task?: string; telegram?: string; help?: string; mobile?: string };
     skipPermissionsFlag?: string; // e.g., "--dangerously-skip-permissions" for claude, "--full-auto" for codex
+    requiresTTY?: boolean;         // needs pseudo-terminal to run
   }>;
 }
 

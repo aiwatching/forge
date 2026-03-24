@@ -29,6 +29,7 @@ export function listAgents(): AgentConfig[] {
   const codexConfig = settings.agents?.codex;
   const codex = detectAgent('codex', 'OpenAI Codex', codexConfig?.path || 'codex');
   if (codex) {
+    codex.capabilities.requiresTTY = true;
     agents.push({ ...codex, enabled: codexConfig?.enabled !== false, detected: true, skipPermissionsFlag: codexConfig?.skipPermissionsFlag || '--full-auto' } as any);
   }
 
@@ -49,7 +50,7 @@ export function listAgents(): AgentConfig[] {
       agents.push({
         ...(detected || {
           id, name: cfg.name || id, path: cfg.path, type: 'generic' as const, flags,
-          capabilities: { supportsResume: false, supportsStreamJson: false, supportsModel: false, supportsSkipPermissions: false, hasSessionFiles: false },
+          capabilities: { supportsResume: false, supportsStreamJson: false, supportsModel: false, supportsSkipPermissions: false, hasSessionFiles: false, requiresTTY: !!cfg.requiresTTY },
         }),
         flags,
         enabled: cfg.enabled !== false,
@@ -83,7 +84,7 @@ export function getAgent(id?: AgentId): AgentAdapter {
       const fallback = detectClaude() || {
         id: 'claude', name: 'Claude Code', path: 'claude', enabled: true,
         type: 'claude-code' as const,
-        capabilities: { supportsResume: true, supportsStreamJson: true, supportsModel: true, supportsSkipPermissions: true, hasSessionFiles: true },
+        capabilities: { supportsResume: true, supportsStreamJson: true, supportsModel: true, supportsSkipPermissions: true, hasSessionFiles: true, requiresTTY: false },
       };
       const adapter = createClaudeAdapter(fallback);
       adapterCache.set(agentId, adapter);
@@ -92,7 +93,7 @@ export function getAgent(id?: AgentId): AgentAdapter {
     // Non-default agent not found — create generic with the ID as path (will fail if not installed)
     const notFound: AgentConfig = {
       id: agentId, name: agentId, path: agentId, enabled: true, type: 'generic',
-      capabilities: { supportsResume: false, supportsStreamJson: false, supportsModel: false, supportsSkipPermissions: false, hasSessionFiles: false },
+      capabilities: { supportsResume: false, supportsStreamJson: false, supportsModel: false, supportsSkipPermissions: false, hasSessionFiles: false, requiresTTY: false },
     };
     const adapter = createGenericAdapter(notFound);
     adapterCache.set(agentId, adapter);

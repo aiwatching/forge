@@ -792,6 +792,7 @@ interface AgentEntry {
   outputFormat: string;
   models: { terminal: string; task: string; telegram: string; help: string; mobile: string };
   skipPermissionsFlag: string;
+  requiresTTY: boolean;
   detected: boolean;
 }
 
@@ -800,7 +801,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
   const [loading, setLoading] = useState(true);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [newAgent, setNewAgent] = useState({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', models: { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' }, skipPermissionsFlag: '' });
+  const [newAgent, setNewAgent] = useState({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', models: { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' }, skipPermissionsFlag: '', requiresTTY: false });
 
   // Fetch detected + configured agents
   useEffect(() => {
@@ -829,6 +830,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
             outputFormat: cfg.outputFormat || (a.capabilities?.supportsStreamJson ? 'stream-json' : 'text'),
             models: cfg.models || { terminal: "default", task: "default", telegram: "default", help: "default", mobile: "default" },
             skipPermissionsFlag: cfg.skipPermissionsFlag || a.skipPermissionsFlag || "",
+            requiresTTY: cfg.requiresTTY ?? a.capabilities?.requiresTTY ?? false,
             detected: a.detected !== false,
           });
         }
@@ -848,6 +850,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
             outputFormat: cfg.outputFormat || 'text',
             models: cfg.models || { terminal: "default", task: "default", telegram: "default", help: "default", mobile: "default" },
             skipPermissionsFlag: cfg.skipPermissionsFlag || '',
+            requiresTTY: cfg.requiresTTY ?? false,
             detected: false,
           });
         }
@@ -874,6 +877,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
         outputFormat: a.outputFormat,
         models: a.models,
         skipPermissionsFlag: a.skipPermissionsFlag,
+        requiresTTY: a.requiresTTY,
       };
     }
     // Keep claudePath in sync for backward compat
@@ -924,7 +928,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
     setAgents(updated);
     debouncedSave(updated);
     setShowAdd(false);
-    setNewAgent({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', models: { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' }, skipPermissionsFlag: '' });
+    setNewAgent({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', models: { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' }, skipPermissionsFlag: '', requiresTTY: false });
   };
 
   const inputClass = "w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]";
@@ -1085,6 +1089,11 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
                       ))}
                     </div>
                   </div>
+                  <label className="flex items-center gap-2 text-[9px] text-[var(--text-secondary)] cursor-pointer">
+                    <input type="checkbox" checked={a.requiresTTY} onChange={e => updateAgent(a.id, 'requiresTTY', e.target.checked)} className="accent-[var(--accent)]" />
+                    Requires terminal environment (TTY)
+                    <span className="text-[8px]">— enable for agents that need a terminal to run (e.g. Codex)</span>
+                  </label>
                   {a.id !== 'claude' && (
                     <button onClick={() => removeAgent(a.id)} className="text-[9px] text-red-400 hover:underline">Remove Agent</button>
                   )}

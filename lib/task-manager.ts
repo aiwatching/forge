@@ -317,13 +317,37 @@ function executeTask(task: Task): Promise<void> {
     // Log agent info as first entry
     appendLog(task.id, { type: 'system', subtype: 'init', content: `Agent: ${agentName}${supportsModel && model && model !== 'default' ? ` | Model: ${model}` : ''}`, timestamp: new Date().toISOString() });
 
-    const child = spawn(spawnOpts.cmd, spawnOpts.args, {
-      cwd: task.projectPath,
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    // Close stdin for non-interactive task execution
-    child.stdin?.end();
+    const needsTTY = adapter.config.capabilities?.requiresTTY;
+    let child: any;
+    let ptyProcess: any = null;
+
+    if (needsTTY) {
+      // Use node-pty for agents that require a terminal environment
+      const pty = require('node-pty');
+      ptyProcess = pty.spawn(spawnOpts.cmd, spawnOpts.args, {
+        name: 'xterm-256color',
+        cols: 120,
+        rows: 40,
+        cwd: task.projectPath,
+        env,
+      });
+      // Create a child-like interface for pty
+      child = {
+        stdout: { on: (evt: string, cb: Function) => { if (evt === 'data') ptyProcess.onData((data: string) => cb(Buffer.from(data))); } },
+        stderr: { on: (_evt: string, _cb: Function) => {} }, // pty combines stdout+stderr
+        on: (evt: string, cb: Function) => { if (evt === 'exit') ptyProcess.onExit(({ exitCode }: any) => cb(exitCode, null)); if (evt === 'error') {} },
+        kill: (sig: string) => ptyProcess.kill(sig),
+        stdin: null,
+        pid: ptyProcess.pid,
+      };
+    } else {
+      child = spawn(spawnOpts.cmd, spawnOpts.args, {
+        cwd: task.projectPath,
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      child.stdin?.end();
+    }
 
     let buffer = '';
     let resultText = '';
@@ -333,7 +357,7 @@ function executeTask(task: Task): Promise<void> {
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
 
-    child.on('error', (err) => {
+    child.on('error', (err: any) => {
       console.error(`[task-runner] Spawn error:`, err.message);
       updateTaskStatus(task.id, 'failed', err.message);
       reject(err);
@@ -398,7 +422,7 @@ function executeTask(task: Task): Promise<void> {
       }
     });
 
-    child.on('exit', (code, signal) => {
+    child.on('exit', (code: any, signal: any) => {
       // Process exit handled below
       // Process remaining buffer
       if (buffer.trim()) {
@@ -471,7 +495,7 @@ function executeTask(task: Task): Promise<void> {
       }
     });
 
-    child.on('error', (err) => {
+    child.on('error', (err: any) => {
       updateTaskStatus(task.id, 'failed', err.message);
       reject(err);
     });

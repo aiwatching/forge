@@ -10,6 +10,7 @@ export interface AgentCapabilities {
   supportsModel: boolean;           // --model flag
   supportsSkipPermissions: boolean; // --dangerously-skip-permissions or equivalent
   hasSessionFiles: boolean;         // on-disk session files (JSONL etc.)
+  requiresTTY: boolean;             // needs pseudo-terminal (e.g., codex)
 }
 
 export interface AgentConfig {

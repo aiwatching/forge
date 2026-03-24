@@ -562,8 +562,8 @@ Usage:
   forge uninstall                Remove forge
 
 Options for 'forge server start':
-  --port 4000                    Custom web port (default: 3000)
-  --terminal-port 4001           Custom terminal port (default: 3001)
+  --port 4000                    Custom web port (default: 8403)
+  --terminal-port 4001           Custom terminal port (default: 8404)
   --dir ~/.forge-staging         Custom data directory
   --background                   Run in background
   --reset-terminal               Kill terminal server on start

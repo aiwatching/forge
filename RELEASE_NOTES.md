@@ -1,25 +1,26 @@
-# Forge v0.4.15
+# Forge v0.4.16
 
 Released: 2026-03-23
 
-## Changes since v0.4.14
+## Changes since v0.4.15
 
 ### Features
-- feat: record token usage from task, pipeline, and mobile sources
-- feat: Usage dashboard — token cost by project, model, day, source
-- feat: token usage tracking — scanner, DB, API
+- feat: change default port from 3000/3001 to 8403/8404
+- feat: prompt to restart Claude after skill/command installation
+- Revert "feat: mobile real-time streaming with tool activity display"
+- feat: mobile real-time streaming with tool activity display
 
 ### Bug Fixes
-- fix: exclude cache tokens from cost estimate
-- fix: usage stored per day+model for accurate daily breakdown
-- fix: usage query uses local timezone for daily grouping
+- fix: only show port change warning when using default port
+- fix: upgrade Next.js 16.1.6 → 16.2.1 to fix Turbopack panic
+- fix: start.sh exports PORT=8403 and TERMINAL_PORT=8404
+- fix: default config port 3000 → 8403
 
-### Performance
-- perf: usage scan interval from 5min to 1 hour
+### Documentation
+- docs: update README port 3000 → 8403
 
 ### Other
-- ui: show author and source URL in skills detail view
-- ui: move Usage button next to Browser in header right section
+- Revert "feat: mobile real-time streaming with tool activity display"
 
 
-**Full Changelog**: https://github.com/aiwatching/forge/compare/v0.4.14...v0.4.15
+**Full Changelog**: https://github.com/aiwatching/forge/compare/v0.4.15...v0.4.16

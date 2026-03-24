@@ -846,14 +846,10 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
                               <div key={p.path} className="flex items-center gap-1 px-3 py-1.5 rounded hover:bg-[var(--term-border)]/50 text-[11px]" title={p.path}>
                                 <span className="text-gray-600 text-[10px]">↳</span>
                                 <span className="text-gray-300 truncate">{p.name}</span>
-                                <div className="flex items-center gap-0.5 ml-auto shrink-0">
-                                  {availableAgents.map(a => {
-                                    const abbr = a.id === 'claude' ? 'C' : a.id === 'codex' ? 'X' : a.id === 'aider' ? 'A' : a.id.charAt(0).toUpperCase();
-                                    return (
-                                      <button
-                                        key={a.id}
-                                        title={`Open with ${a.name}`}
-                                        onClick={async () => {
+                                <AgentButtons
+                                  agents={availableAgents}
+                                  defaultAgentId={defaultAgentId}
+                                  onSelect={async (a) => {
                                           setShowNewTabModal(false); setExpandedRoot(null);
                                           let cmd: string;
                                           try {
@@ -882,16 +878,8 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
                                           const newTab: TabState = { id: nextId++, label: p.name || 'Terminal', tree, ratios: {}, activeId: paneId, projectPath: p.path, agent: a.id };
                                           setTabs(prev => [...prev, newTab]);
                                           setActiveTabId(newTab.id);
-                                        }}
-                                        className={`w-5 h-5 flex items-center justify-center rounded text-[9px] font-bold ${
-                                          a.id === defaultAgentId
-                                            ? 'bg-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white'
-                                            : 'bg-gray-700/50 text-gray-400 hover:bg-gray-600 hover:text-white'
-                                        }`}
-                                      >{abbr}</button>
-                                    );
-                                  })}
-                                </div>
+                                  }}
+                                />
                               </div>
                             ))}
                             {rootProjects.length === 0 && (
@@ -980,6 +968,66 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
 export default WebTerminal;
 
 // ─── Pane renderer ───────────────────────────────────────────
+
+// ─── Agent shortcut buttons (inline with project name) ──────
+
+function AgentButtons({ agents, defaultAgentId, onSelect }: {
+  agents: { id: string; name: string }[];
+  defaultAgentId: string;
+  onSelect: (agent: { id: string; name: string }) => void;
+}) {
+  const [showMore, setShowMore] = useState(false);
+  const MAX_INLINE = 3;
+
+  const getAbbr = (id: string) =>
+    id === 'claude' ? 'C' : id === 'codex' ? 'X' : id === 'aider' ? 'A' : id.charAt(0).toUpperCase();
+
+  const btnClass = (id: string) =>
+    `w-5 h-5 flex items-center justify-center rounded text-[9px] font-bold ${
+      id === defaultAgentId
+        ? 'bg-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white'
+        : 'bg-gray-700/50 text-gray-400 hover:bg-gray-600 hover:text-white'
+    }`;
+
+  const inline = agents.slice(0, MAX_INLINE);
+  const overflow = agents.slice(MAX_INLINE);
+
+  return (
+    <div className="flex items-center gap-0.5 ml-auto shrink-0 relative">
+      {inline.map(a => (
+        <button key={a.id} title={`Open with ${a.name}`} onClick={() => onSelect(a)} className={btnClass(a.id)}>
+          {getAbbr(a.id)}
+        </button>
+      ))}
+      {overflow.length > 0 && (
+        <>
+          <button
+            title="More agents"
+            onClick={(e) => { e.stopPropagation(); setShowMore(v => !v); }}
+            className="w-5 h-5 flex items-center justify-center rounded text-[9px] bg-gray-700/50 text-gray-400 hover:bg-gray-600 hover:text-white"
+          >…</button>
+          {showMore && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowMore(false)} />
+              <div className="absolute right-0 top-6 z-50 bg-[var(--term-bg)] border border-[var(--term-border)] rounded shadow-lg py-1 min-w-[120px]">
+                {overflow.map(a => (
+                  <button
+                    key={a.id}
+                    onClick={() => { setShowMore(false); onSelect(a); }}
+                    className="w-full text-left px-3 py-1 text-[10px] text-gray-300 hover:bg-[var(--term-border)] flex items-center gap-2"
+                  >
+                    <span className={btnClass(a.id) + ' w-4 h-4 text-[8px]'}>{getAbbr(a.id)}</span>
+                    {a.name}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 function PaneRenderer({
   node, activeId, onFocus, ratios, setRatios, onSessionConnected, refreshKeys, skipPermissions, canClose, onClosePane,

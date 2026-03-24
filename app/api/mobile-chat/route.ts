@@ -19,6 +19,7 @@ export async function POST(req: Request) {
 
   const settings = loadSettings();
   const claudePath = settings.claudePath || 'claude';
+  const projectName = projectPath.split('/').pop() || projectPath;
 
   const args = ['-p', '--dangerously-skip-permissions', '--output-format', 'json'];
   if (resume) args.push('-c');
@@ -34,13 +35,16 @@ export async function POST(req: Request) {
 
   const encoder = new TextEncoder();
   let closed = false;
+  let fullOutput = '';
 
   const stream = new ReadableStream({
     start(controller) {
       child.stdout.on('data', (chunk: Buffer) => {
         if (closed) return;
+        const text = chunk.toString();
+        fullOutput += text;
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', text: chunk.toString() })}\n\n`));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', text })}\n\n`));
         } catch {}
       });
 
@@ -56,6 +60,24 @@ export async function POST(req: Request) {
       child.on('exit', (code) => {
         if (closed) return;
         closed = true;
+
+        // Record usage from the JSON output
+        try {
+          const parsed = JSON.parse(fullOutput);
+          if (parsed.session_id) {
+            const { recordUsage } = require('@/lib/usage-scanner');
+            recordUsage({
+              sessionId: parsed.session_id,
+              source: 'mobile',
+              projectPath,
+              projectName,
+              model: parsed.model || 'unknown',
+              inputTokens: parsed.usage?.input_tokens || parsed.total_input_tokens || 0,
+              outputTokens: parsed.usage?.output_tokens || parsed.total_output_tokens || 0,
+            });
+          }
+        } catch {}
+
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done', code })}\n\n`));
           controller.close();

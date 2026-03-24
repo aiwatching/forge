@@ -322,6 +322,8 @@ function executeTask(task: Task): Promise<void> {
     let totalCost = 0;
     let sessionId = '';
     let modelUsed = '';
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
 
     child.on('error', (err) => {
       console.error(`[task-runner] Spawn error:`, err.message);
@@ -355,9 +357,16 @@ function executeTask(task: Task): Promise<void> {
           if (parsed.type === 'system' && parsed.subtype === 'init' && parsed.model) {
             modelUsed = parsed.model;
           }
+          // Accumulate token usage from assistant messages
+          if (parsed.type === 'assistant' && parsed.message?.usage) {
+            totalInputTokens += parsed.message.usage.input_tokens || 0;
+            totalOutputTokens += parsed.message.usage.output_tokens || 0;
+          }
           if (parsed.type === 'result') {
             resultText = typeof parsed.result === 'string' ? parsed.result : JSON.stringify(parsed.result);
             totalCost = parsed.total_cost_usd || 0;
+            if (parsed.total_input_tokens) totalInputTokens = parsed.total_input_tokens;
+            if (parsed.total_output_tokens) totalOutputTokens = parsed.total_output_tokens;
           }
         } catch {}
       }
@@ -412,7 +421,23 @@ function executeTask(task: Task): Promise<void> {
           WHERE id = ?
         `).run(resultText, totalCost, task.id);
         emit(task.id, 'status', 'done');
-        console.log(`[task] Done: ${task.id} ${task.projectName} (cost: $${totalCost?.toFixed(4) || '0'})`);
+        console.log(`[task] Done: ${task.id} ${task.projectName} (cost: $${totalCost?.toFixed(4) || '0'}, ${totalInputTokens}in/${totalOutputTokens}out)`);
+        // Record usage
+        try {
+          const { recordUsage } = require('./usage-scanner');
+          let isPipeline = false;
+          try { const { pipelineTaskIds: ptids } = require('./pipeline'); isPipeline = ptids.has(task.id); } catch {}
+          recordUsage({
+            sessionId: sessionId || task.id,
+            source: isPipeline ? 'pipeline' : 'task',
+            projectPath: task.projectPath,
+            projectName: task.projectName,
+            model: modelUsed || 'unknown',
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            taskId: task.id,
+          });
+        } catch {}
         const doneTask = getTask(task.id);
         if (doneTask) notifyTaskComplete(doneTask).catch(() => {});
         notifyTerminalSession(task, 'done', sessionId);

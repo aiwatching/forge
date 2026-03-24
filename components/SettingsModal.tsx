@@ -407,61 +407,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        {/* Claude Path */}
-        <div className="space-y-2">
-          <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">
-            Claude Code Path
-          </label>
-          <div className="flex gap-2">
-            <input
-              value={settings.claudePath}
-              onChange={e => setSettings({ ...settings, claudePath: e.target.value })}
-              placeholder="Auto-detect or enter path manually"
-              className="flex-1 px-2 py-1.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]"
-            />
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const res = await fetch('/api/detect-cli');
-                  const data = await res.json();
-                  const claude = data.tools?.find((t: any) => t.name === 'claude');
-                  if (claude?.path) {
-                    setSettings({ ...settings, claudePath: claude.path });
-                  } else {
-                    const hint = claude?.installHint || 'npm install -g @anthropic-ai/claude-code';
-                    alert(`Claude Code not found.\n\nInstall:\n  ${hint}`);
-                  }
-                } catch { alert('Detection failed'); }
-              }}
-              className="text-[10px] px-2 py-1.5 border border-[var(--accent)] text-[var(--accent)] rounded hover:bg-[var(--accent)] hover:text-white transition-colors shrink-0"
-            >
-              Detect
-            </button>
-          </div>
-          <p className={`text-[9px] ${settings.claudePath ? 'text-[var(--text-secondary)]' : 'text-[var(--yellow)]'}`}>
-            {settings.claudePath
-              ? 'Click Detect to re-scan, or edit manually.'
-              : 'Not configured. Click Detect or run `which claude` in terminal to find the path.'}
-          </p>
-        </div>
-
-        {/* Claude Home Directory */}
-        <div className="space-y-2">
-          <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">
-            Claude Home Directory
-          </label>
-          <input
-            type="text"
-            value={(settings as any).claudeHome || ''}
-            onChange={e => setSettings({ ...settings, claudeHome: e.target.value } as any)}
-            placeholder="~/.claude (default)"
-            className="w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono"
-          />
-          <p className="text-[9px] text-[var(--text-secondary)]">
-            Where Claude Code stores skills, commands, and sessions. Leave empty for default (~/.claude).
-          </p>
-        </div>
+        {/* Agents */}
+        <AgentsSection settings={settings} setSettings={setSettings} />
 
         {/* Telegram Notifications */}
         <div className="space-y-2">
@@ -876,6 +823,265 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           onSave={saveSecret}
           onClose={() => setEditingSecret(null)}
         />
+      )}
+    </div>
+  );
+}
+
+// ─── Agents Configuration Section ─────────────────────────────
+
+interface AgentEntry {
+  id: string;
+  name: string;
+  path: string;
+  enabled: boolean;
+  type: string;
+  taskFlags: string;       // e.g., "-p --output-format stream-json"
+  interactiveCmd: string;  // e.g., "claude -c"
+  resumeFlag: string;      // e.g., "-c" or "--resume"
+  outputFormat: string;    // stream-json | json | text
+  detected: boolean;
+}
+
+function AgentsSection({ settings, setSettings }: { settings: any; setSettings: (s: any) => void }) {
+  const [agents, setAgents] = useState<AgentEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newAgent, setNewAgent] = useState({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text' });
+
+  // Fetch detected + configured agents
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetch('/api/agents');
+        const data = await res.json();
+        const detected = (data.agents || []) as any[];
+        const configured = settings.agents || {};
+
+        const merged: AgentEntry[] = [];
+
+        // Add detected agents
+        for (const a of detected) {
+          const cfg = configured[a.id] || {};
+          merged.push({
+            id: a.id,
+            name: cfg.name || a.name,
+            path: cfg.path || a.path,
+            enabled: cfg.enabled !== false,
+            type: a.type || 'generic',
+            taskFlags: cfg.taskFlags || (a.id === 'claude' ? '-p --verbose --output-format stream-json --dangerously-skip-permissions' : cfg.flags?.join(' ') || ''),
+            interactiveCmd: cfg.interactiveCmd || a.path,
+            resumeFlag: cfg.resumeFlag || (a.capabilities?.supportsResume ? '-c' : ''),
+            outputFormat: cfg.outputFormat || (a.capabilities?.supportsStreamJson ? 'stream-json' : 'text'),
+            detected: true,
+          });
+        }
+
+        // Add configured but not detected agents
+        for (const [id, cfg] of Object.entries(configured) as [string, any][]) {
+          if (merged.find(a => a.id === id)) continue;
+          merged.push({
+            id,
+            name: cfg.name || id,
+            path: cfg.path || '',
+            enabled: cfg.enabled !== false,
+            type: 'generic',
+            taskFlags: cfg.taskFlags || cfg.flags?.join(' ') || '',
+            interactiveCmd: cfg.interactiveCmd || cfg.path || '',
+            resumeFlag: cfg.resumeFlag || '',
+            outputFormat: cfg.outputFormat || 'text',
+            detected: false,
+          });
+        }
+
+        setAgents(merged);
+      } catch {}
+      setLoading(false);
+    })();
+  }, [settings.agents]);
+
+  const defaultAgent = settings.defaultAgent || 'claude';
+
+  const saveAgentConfig = (updated: AgentEntry[]) => {
+    const agentsCfg: Record<string, any> = {};
+    for (const a of updated) {
+      agentsCfg[a.id] = {
+        name: a.name,
+        path: a.path,
+        enabled: a.enabled,
+        taskFlags: a.taskFlags,
+        interactiveCmd: a.interactiveCmd,
+        resumeFlag: a.resumeFlag,
+        outputFormat: a.outputFormat,
+      };
+    }
+    // Keep claudePath in sync for backward compat
+    const claude = updated.find(a => a.id === 'claude');
+    setSettings({ ...settings, agents: agentsCfg, claudePath: claude?.path || settings.claudePath });
+  };
+
+  const updateAgent = (id: string, field: string, value: any) => {
+    const updated = agents.map(a => a.id === id ? { ...a, [field]: value } : a);
+    setAgents(updated);
+    saveAgentConfig(updated);
+  };
+
+  const removeAgent = (id: string) => {
+    if (!confirm(`Remove "${id}" agent?`)) return;
+    const updated = agents.filter(a => a.id !== id);
+    setAgents(updated);
+    saveAgentConfig(updated);
+  };
+
+  const addAgent = () => {
+    if (!newAgent.id || !newAgent.path) return;
+    const entry: AgentEntry = {
+      ...newAgent,
+      enabled: true,
+      type: 'generic',
+      detected: false,
+    };
+    const updated = [...agents, entry];
+    setAgents(updated);
+    saveAgentConfig(updated);
+    setShowAdd(false);
+    setNewAgent({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text' });
+  };
+
+  const inputClass = "w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]";
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">Agents</label>
+        <button
+          onClick={async () => {
+            try {
+              const res = await fetch('/api/agents');
+              const data = await res.json();
+              if (data.agents?.length) alert(`Detected: ${data.agents.map((a: any) => a.name).join(', ')}`);
+              else alert('No agents detected');
+            } catch { alert('Detection failed'); }
+          }}
+          className="text-[9px] px-2 py-0.5 border border-[var(--accent)] text-[var(--accent)] rounded hover:bg-[var(--accent)] hover:text-white ml-auto"
+        >Detect</button>
+        <button
+          onClick={() => setShowAdd(v => !v)}
+          className="text-[9px] px-2 py-0.5 border border-[var(--border)] text-[var(--text-secondary)] rounded hover:text-[var(--text-primary)]"
+        >+ Add</button>
+      </div>
+
+      {/* Default agent selector */}
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-[var(--text-secondary)]">Default:</span>
+        <select
+          value={defaultAgent}
+          onChange={e => setSettings({ ...settings, defaultAgent: e.target.value })}
+          className="bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-xs text-[var(--text-primary)]"
+        >
+          {agents.filter(a => a.enabled).map(a => (
+            <option key={a.id} value={a.id}>{a.name}</option>
+          ))}
+        </select>
+        <span className="text-[9px] text-[var(--text-secondary)]">Used for Task, Terminal, Pipeline, Mobile, Help</span>
+      </div>
+
+      {loading ? (
+        <p className="text-[10px] text-[var(--text-secondary)]">Loading agents...</p>
+      ) : agents.length === 0 ? (
+        <p className="text-[10px] text-[var(--text-secondary)]">No agents detected. Click Detect or Add manually.</p>
+      ) : (
+        <div className="space-y-2">
+          {agents.map(a => (
+            <div key={a.id} className="border border-[var(--border)] rounded-lg overflow-hidden">
+              {/* Agent header */}
+              <div
+                className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-[var(--bg-tertiary)]"
+                onClick={() => setExpandedAgent(expandedAgent === a.id ? null : a.id)}
+              >
+                <span className={`w-2 h-2 rounded-full shrink-0 ${a.detected ? 'bg-green-500' : 'bg-gray-500'}`} title={a.detected ? 'Detected' : 'Manual'} />
+                <span className="text-xs font-medium text-[var(--text-primary)]">{a.name}</span>
+                <span className="text-[9px] text-[var(--text-secondary)] font-mono">{a.id}</span>
+                {a.id === defaultAgent && <span className="text-[8px] px-1 rounded bg-[var(--accent)]/20 text-[var(--accent)]">default</span>}
+                <label className="flex items-center gap-1 ml-auto text-[9px] text-[var(--text-secondary)]" onClick={e => e.stopPropagation()}>
+                  <input type="checkbox" checked={a.enabled} onChange={e => updateAgent(a.id, 'enabled', e.target.checked)} className="accent-[var(--accent)]" />
+                  Enabled
+                </label>
+                <span className="text-[10px] text-[var(--text-secondary)]">{expandedAgent === a.id ? '▾' : '▸'}</span>
+              </div>
+
+              {/* Agent detail */}
+              {expandedAgent === a.id && (
+                <div className="px-3 py-2 border-t border-[var(--border)] space-y-2 bg-[var(--bg-secondary)]">
+                  <div>
+                    <label className="text-[9px] text-[var(--text-secondary)]">Name</label>
+                    <input value={a.name} onChange={e => updateAgent(a.id, 'name', e.target.value)} className={inputClass} />
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-[var(--text-secondary)]">Binary Path</label>
+                    <input value={a.path} onChange={e => updateAgent(a.id, 'path', e.target.value)} placeholder="/usr/local/bin/agent" className={inputClass} />
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-[var(--text-secondary)]">Task Flags <span className="text-[8px]">(non-interactive mode, e.g. -p --output-format json)</span></label>
+                    <input value={a.taskFlags} onChange={e => updateAgent(a.id, 'taskFlags', e.target.value)} placeholder="-p --verbose" className={inputClass} />
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-[var(--text-secondary)]">Interactive Command <span className="text-[8px]">(terminal startup)</span></label>
+                    <input value={a.interactiveCmd} onChange={e => updateAgent(a.id, 'interactiveCmd', e.target.value)} placeholder="claude" className={inputClass} />
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="text-[9px] text-[var(--text-secondary)]">Resume Flag <span className="text-[8px]">(empty = no resume)</span></label>
+                      <input value={a.resumeFlag} onChange={e => updateAgent(a.id, 'resumeFlag', e.target.value)} placeholder="-c or --resume" className={inputClass} />
+                    </div>
+                    <div className="w-32">
+                      <label className="text-[9px] text-[var(--text-secondary)]">Output Format</label>
+                      <select value={a.outputFormat} onChange={e => updateAgent(a.id, 'outputFormat', e.target.value)} className={inputClass}>
+                        <option value="stream-json">stream-json</option>
+                        <option value="json">json</option>
+                        <option value="text">text</option>
+                      </select>
+                    </div>
+                  </div>
+                  {a.id !== 'claude' && (
+                    <button onClick={() => removeAgent(a.id)} className="text-[9px] text-red-400 hover:underline">Remove Agent</button>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add agent form */}
+      {showAdd && (
+        <div className="border border-[var(--accent)]/30 rounded-lg p-3 space-y-2 bg-[var(--bg-secondary)]">
+          <div className="text-[10px] text-[var(--text-primary)] font-semibold">Add Custom Agent</div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[9px] text-[var(--text-secondary)]">ID (unique)</label>
+              <input value={newAgent.id} onChange={e => setNewAgent({ ...newAgent, id: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })} placeholder="my-agent" className={inputClass} />
+            </div>
+            <div>
+              <label className="text-[9px] text-[var(--text-secondary)]">Display Name</label>
+              <input value={newAgent.name} onChange={e => setNewAgent({ ...newAgent, name: e.target.value })} placeholder="My Agent" className={inputClass} />
+            </div>
+          </div>
+          <div>
+            <label className="text-[9px] text-[var(--text-secondary)]">Binary Path</label>
+            <input value={newAgent.path} onChange={e => setNewAgent({ ...newAgent, path: e.target.value })} placeholder="/usr/local/bin/my-agent" className={inputClass} />
+          </div>
+          <div>
+            <label className="text-[9px] text-[var(--text-secondary)]">Task Flags (non-interactive)</label>
+            <input value={newAgent.taskFlags} onChange={e => setNewAgent({ ...newAgent, taskFlags: e.target.value })} placeholder="--prompt" className={inputClass} />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={addAgent} disabled={!newAgent.id || !newAgent.path} className="text-[10px] px-3 py-1 bg-[var(--accent)] text-white rounded disabled:opacity-50">Add</button>
+            <button onClick={() => setShowAdd(false)} className="text-[10px] px-3 py-1 border border-[var(--border)] text-[var(--text-secondary)] rounded">Cancel</button>
+          </div>
+        </div>
       )}
     </div>
   );

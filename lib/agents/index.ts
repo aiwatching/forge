@@ -22,21 +22,21 @@ export function listAgents(): AgentConfig[] {
   const claudeConfig = settings.agents?.claude;
   const claude = detectClaude(claudeConfig?.path || settings.claudePath);
   if (claude) {
-    agents.push({ ...claude, enabled: claudeConfig?.enabled !== false, detected: true } as any);
+    agents.push({ ...claude, enabled: claudeConfig?.enabled !== false, detected: true, skipPermissionsFlag: claudeConfig?.skipPermissionsFlag || '--dangerously-skip-permissions' } as any);
   }
 
   // Codex
   const codexConfig = settings.agents?.codex;
   const codex = detectAgent('codex', 'OpenAI Codex', codexConfig?.path || 'codex');
   if (codex) {
-    agents.push({ ...codex, enabled: codexConfig?.enabled !== false, detected: true } as any);
+    agents.push({ ...codex, enabled: codexConfig?.enabled !== false, detected: true, skipPermissionsFlag: codexConfig?.skipPermissionsFlag || '--full-auto' } as any);
   }
 
   // Aider
   const aiderConfig = settings.agents?.aider;
   const aider = detectAgent('aider', 'Aider', aiderConfig?.path || 'aider', ['--message']);
   if (aider) {
-    agents.push({ ...aider, enabled: aiderConfig?.enabled !== false, detected: true } as any);
+    agents.push({ ...aider, enabled: aiderConfig?.enabled !== false, detected: true, skipPermissionsFlag: aiderConfig?.skipPermissionsFlag || '--yes' } as any);
   }
 
   // Custom agents from settings — always include, mark detected/not

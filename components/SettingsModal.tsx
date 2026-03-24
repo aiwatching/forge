@@ -497,20 +497,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           Model configuration is now per-agent. Expand an agent above to set its model.
         </div>
 
-        {/* Permissions */}
-        <div className="space-y-2">
-          <label className="flex items-center gap-2 text-xs text-[var(--text-primary)] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={settings.skipPermissions || false}
-              onChange={e => setSettings({ ...settings, skipPermissions: e.target.checked })}
-              className="rounded"
-            />
-            Skip permissions check (--dangerously-skip-permissions)
-          </label>
-          <p className="text-[9px] text-[var(--text-secondary)]">
-            When enabled, all Claude Code tasks and pipelines run without permission prompts. Useful for background automation but less safe.
-          </p>
+        {/* Permissions note */}
+        <div className="text-[9px] text-[var(--text-secondary)] bg-[var(--bg-tertiary)] rounded p-2">
+          Skip permissions flag is now per-agent. Expand an agent above to configure its auto-approve flag.
         </div>
 
         {/* Notification Retention */}
@@ -810,6 +799,7 @@ interface AgentEntry {
   resumeFlag: string;
   outputFormat: string;
   models: { terminal: string; task: string; telegram: string; help: string; mobile: string };
+  skipPermissionsFlag: string;
   detected: boolean;
 }
 
@@ -818,7 +808,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
   const [loading, setLoading] = useState(true);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [newAgent, setNewAgent] = useState({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', models: { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' } });
+  const [newAgent, setNewAgent] = useState({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', models: { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' }, skipPermissionsFlag: '' });
 
   // Fetch detected + configured agents
   useEffect(() => {
@@ -845,7 +835,8 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
             interactiveCmd: cfg.interactiveCmd || a.path,
             resumeFlag: cfg.resumeFlag || (a.capabilities?.supportsResume ? '-c' : ''),
             outputFormat: cfg.outputFormat || (a.capabilities?.supportsStreamJson ? 'stream-json' : 'text'),
-            models: cfg.models || { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' },
+            models: cfg.models || { terminal: "default", task: "default", telegram: "default", help: "default", mobile: "default" },
+            skipPermissionsFlag: cfg.skipPermissionsFlag || a.skipPermissionsFlag || "",
             detected: a.detected !== false,
           });
         }
@@ -863,7 +854,8 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
             interactiveCmd: cfg.interactiveCmd || cfg.path || '',
             resumeFlag: cfg.resumeFlag || '',
             outputFormat: cfg.outputFormat || 'text',
-            models: cfg.models || { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' },
+            models: cfg.models || { terminal: "default", task: "default", telegram: "default", help: "default", mobile: "default" },
+            skipPermissionsFlag: cfg.skipPermissionsFlag || '',
             detected: false,
           });
         }
@@ -889,6 +881,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
         resumeFlag: a.resumeFlag,
         outputFormat: a.outputFormat,
         models: a.models,
+        skipPermissionsFlag: a.skipPermissionsFlag,
       };
     }
     // Keep claudePath in sync for backward compat
@@ -939,7 +932,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
     setAgents(updated);
     debouncedSave(updated);
     setShowAdd(false);
-    setNewAgent({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', models: { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' } });
+    setNewAgent({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', models: { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' }, skipPermissionsFlag: '' });
   };
 
   const inputClass = "w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]";
@@ -1082,6 +1075,21 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
                           className="text-[8px] px-1 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]"
                           title={`Click to copy "${preset}"`}
                         >{preset}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-[var(--text-secondary)]">Auto-approve flag <span className="text-[8px]">(empty = requires manual approval)</span></label>
+                    <input value={a.skipPermissionsFlag} onChange={e => updateAgent(a.id, 'skipPermissionsFlag', e.target.value)} placeholder="e.g. --dangerously-skip-permissions" className={inputClass} />
+                    <div className="flex gap-1 mt-1">
+                      {[
+                        { label: 'Claude', flag: '--dangerously-skip-permissions' },
+                        { label: 'Codex', flag: '--full-auto' },
+                        { label: 'Aider', flag: '--yes' },
+                      ].map(p => (
+                        <button key={p.label} onClick={() => updateAgent(a.id, 'skipPermissionsFlag', p.flag)}
+                          className="text-[8px] px-1 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                        >{p.label}: {p.flag}</button>
                       ))}
                     </div>
                   </div>

@@ -21,6 +21,7 @@ export interface AgentConfig {
   flags?: string[];         // extra CLI flags
   capabilities: AgentCapabilities;
   version?: string;
+  skipPermissionsFlag?: string; // e.g., "--dangerously-skip-permissions", "--full-auto"
 }
 
 export interface AgentSpawnOptions {

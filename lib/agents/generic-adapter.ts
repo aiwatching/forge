@@ -19,6 +19,11 @@ export function createGenericAdapter(config: AgentConfig): AgentAdapter {
         args.push(...config.flags);
       }
 
+      // Add skip permissions flag if configured
+      if (opts.skipPermissions !== false && config.skipPermissionsFlag) {
+        args.push(...config.skipPermissionsFlag.split(/\s+/));
+      }
+
       // Add prompt
       args.push(opts.prompt);
 

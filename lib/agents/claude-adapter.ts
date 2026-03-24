@@ -49,7 +49,8 @@ export function createClaudeAdapter(config: AgentConfig): AgentAdapter {
       }
 
       if (opts.skipPermissions !== false) {
-        args.push('--dangerously-skip-permissions');
+        const flag = config.skipPermissionsFlag || '--dangerously-skip-permissions';
+        if (flag) args.push(...flag.split(/\s+/));
       }
 
       if (opts.model && opts.model !== 'default') {
@@ -70,7 +71,8 @@ export function createClaudeAdapter(config: AgentConfig): AgentAdapter {
     },
 
     buildTerminalCommand(opts) {
-      const skipFlag = opts.skipPermissions ? ' --dangerously-skip-permissions' : '';
+      const flag = config.skipPermissionsFlag || '--dangerously-skip-permissions';
+      const skipFlag = opts.skipPermissions && flag ? ` ${flag}` : '';
       if (opts.sessionId) {
         return `cd "${opts.projectPath}" && claude --resume ${opts.sessionId}${skipFlag}\n`;
       }
@@ -93,6 +95,7 @@ export function detectClaude(customPath?: string): AgentConfig | null {
         enabled: true,
         type: 'claude-code',
         capabilities: CAPABILITIES,
+        skipPermissionsFlag: '--dangerously-skip-permissions',
       };
     } catch {}
   }

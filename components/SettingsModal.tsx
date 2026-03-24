@@ -492,15 +492,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        {/* Model note */}
-        <div className="text-[9px] text-[var(--text-secondary)] bg-[var(--bg-tertiary)] rounded p-2">
-          Model configuration is now per-agent. Expand an agent above to set its model.
-        </div>
 
-        {/* Permissions note */}
-        <div className="text-[9px] text-[var(--text-secondary)] bg-[var(--bg-tertiary)] rounded p-2">
-          Skip permissions flag is now per-agent. Expand an agent above to configure its auto-approve flag.
-        </div>
 
         {/* Notification Retention */}
         <div className="space-y-2">

@@ -26,6 +26,7 @@ interface TaskData {
   scheduledAt?: string;
   mode?: TaskMode;
   watchConfig?: WatchConfig;
+  agent?: string;
 }
 
 export default function NewTaskModal({
@@ -63,6 +64,19 @@ export default function NewTaskModal({
   const [scheduleMode, setScheduleMode] = useState<'now' | 'delay' | 'time'>(editTask?.scheduledAt ? 'time' : 'now');
   const [delayMinutes, setDelayMinutes] = useState(30);
   const [scheduledTime, setScheduledTime] = useState(editTask?.scheduledAt ? new Date(editTask.scheduledAt).toISOString().slice(0, 16) : '');
+
+  // Agent selection
+  const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string; detected?: boolean }[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState('');
+
+  useEffect(() => {
+    fetch('/api/agents').then(r => r.json())
+      .then(data => {
+        const agents = (data.agents || []).filter((a: any) => a.enabled && a.detected !== false);
+        setAvailableAgents(agents);
+        setSelectedAgent(data.defaultAgent || 'claude');
+      }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetch('/api/projects').then(r => r.json()).then((p: Project[]) => {
@@ -132,6 +146,8 @@ export default function NewTaskModal({
       data.watchConfig = wc;
     }
 
+    if (selectedAgent) data.agent = selectedAgent;
+
     onCreate(data);
   };
 
@@ -161,6 +177,22 @@ export default function NewTaskModal({
               ))}
             </select>
           </div>
+
+          {/* Agent */}
+          {availableAgents.length > 1 && (
+            <div>
+              <label className="text-[11px] text-[var(--text-secondary)] block mb-1">Agent</label>
+              <select
+                value={selectedAgent}
+                onChange={e => setSelectedAgent(e.target.value)}
+                className="w-full px-3 py-2 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+              >
+                {availableAgents.map(a => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Task Mode */}
           <div>

@@ -60,9 +60,11 @@ export function createTask(opts: {
   conversationId?: string;  // Explicit override; otherwise auto-inherits from project
   scheduledAt?: string;     // ISO timestamp — task won't run until this time
   watchConfig?: WatchConfig;
+  agent?: string;           // Agent ID (default: from settings)
 }): Task {
   const id = randomUUID().slice(0, 8);
   const mode = opts.mode || 'prompt';
+  const agent = opts.agent || '';
 
   // For prompt mode: auto-inherit conversation_id
   // For monitor mode: conversationId is required (the session to watch)
@@ -71,12 +73,13 @@ export function createTask(opts: {
     : (opts.conversationId || (mode === 'prompt' ? getProjectConversationId(opts.projectName) : null));
 
   db().prepare(`
-    INSERT INTO tasks (id, project_name, project_path, prompt, mode, status, priority, conversation_id, log, scheduled_at, watch_config)
-    VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, '[]', ?, ?)
+    INSERT INTO tasks (id, project_name, project_path, prompt, mode, status, priority, conversation_id, log, scheduled_at, watch_config, agent)
+    VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, '[]', ?, ?, ?)
   `).run(
     id, opts.projectName, opts.projectPath, opts.prompt, mode,
     opts.priority || 0, convId || null, opts.scheduledAt || null,
     opts.watchConfig ? JSON.stringify(opts.watchConfig) : null,
+    agent || null,
   );
 
   // Kick the runner
@@ -284,34 +287,29 @@ function executeTask(task: Task): Promise<void> {
 
   return new Promise((resolve, reject) => {
     const settings = loadSettings();
-    const claudePath = settings.claudePath || process.env.CLAUDE_PATH || 'claude';
+    const { getAgent } = require('./agents');
+    const agentId = (task as any).agent || settings.defaultAgent || 'claude';
+    const adapter = getAgent(agentId);
 
-    const args = ['-p', '--verbose', '--output-format', 'stream-json', '--dangerously-skip-permissions'];
-
-    // Use model override if set, otherwise fall back to taskModel setting
     const model = taskModelOverrides.get(task.id) || settings.taskModel;
-    if (model && model !== 'default') {
-      args.push('--model', model);
-    }
+    const spawnOpts = adapter.buildTaskSpawn({
+      projectPath: task.projectPath,
+      prompt: task.prompt,
+      model: model && model !== 'default' ? model : undefined,
+      conversationId: task.conversationId || undefined,
+      skipPermissions: true,
+      outputFormat: adapter.config.capabilities?.supportsStreamJson ? 'stream-json' : 'json',
+    });
 
-    // Resume specific session to continue the conversation
-    if (task.conversationId) {
-      args.push('--resume', task.conversationId);
-    }
-
-    args.push(task.prompt);
-
-    const env = { ...process.env };
+    const env = { ...process.env, ...(spawnOpts.env || {}) };
     delete env.CLAUDECODE;
 
     updateTaskStatus(task.id, 'running');
     db().prepare('UPDATE tasks SET started_at = datetime(\'now\') WHERE id = ?').run(task.id);
 
-    // Resolve the actual claude CLI script path (claude is a symlink to a .js file)
-    const resolvedClaude = resolveClaudePath(claudePath);
-    console.log(`[task] ${task.projectName} [${model || 'default'}]: "${task.prompt.slice(0, 60)}..."`);
+    console.log(`[task] ${task.projectName} [${agentId}/${model || 'default'}]: "${task.prompt.slice(0, 60)}..."`);
 
-    const child = spawn(resolvedClaude.cmd, [...resolvedClaude.prefix, ...args], {
+    const child = spawn(spawnOpts.cmd, spawnOpts.args, {
       cwd: task.projectPath,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -637,7 +635,8 @@ function rowToTask(row: any): Task {
     startedAt: toIsoUTC(row.started_at) ?? undefined,
     completedAt: toIsoUTC(row.completed_at) ?? undefined,
     scheduledAt: toIsoUTC(row.scheduled_at) ?? undefined,
-  };
+    agent: row.agent || undefined,
+  } as Task;
 }
 
 // ─── Monitor task execution ──────────────────────────────────

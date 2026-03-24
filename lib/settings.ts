@@ -28,7 +28,11 @@ export interface Settings {
   displayEmail: string;                 // User email (for session/future integrations)
   favoriteProjects: string[];           // Favorite project paths (shown at top of sidebar)
   defaultAgent: string;                  // Default agent ID (e.g., 'claude', 'codex', 'aider')
-  agents: Record<string, { path?: string; name?: string; enabled?: boolean; flags?: string[]; taskFlags?: string; interactiveCmd?: string; resumeFlag?: string; outputFormat?: string; model?: string }>;
+  agents: Record<string, {
+    path?: string; name?: string; enabled?: boolean;
+    flags?: string[]; taskFlags?: string; interactiveCmd?: string; resumeFlag?: string; outputFormat?: string;
+    models?: { terminal?: string; task?: string; telegram?: string; help?: string; mobile?: string };
+  }>;
 }
 
 const defaults: Settings = {

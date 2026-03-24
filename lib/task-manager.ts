@@ -291,9 +291,10 @@ function executeTask(task: Task): Promise<void> {
     const agentId = (task as any).agent || settings.defaultAgent || 'claude';
     const adapter = getAgent(agentId);
 
-    // Model: per-task override > agent config > global fallback
+    // Model: per-task override > agent scene model > global fallback
     const agentCfg = settings.agents?.[agentId];
-    const model = taskModelOverrides.get(task.id) || agentCfg?.model || settings.taskModel;
+    const isPipeline = (() => { try { const { pipelineTaskIds: p } = require('./pipeline'); return p.has(task.id); } catch { return false; } })();
+    const model = taskModelOverrides.get(task.id) || (isPipeline ? agentCfg?.models?.task : agentCfg?.models?.task) || agentCfg?.models?.task || settings.taskModel;
     const supportsModel = adapter.config.capabilities?.supportsModel;
     const spawnOpts = adapter.buildTaskSpawn({
       projectPath: task.projectPath,

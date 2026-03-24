@@ -790,11 +790,11 @@ interface AgentEntry {
   path: string;
   enabled: boolean;
   type: string;
-  taskFlags: string;       // e.g., "-p --output-format stream-json"
-  interactiveCmd: string;  // e.g., "claude -c"
-  resumeFlag: string;      // e.g., "-c" or "--resume"
-  outputFormat: string;    // stream-json | json | text
-  model: string;           // model name (e.g., "sonnet", "opus", or "default")
+  taskFlags: string;
+  interactiveCmd: string;
+  resumeFlag: string;
+  outputFormat: string;
+  models: { terminal: string; task: string; telegram: string; help: string; mobile: string };
   detected: boolean;
 }
 
@@ -803,7 +803,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
   const [loading, setLoading] = useState(true);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [newAgent, setNewAgent] = useState({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', model: 'default' });
+  const [newAgent, setNewAgent] = useState({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', models: { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' } });
 
   // Fetch detected + configured agents
   useEffect(() => {
@@ -830,7 +830,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
             interactiveCmd: cfg.interactiveCmd || a.path,
             resumeFlag: cfg.resumeFlag || (a.capabilities?.supportsResume ? '-c' : ''),
             outputFormat: cfg.outputFormat || (a.capabilities?.supportsStreamJson ? 'stream-json' : 'text'),
-            model: cfg.model || 'default',
+            models: cfg.models || { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' },
             detected: a.detected !== false,
           });
         }
@@ -848,7 +848,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
             interactiveCmd: cfg.interactiveCmd || cfg.path || '',
             resumeFlag: cfg.resumeFlag || '',
             outputFormat: cfg.outputFormat || 'text',
-            model: cfg.model || 'default',
+            models: cfg.models || { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' },
             detected: false,
           });
         }
@@ -872,7 +872,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
         interactiveCmd: a.interactiveCmd,
         resumeFlag: a.resumeFlag,
         outputFormat: a.outputFormat,
-        model: a.model || 'default',
+        models: a.models,
       };
     }
     // Keep claudePath in sync for backward compat
@@ -905,7 +905,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
     setAgents(updated);
     saveAgentConfig(updated);
     setShowAdd(false);
-    setNewAgent({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', model: 'default' });
+    setNewAgent({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', models: { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' } });
   };
 
   const inputClass = "w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]";
@@ -1006,9 +1006,44 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
                       </select>
                     </div>
                   </div>
+                  {/* Per-scene model config */}
                   <div>
-                    <label className="text-[9px] text-[var(--text-secondary)]">Model <span className="text-[8px]">(default = agent&apos;s default, or type model name)</span></label>
-                    <input value={a.model} onChange={e => updateAgent(a.id, 'model', e.target.value)} placeholder="default" className={inputClass} />
+                    <label className="text-[9px] text-[var(--text-secondary)] mb-1 block">
+                      Models per scene <span className="text-[8px]">(type or pick from presets below)</span>
+                    </label>
+                    <div className="grid grid-cols-5 gap-1">
+                      {(['terminal', 'task', 'telegram', 'help', 'mobile'] as const).map(scene => (
+                        <div key={scene}>
+                          <label className="text-[8px] text-[var(--text-secondary)] capitalize">{scene}</label>
+                          <input
+                            value={a.models[scene]}
+                            onChange={e => {
+                              const updated = { ...a.models, [scene]: e.target.value };
+                              updateAgent(a.id, 'models', updated);
+                            }}
+                            placeholder="default"
+                            className="w-full px-1.5 py-0.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-[9px] text-[var(--text-primary)] font-mono"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    {/* Preset models */}
+                    <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                      <span className="text-[8px] text-[var(--text-secondary)]">Presets:</span>
+                      {(a.id === 'claude'
+                        ? ['default', 'sonnet', 'opus', 'haiku', 'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001']
+                        : a.id === 'codex'
+                          ? ['default', 'o3-mini', 'o4-mini', 'gpt-4.1']
+                          : ['default']
+                      ).map(preset => (
+                        <button
+                          key={preset}
+                          onClick={() => navigator.clipboard.writeText(preset)}
+                          className="text-[8px] px-1 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]"
+                          title={`Click to copy "${preset}"`}
+                        >{preset}</button>
+                      ))}
+                    </div>
                   </div>
                   {a.id !== 'claude' && (
                     <button onClick={() => removeAgent(a.id)} className="text-[9px] text-red-400 hover:underline">Remove Agent</button>

@@ -471,7 +471,7 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
                         <span className={STATUS_COLOR[node.status]}>{STATUS_ICON[node.status]}</span>
                         <span className="text-xs font-semibold text-[var(--text-primary)]">{nodeId}</span>
                         {nodeDef && nodeDef.mode !== 'shell' && (
-                          <span className="text-[8px] px-1 rounded bg-purple-500/20 text-purple-400">{nodeDef.agent || 'claude'}</span>
+                          <span className="text-[8px] px-1 rounded bg-purple-500/20 text-purple-400">{nodeDef.agent || 'default'}</span>
                         )}
                         {node.taskId && (
                           <button
@@ -574,7 +574,7 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
                       <div className="flex items-center gap-2">
                         <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
                           node.mode === 'shell' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-purple-500/20 text-purple-400'
-                        }`}>{node.mode === 'shell' ? 'shell' : (node.agent || 'claude')}</span>
+                        }`}>{node.mode === 'shell' ? 'shell' : (node.agent || 'default')}</span>
                         <span className="text-[11px] font-semibold text-[var(--text-primary)]">{nodeId}</span>
                         {node.project && <span className="text-[9px] text-[var(--text-secondary)] ml-auto">{node.project}</span>}
                       </div>

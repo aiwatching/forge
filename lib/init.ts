@@ -106,6 +106,13 @@ export function ensureInitialized() {
     setInterval(() => { syncSkills().catch(() => {}); }, 60 * 60 * 1000);
   } catch {}
 
+  // Usage scanner — scan JSONL files for token usage on startup + every 5 min
+  try {
+    const { scanUsage } = require('./usage-scanner');
+    scanUsage();
+    setInterval(() => { try { scanUsage(); } catch {} }, 5 * 60 * 1000);
+  } catch {}
+
   // Task runner is safe in every worker (DB-level coordination)
   ensureRunnerStarted();
 

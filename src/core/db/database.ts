@@ -219,6 +219,33 @@ function initSchema(db: Database.Database) {
       active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Token usage tracking
+    CREATE TABLE IF NOT EXISTS token_usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'terminal',
+      project_path TEXT NOT NULL,
+      project_name TEXT NOT NULL,
+      model TEXT NOT NULL DEFAULT 'unknown',
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      started_at TEXT,
+      completed_at TEXT,
+      task_id TEXT,
+      UNIQUE(session_id, source, model)
+    );
+
+    -- Track scan progress for incremental JSONL scanning
+    CREATE TABLE IF NOT EXISTS usage_scan_state (
+      file_path TEXT PRIMARY KEY,
+      last_size INTEGER NOT NULL DEFAULT 0,
+      last_scan TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }
 

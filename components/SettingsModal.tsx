@@ -1001,10 +1001,13 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
                 className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-[var(--bg-tertiary)]"
                 onClick={() => setExpandedAgent(expandedAgent === a.id ? null : a.id)}
               >
-                <span className={`w-2 h-2 rounded-full shrink-0 ${a.detected ? 'bg-green-500' : 'bg-gray-500'}`} title={a.detected ? 'Detected' : 'Manual'} />
-                <span className="text-xs font-medium text-[var(--text-primary)]">{a.name}</span>
+                <span className={`w-2 h-2 rounded-full shrink-0 ${
+                  !a.detected ? 'bg-gray-500' : a.id === defaultAgent ? 'bg-green-500' : 'bg-green-400/60'
+                }`} title={!a.detected ? 'Not installed' : a.id === defaultAgent ? 'Default agent' : 'Installed'} />
+                <span className={`text-xs font-medium ${!a.detected ? 'text-[var(--text-secondary)]' : 'text-[var(--text-primary)]'}`}>{a.name}</span>
                 <span className="text-[9px] text-[var(--text-secondary)] font-mono">{a.id}</span>
-                {a.id === defaultAgent && <span className="text-[8px] px-1 rounded bg-[var(--accent)]/20 text-[var(--accent)]">default</span>}
+                {a.id === defaultAgent && <span className="text-[8px] px-1 rounded bg-green-500/20 text-green-400">default</span>}
+                {!a.detected && <span className="text-[8px] text-gray-500">not installed</span>}
                 <label className="flex items-center gap-1 ml-auto text-[9px] text-[var(--text-secondary)]" onClick={e => e.stopPropagation()}>
                   <input type="checkbox" checked={a.enabled} onChange={e => updateAgent(a.id, 'enabled', e.target.checked)} className="accent-[var(--accent)]" />
                   Enabled

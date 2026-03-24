@@ -984,11 +984,8 @@ function AgentButtons({ agents, defaultAgentId, onSelect }: {
 
   const btnClass = (id: string, detected?: boolean) => {
     if (detected === false) return 'w-5 h-5 flex items-center justify-center rounded text-[9px] font-bold bg-gray-800/50 text-gray-600 cursor-not-allowed';
-    return `w-5 h-5 flex items-center justify-center rounded text-[9px] font-bold ${
-      id === defaultAgentId
-        ? 'bg-green-500/30 text-green-400 hover:bg-green-500 hover:text-white'
-        : 'bg-gray-700/50 text-gray-300 hover:bg-gray-600 hover:text-white'
-    }`;
+    if (id === defaultAgentId) return 'w-5 h-5 flex items-center justify-center rounded text-[9px] font-bold bg-green-500/30 text-green-400 hover:bg-green-500 hover:text-white';
+    return 'w-5 h-5 flex items-center justify-center rounded text-[9px] font-bold bg-green-900/30 text-green-300/70 hover:bg-green-700/50 hover:text-green-200';
   };
 
   const inline = agents.slice(0, MAX_INLINE);

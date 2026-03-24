@@ -579,6 +579,12 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                       </div>}
                     </div>
                     <p className="text-[10px] text-[var(--text-secondary)] mt-0.5">{skill?.description || ''}</p>
+                    {skill?.author && (
+                      <div className="text-[9px] text-[var(--text-secondary)] mt-1">By {skill.author}</div>
+                    )}
+                    {skill?.sourceUrl && (
+                      <a href={skill.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-[9px] text-[var(--accent)] hover:underline mt-0.5 block truncate">{skill.sourceUrl.replace(/^https?:\/\//, '').slice(0, 60)}</a>
+                    )}
                     {/* Installed indicators */}
                     {skill && isInstalled && (
                       <div className="flex items-center gap-2 mt-1">

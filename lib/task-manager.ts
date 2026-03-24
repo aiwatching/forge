@@ -183,12 +183,13 @@ export function retryTask(id: string): Task | null {
   if (!task) return null;
   if (task.status !== 'failed' && task.status !== 'cancelled') return null;
 
-  // Create a new task with same params
+  // Create a new task with same params (including agent)
   return createTask({
     projectName: task.projectName,
     projectPath: task.projectPath,
     prompt: task.prompt,
     priority: task.priority,
+    agent: (task as any).agent || undefined,
   });
 }
 

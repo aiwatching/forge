@@ -30,7 +30,8 @@ export interface WorkflowNode {
   id: string;
   project: string;
   prompt: string;
-  mode?: 'claude' | 'shell';  // default: 'claude' (claude -p), 'shell' runs raw shell command
+  mode?: 'claude' | 'shell';  // default: 'claude' (agent -p), 'shell' runs raw shell command
+  agent?: string;              // agent ID (default: from settings)
   branch?: string;             // auto checkout this branch before running (supports templates)
   dependsOn: string[];
   outputs: { name: string; extract: 'result' | 'git_diff' | 'stdout' }[];
@@ -240,6 +241,7 @@ function parseWorkflow(raw: string): Workflow {
       project: n.project || '',
       prompt: n.prompt || '',
       mode: n.mode || 'claude',
+      agent: n.agent || undefined,
       branch: n.branch || undefined,
       dependsOn: n.depends_on || n.dependsOn || [],
       outputs: (n.outputs || []).map((o: any) => ({
@@ -561,6 +563,7 @@ function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
       projectPath: projectInfo.path,
       prompt,
       mode: taskMode as any,
+      agent: nodeDef.agent || undefined,
     });
     pipelineTaskIds.add(task.id);
     if (taskMode !== 'shell') {

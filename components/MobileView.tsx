@@ -19,6 +19,8 @@ export default function MobileView() {
   const [debugLevel, setDebugLevel] = useState<'off' | 'simple' | 'verbose'>('off');
   const debugLevelRef = useRef<'off' | 'simple' | 'verbose'>('off');
   const [hasSession, setHasSession] = useState(false);
+  const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string }[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState('claude');
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -31,6 +33,12 @@ export default function MobileView() {
     fetch('/api/tunnel').then(r => r.json())
       .then(data => { setTunnelUrl(data.url || null); })
       .catch(() => {});
+    fetch('/api/agents').then(r => r.json())
+      .then(data => {
+        const agents = (data.agents || []).filter((a: any) => a.enabled && a.detected !== false);
+        setAvailableAgents(agents);
+        setSelectedAgent(data.defaultAgent || 'claude');
+      }).catch(() => {});
   }, []);
 
   // Auto-scroll
@@ -116,6 +124,7 @@ export default function MobileView() {
           message: text,
           projectPath: selectedProject.path,
           resume: false,
+          agent: selectedAgent,
         }),
         signal: abort.signal,
       });
@@ -248,6 +257,17 @@ export default function MobileView() {
               }}
               className="text-sm px-3 py-1 border border-[#30363d] rounded text-[#8b949e] active:bg-[#30363d]"
             >↻</button>
+            {availableAgents.length > 1 && (
+              <select
+                value={selectedAgent}
+                onChange={e => setSelectedAgent(e.target.value)}
+                className="bg-[#0d1117] border border-[#30363d] rounded px-1 py-1 text-[10px] text-[#e6edf3] w-16"
+              >
+                {availableAgents.map(a => (
+                  <option key={a.id} value={a.id}>{a.name.split(' ')[0]}</option>
+                ))}
+              </select>
+            )}
           </>
         )}
         {tunnelUrl && (

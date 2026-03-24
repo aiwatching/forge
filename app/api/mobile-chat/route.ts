@@ -7,26 +7,32 @@ export const runtime = 'nodejs';
 
 // POST /api/mobile-chat — send a message to claude and stream response
 export async function POST(req: Request) {
-  const { message, projectPath, resume } = await req.json() as {
+  const { message, projectPath, resume, agent: agentId } = await req.json() as {
     message: string;
     projectPath: string;
     resume?: boolean;
+    agent?: string;
   };
 
   if (!message || !projectPath) {
     return NextResponse.json({ error: 'message and projectPath required' }, { status: 400 });
   }
 
-  const settings = loadSettings();
-  const claudePath = settings.claudePath || 'claude';
+  const { getAgent } = require('@/lib/agents');
+  const adapter = getAgent(agentId);
   const projectName = projectPath.split('/').pop() || projectPath;
 
-  const args = ['-p', '--dangerously-skip-permissions', '--output-format', 'json'];
-  if (resume) args.push('-c');
+  const spawnOpts = adapter.buildTaskSpawn({
+    projectPath,
+    prompt: message,
+    skipPermissions: true,
+    outputFormat: adapter.config.capabilities?.supportsStreamJson ? 'json' : undefined,
+    conversationId: resume ? 'last' : undefined,
+  });
 
-  const child = spawn(claudePath, args, {
+  const child = spawn(spawnOpts.cmd, spawnOpts.args, {
     cwd: projectPath,
-    env: { ...process.env },
+    env: { ...process.env, ...(spawnOpts.env || {}) },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 

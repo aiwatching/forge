@@ -27,6 +27,7 @@ export default function HelpTerminal() {
 
     let disposed = false;
     let dataDir = '~/.forge/data';
+    let agentCmd = 'claude';
 
     const cs = getComputedStyle(document.documentElement);
     const tv = (name: string) => cs.getPropertyValue(name).trim();
@@ -75,7 +76,7 @@ export default function HelpTerminal() {
               isNewSession = false;
               setTimeout(() => {
                 if (socket.readyState === WebSocket.OPEN) {
-                  socket.send(JSON.stringify({ type: 'input', data: `cd "${dataDir}" 2>/dev/null && claude\n` }));
+                  socket.send(JSON.stringify({ type: 'input', data: `cd "${dataDir}" 2>/dev/null && ${agentCmd}\n` }));
                 }
               }, 300);
             }
@@ -96,11 +97,15 @@ export default function HelpTerminal() {
       socket.onerror = () => {};
     }
 
-    // Fetch data dir then connect
-    fetch('/api/help?action=status').then(r => r.json())
-      .then(data => { if (data.dataDir) dataDir = data.dataDir; })
-      .catch(() => {})
-      .finally(() => { if (!disposed) connect(); });
+    // Fetch data dir + default agent then connect
+    Promise.all([
+      fetch('/api/help?action=status').then(r => r.json()).then(data => { if (data.dataDir) dataDir = data.dataDir; }).catch(() => {}),
+      fetch('/api/agents').then(r => r.json()).then(data => {
+        const defaultId = data.defaultAgent || 'claude';
+        const agent = (data.agents || []).find((a: any) => a.id === defaultId);
+        if (agent?.path) agentCmd = agent.path;
+      }).catch(() => {}),
+    ]).finally(() => { if (!disposed) connect(); });
 
     term.onData((data) => {
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));

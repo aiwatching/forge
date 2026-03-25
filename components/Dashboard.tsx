@@ -24,6 +24,7 @@ const SettingsModal = lazy(() => import('./SettingsModal'));
 const MonitorPanel = lazy(() => import('./MonitorPanel'));
 const DeliveryWorkspace = lazy(() => import('./DeliveryWorkspace'));
 const DeliveryList = lazy(() => import('./DeliveryList'));
+const WorkspaceView = lazy(() => import('./WorkspaceView'));
 
 interface UsageSummary {
   provider: string;
@@ -97,8 +98,9 @@ function FloatingBrowser({ onClose }: { onClose: () => void }) {
 }
 
 export default function Dashboard({ user }: { user: any }) {
-  const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal' | 'docs' | 'projects' | 'pipelines' | 'delivery' | 'skills' | 'logs' | 'usage'>('terminal');
+  const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal' | 'docs' | 'projects' | 'pipelines' | 'delivery' | 'workspace' | 'skills' | 'logs' | 'usage'>('terminal');
   const [deliveryId, setDeliveryId] = useState<string | null>(null);
+  const [workspaceProject, setWorkspaceProject] = useState<{ name: string; path: string } | null>(null);
   const [browserMode, setBrowserMode] = useState<'none' | 'float' | 'right' | 'left'>('none');
   const [showBrowserMenu, setShowBrowserMenu] = useState(false);
   const [browserWidth, setBrowserWidth] = useState(600);
@@ -321,7 +323,7 @@ export default function Dashboard({ user }: { user: any }) {
             </button>
             <span className="w-[2px] h-4 bg-[var(--text-secondary)]/30 mx-1.5" />
             {/* Automation */}
-            {(['tasks', 'pipelines', 'delivery'] as const).map(mode => (
+            {(['tasks', 'pipelines', 'delivery', 'workspace'] as const).map(mode => (
               <button
                 key={mode}
                 onClick={() => setViewMode(mode)}
@@ -331,7 +333,7 @@ export default function Dashboard({ user }: { user: any }) {
                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                 }`}
               >
-                {{ tasks: 'Tasks', pipelines: 'Pipelines', delivery: 'Delivery' }[mode]}
+                {{ tasks: 'Tasks', pipelines: 'Pipelines', delivery: 'Delivery', workspace: 'Workspace' }[mode]}
               </button>
             ))}
             <span className="w-[2px] h-4 bg-[var(--text-secondary)]/30 mx-1.5" />
@@ -725,6 +727,32 @@ export default function Dashboard({ user }: { user: any }) {
                 projects={projects}
                 onOpen={(id) => setDeliveryId(id)}
               />
+            )}
+          </Suspense>
+        )}
+
+        {/* Workspace */}
+        {viewMode === 'workspace' && (
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
+            {workspaceProject ? (
+              <WorkspaceView
+                projectPath={workspaceProject.path}
+                projectName={workspaceProject.name}
+                onClose={() => setWorkspaceProject(null)}
+              />
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ background: '#080810' }}>
+                <span className="text-3xl">🚀</span>
+                <div className="text-sm text-gray-400">Select a project to open Workspace</div>
+                <div className="flex flex-wrap gap-2 mt-2 max-w-md justify-center">
+                  {projects.map(p => (
+                    <button key={p.path} onClick={() => setWorkspaceProject({ name: p.name, path: p.path })}
+                      className="text-[10px] px-3 py-1.5 rounded border border-[#30363d] text-gray-300 hover:text-white hover:border-[var(--accent)]">
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
           </Suspense>
         )}

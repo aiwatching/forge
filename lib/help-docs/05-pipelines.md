@@ -308,6 +308,95 @@ curl -X POST http://localhost:8403/api/pipelines \
   -d '{"action": "save-workflow", "yaml": "<yaml content>"}'
 ```
 
+## Conversation Mode (Multi-Agent Dialogue)
+
+Conversation mode enables multiple agents to collaborate through structured dialogue. Instead of a DAG of tasks, Forge acts as a message broker — sending prompts between agents in rounds until a stop condition is met.
+
+### YAML Format
+
+```yaml
+name: architect-implementer
+type: conversation
+description: "Architect designs, implementer builds"
+input:
+  project: "Project name"
+  task: "What to build"
+agents:
+  - id: architect
+    agent: claude
+    role: "You are a software architect. Design the solution, define interfaces, and review implementations."
+  - id: implementer
+    agent: codex
+    role: "You are a developer. Implement what the architect designs."
+max_rounds: 10
+stop_condition: "both agents say DONE"
+initial_prompt: "Build: {{input.task}}"
+```
+
+### Fields
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `type` | Must be `conversation` | required |
+| `agents` | List of participating agents | required |
+| `agents[].id` | Logical ID within conversation | required |
+| `agents[].agent` | Agent registry ID (`claude`, `codex`, `aider`, etc.) | `claude` |
+| `agents[].role` | System prompt / role description | none |
+| `agents[].project` | Project context (overrides input.project) | none |
+| `max_rounds` | Maximum number of full rounds | `10` |
+| `stop_condition` | When to stop early | none |
+| `initial_prompt` | The seed prompt (supports `{{input.*}}` templates) | required |
+| `context_strategy` | How to pass history between agents: `full`, `window`, `summary` | `summary` |
+| `context_window` | Number of recent messages to include in full (for `window`/`summary`) | `4` |
+| `max_content_length` | Truncate each message to this many characters | `3000` |
+
+### Context Strategies
+
+Agents don't share memory — Forge acts as broker and decides what context to forward.
+
+- **`summary`** (default): Older messages are compressed to one-line summaries. The most recent N messages (set by `context_window`) are passed in full. Best balance of context quality and token usage.
+- **`window`**: Only the last N messages are passed, older ones are dropped entirely. Lowest token usage.
+- **`full`**: All messages from all rounds are passed in full (each truncated to `max_content_length`). Most context but token-heavy.
+
+### Execution Flow
+
+1. Forge sends `initial_prompt` + role to the first agent
+2. Agent responds → Forge collects the response
+3. Forge builds context (per `context_strategy`) and sends to the next agent
+4. Repeat through all agents = 1 round
+5. Continue rounds until `stop_condition` or `max_rounds`
+
+### Stop Conditions
+
+- `"any agent says DONE"` — stops when any agent includes "DONE" in its response
+- `"both agents say DONE"` / `"all agents say DONE"` — stops when all agents have said "DONE"
+- If no stop condition, runs until `max_rounds`
+
+### UI
+
+Conversation pipelines show a chat-like view with color-coded agent bubbles, round numbers, and linked task IDs. The sidebar shows round progress (e.g., R3/10).
+
+### Example: Code Review Dialogue
+
+```yaml
+name: review-dialogue
+type: conversation
+description: "Two agents discuss code quality"
+input:
+  project: "Project name"
+  pr_number: "PR number to review"
+agents:
+  - id: reviewer
+    agent: claude
+    role: "You are a code reviewer. Find bugs, security issues, and suggest improvements."
+  - id: author
+    agent: claude
+    role: "You are the code author. Address review feedback, explain design decisions, and fix issues."
+max_rounds: 5
+stop_condition: "all agents say DONE"
+initial_prompt: "Review PR #{{input.pr_number}} in project {{input.project}}. Reviewer: analyze the diff. Author: be ready to address feedback."
+```
+
 ## Pipeline Model
 
 In **Settings → Pipeline Model**, you can select which Claude model runs pipeline tasks. Set to `default` to use the same model as regular tasks.

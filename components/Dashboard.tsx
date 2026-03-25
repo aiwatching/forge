@@ -4,11 +4,7 @@ import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { signOut } from 'next-auth/react';
 import TaskBoard from './TaskBoard';
 import TaskDetail from './TaskDetail';
-import SessionView from './SessionView';
-import NewTaskModal from './NewTaskModal';
-import SettingsModal from './SettingsModal';
 import TunnelToggle from './TunnelToggle';
-import MonitorPanel from './MonitorPanel';
 import type { Task } from '@/src/types';
 import type { WebTerminalHandle } from './WebTerminal';
 
@@ -22,6 +18,10 @@ const HelpDialog = lazy(() => import('./HelpDialog'));
 const LogViewer = lazy(() => import('./LogViewer'));
 const SkillsPanel = lazy(() => import('./SkillsPanel'));
 const UsagePanel = lazy(() => import('./UsagePanel'));
+const SessionView = lazy(() => import('./SessionView'));
+const NewTaskModal = lazy(() => import('./NewTaskModal'));
+const SettingsModal = lazy(() => import('./SettingsModal'));
+const MonitorPanel = lazy(() => import('./MonitorPanel'));
 
 interface UsageSummary {
   provider: string;
@@ -680,15 +680,17 @@ export default function Dashboard({ user }: { user: any }) {
             </aside>
           </>
         ) : viewMode === 'sessions' ? (
-          <SessionView
-            projects={projects}
-            onOpenInTerminal={(sessionId, projectPath) => {
-              setViewMode('terminal');
-              setTimeout(() => {
-                terminalRef.current?.openSessionInTerminal(sessionId, projectPath);
-              }, 100);
-            }}
-          />
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-xs text-[var(--text-secondary)]">Loading...</div>}>
+            <SessionView
+              projects={projects}
+              onOpenInTerminal={(sessionId, projectPath) => {
+                setViewMode('terminal');
+                setTimeout(() => {
+                  terminalRef.current?.openSessionInTerminal(sessionId, projectPath);
+                }, 100);
+              }}
+            />
+          </Suspense>
         ) : null}
 
         {/* Projects */}
@@ -780,24 +782,28 @@ export default function Dashboard({ user }: { user: any }) {
       )}
 
       {showNewTask && (
-        <NewTaskModal
-          onClose={() => setShowNewTask(false)}
-          onCreate={async (data) => {
-            await fetch('/api/tasks', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(data),
-            });
-            setShowNewTask(false);
-            fetchData();
-          }}
-        />
+        <Suspense fallback={null}>
+          <NewTaskModal
+            onClose={() => setShowNewTask(false)}
+            onCreate={async (data) => {
+              await fetch('/api/tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+              });
+              setShowNewTask(false);
+              fetchData();
+            }}
+          />
+        </Suspense>
       )}
 
-      {showMonitor && <MonitorPanel onClose={() => setShowMonitor(false)} />}
+      {showMonitor && <Suspense fallback={null}><MonitorPanel onClose={() => setShowMonitor(false)} /></Suspense>}
 
       {showSettings && (
-        <SettingsModal onClose={() => { setShowSettings(false); fetchData(); refreshDisplayName(); }} />
+        <Suspense fallback={null}>
+          <SettingsModal onClose={() => { setShowSettings(false); fetchData(); refreshDisplayName(); }} />
+        </Suspense>
       )}
       {showHelp && (
         <Suspense fallback={null}>

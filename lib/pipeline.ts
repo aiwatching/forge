@@ -12,6 +12,7 @@ import YAML from 'yaml';
 import { createTask, getTask, onTaskEvent, taskModelOverrides } from './task-manager';
 import { getProjectInfo } from './projects';
 import { loadSettings } from './settings';
+import { getAgent, listAgents } from './agents';
 import type { Task } from '@/src/types';
 import { getDataDir } from './dirs';
 
@@ -39,12 +40,46 @@ export interface WorkflowNode {
   maxIterations: number;
 }
 
+// ─── Conversation Mode Types ──────────────────────────────
+
+export interface ConversationAgent {
+  id: string;           // logical ID within this conversation (e.g., 'architect', 'implementer')
+  agent: string;        // agent registry ID (e.g., 'claude', 'codex', 'aider')
+  role: string;         // system prompt / role description
+  project?: string;     // project context (optional, defaults to workflow input.project)
+}
+
+export interface ConversationMessage {
+  round: number;
+  agentId: string;      // logical ID from ConversationAgent
+  agentName: string;    // display name (resolved from registry)
+  content: string;
+  timestamp: string;
+  taskId?: string;      // backing task ID
+  status: 'pending' | 'running' | 'done' | 'failed';
+}
+
+export interface ConversationConfig {
+  agents: ConversationAgent[];
+  maxRounds: number;           // max back-and-forth rounds
+  stopCondition?: string;      // e.g., "all agents say DONE", "any agent says DONE"
+  initialPrompt: string;       // the seed prompt to kick off the conversation
+  contextStrategy?: 'full' | 'window' | 'summary';  // how to pass history, default: 'summary'
+  contextWindow?: number;      // for 'window'/'summary': how many recent messages to include in full (default: 4)
+  maxContentLength?: number;   // truncate each message to this length (default: 3000)
+}
+
+// ─── Workflow ─────────────────────────────────────────────
+
 export interface Workflow {
   name: string;
+  type?: 'dag' | 'conversation';  // default: 'dag'
   description?: string;
   vars: Record<string, string>;
   input: Record<string, string>;  // required input fields
   nodes: Record<string, WorkflowNode>;
+  // Conversation mode fields (only when type === 'conversation')
+  conversation?: ConversationConfig;
 }
 
 export type PipelineNodeStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
@@ -62,6 +97,7 @@ export interface PipelineNodeState {
 export interface Pipeline {
   id: string;
   workflowName: string;
+  type?: 'dag' | 'conversation';  // default: 'dag'
   status: 'running' | 'done' | 'failed' | 'cancelled';
   input: Record<string, string>;
   vars: Record<string, string>;
@@ -69,6 +105,13 @@ export interface Pipeline {
   nodeOrder: string[];  // for UI display
   createdAt: string;
   completedAt?: string;
+  // Conversation mode state
+  conversation?: {
+    config: ConversationConfig;
+    messages: ConversationMessage[];
+    currentRound: number;
+    currentAgentIndex: number;  // index into config.agents
+  };
 }
 
 // ─── Workflow Loading ─────────────────────────────────────
@@ -194,6 +237,24 @@ nodes:
       - name: result
         extract: stdout
 `,
+  'multi-agent-collaboration': `
+name: multi-agent-collaboration
+type: conversation
+description: "Two agents collaborate: one designs, one implements"
+input:
+  project: "Project name"
+  task: "What to build or fix"
+agents:
+  - id: architect
+    agent: claude
+    role: "You are a software architect. Round 1: design the solution with clear steps. Later rounds: review the implementation and say DONE if satisfied."
+  - id: implementer
+    agent: claude
+    role: "You are a developer. Implement what the architect designs. After implementing, say DONE."
+max_rounds: 3
+stop_condition: "both agents say DONE"
+initial_prompt: "Task: {{input.task}}"
+`,
 };
 
 export interface WorkflowWithMeta extends Workflow {
@@ -232,6 +293,7 @@ export function getWorkflow(name: string): WorkflowWithMeta | null {
 
 function parseWorkflow(raw: string): Workflow {
   const parsed = YAML.parse(raw);
+  const workflowType = parsed.type || 'dag';
   const nodes: Record<string, WorkflowNode> = {};
 
   for (const [id, def] of Object.entries(parsed.nodes || {})) {
@@ -256,12 +318,33 @@ function parseWorkflow(raw: string): Workflow {
     };
   }
 
+  // Parse conversation config
+  let conversation: ConversationConfig | undefined;
+  if (workflowType === 'conversation' && parsed.agents) {
+    conversation = {
+      agents: (parsed.agents as any[]).map((a: any) => ({
+        id: a.id,
+        agent: a.agent || 'claude',
+        role: a.role || '',
+        project: a.project || undefined,
+      })),
+      maxRounds: parsed.max_rounds || parsed.maxRounds || 10,
+      stopCondition: parsed.stop_condition || parsed.stopCondition || undefined,
+      initialPrompt: parsed.initial_prompt || parsed.initialPrompt || '',
+      contextStrategy: parsed.context_strategy || parsed.contextStrategy || 'summary',
+      contextWindow: parsed.context_window || parsed.contextWindow || 4,
+      maxContentLength: parsed.max_content_length || parsed.maxContentLength || 3000,
+    };
+  }
+
   return {
     name: parsed.name || 'unnamed',
+    type: workflowType,
     description: parsed.description,
     vars: parsed.vars || {},
     input: parsed.input || {},
     nodes,
+    conversation,
   };
 }
 
@@ -383,6 +466,11 @@ export function startPipeline(workflowName: string, input: Record<string, string
   const workflow = getWorkflow(workflowName);
   if (!workflow) throw new Error(`Workflow not found: ${workflowName}`);
 
+  // Conversation mode — separate execution path
+  if (workflow.type === 'conversation' && workflow.conversation) {
+    return startConversationPipeline(workflow, input);
+  }
+
   const id = randomUUID().slice(0, 8);
   const nodes: Record<string, PipelineNodeState> = {};
   const nodeOrder = topologicalSort(workflow.nodes);
@@ -417,11 +505,451 @@ export function startPipeline(workflowName: string, input: Record<string, string
   return pipeline;
 }
 
+// ─── Conversation State Type (extracted to avoid Turbopack parse issues) ──
+type ConversationState = {
+  config: ConversationConfig;
+  messages: ConversationMessage[];
+  currentRound: number;
+  currentAgentIndex: number;
+};
+
+// ─── Conversation Mode Execution ──────────────────────────
+
+function startConversationPipeline(workflow: Workflow, input: Record<string, string>): Pipeline {
+  const conv = workflow.conversation!;
+  const id = randomUUID().slice(0, 8);
+
+  // Resolve agent display names
+  const agentNames: Record<string, string> = {};
+  const allAgents = listAgents();
+  for (const ca of conv.agents) {
+    const found = allAgents.find(a => a.id === ca.agent);
+    agentNames[ca.id] = found?.name || ca.agent;
+  }
+
+  const pipeline: Pipeline = {
+    id,
+    workflowName: workflow.name,
+    type: 'conversation',
+    status: 'running',
+    input,
+    vars: { ...workflow.vars },
+    nodes: {},
+    nodeOrder: [],
+    createdAt: new Date().toISOString(),
+    conversation: {
+      config: {
+        ...conv,
+        // Store resolved initial prompt so buildConversationContext uses it
+        initialPrompt: conv.initialPrompt.replace(/\{\{input\.(\w+)\}\}/g, (_, key) => input[key] || ''),
+      },
+      messages: [],
+      currentRound: 1,
+      currentAgentIndex: 0,
+    },
+  };
+
+  savePipeline(pipeline);
+
+  const resolvedPrompt = pipeline.conversation!.config.initialPrompt;
+
+  // Start the first round
+  scheduleNextConversationTurn(pipeline, resolvedPrompt, agentNames);
+
+  return pipeline;
+}
+
+function scheduleNextConversationTurn(pipeline: Pipeline, contextForAgent: string, agentNames?: Record<string, string>) {
+  const conv = pipeline.conversation!;
+  const config = conv.config;
+  const agentDef = config.agents[conv.currentAgentIndex];
+
+  if (!agentDef) {
+    pipeline.status = 'failed';
+    pipeline.completedAt = new Date().toISOString();
+    savePipeline(pipeline);
+    return;
+  }
+
+  // Resolve project
+  const projectName = agentDef.project || pipeline.input.project || '';
+  const projectInfo = getProjectInfo(projectName);
+  if (!projectInfo) {
+    pipeline.status = 'failed';
+    pipeline.completedAt = new Date().toISOString();
+    savePipeline(pipeline);
+    notifyPipelineComplete(pipeline);
+    return;
+  }
+
+  // Build the prompt: role context + conversation history + new message
+  const rolePrefix = agentDef.role ? `[Your role: ${agentDef.role}]\n\n` : '';
+  const fullPrompt = `${rolePrefix}${contextForAgent}`;
+
+  // Create a task for this agent's turn
+  const task = createTask({
+    projectName: projectInfo.name,
+    projectPath: projectInfo.path,
+    prompt: fullPrompt,
+    mode: 'prompt',
+    agent: agentDef.agent,
+    conversationId: '', // fresh session — no resume for conversation mode
+  });
+  pipelineTaskIds.add(task.id);
+
+  // Add pending message
+  const names = agentNames || resolveAgentNames(config.agents);
+  conv.messages.push({
+    round: conv.currentRound,
+    agentId: agentDef.id,
+    agentName: names[agentDef.id] || agentDef.agent,
+    content: '',
+    timestamp: new Date().toISOString(),
+    taskId: task.id,
+    status: 'running',
+  });
+
+  savePipeline(pipeline);
+
+  // Listen for this task to complete
+  setupConversationTaskListener(pipeline.id, task.id);
+}
+
+function resolveAgentNames(agents: ConversationAgent[]): Record<string, string> {
+  const allAgents = listAgents();
+  const names: Record<string, string> = {};
+  for (const ca of agents) {
+    const found = allAgents.find(a => a.id === ca.agent);
+    names[ca.id] = found?.name || ca.agent;
+  }
+  return names;
+}
+
+function setupConversationTaskListener(pipelineId: string, taskId: string) {
+  const cleanup = onTaskEvent((evtTaskId, event, data) => {
+    if (evtTaskId !== taskId) return;
+    if (event !== 'status') return;
+    if (data !== 'done' && data !== 'failed') return;
+
+    cleanup(); // one-shot listener
+
+    const pipeline = getPipeline(pipelineId);
+    if (!pipeline || pipeline.status !== 'running' || !pipeline.conversation) return;
+
+    const conv = pipeline.conversation;
+    const config = conv.config;
+    const msgIndex = conv.messages.findIndex(m => m.taskId === taskId);
+    if (msgIndex < 0) return;
+
+    const task = getTask(taskId);
+
+    if (data === 'failed' || !task) {
+      conv.messages[msgIndex].status = 'failed';
+      conv.messages[msgIndex].content = task?.error || 'Task failed';
+      pipeline.status = 'failed';
+      pipeline.completedAt = new Date().toISOString();
+      savePipeline(pipeline);
+      notifyPipelineComplete(pipeline);
+      return;
+    }
+
+    // Task completed — extract response
+    const response = task.resultSummary || '';
+    conv.messages[msgIndex].status = 'done';
+    conv.messages[msgIndex].content = response;
+
+    // Check stop condition
+    if (checkConversationStopCondition(conv, response)) {
+      finishConversation(pipeline, 'done');
+      return;
+    }
+
+    // Move to next agent in round, or next round
+    conv.currentAgentIndex++;
+    if (conv.currentAgentIndex >= config.agents.length) {
+      // Completed a full round
+      conv.currentAgentIndex = 0;
+      conv.currentRound++;
+
+      if (conv.currentRound > config.maxRounds) {
+        finishConversation(pipeline, 'done');
+        return;
+      }
+    }
+
+    savePipeline(pipeline);
+
+    // Build context for next agent: accumulate conversation history
+    const contextForNext = buildConversationContext(conv);
+    scheduleNextConversationTurn(pipeline, contextForNext);
+  });
+}
+
+/**
+ * Build context string for the next agent in conversation.
+ *
+ * Three strategies:
+ *   - 'full'    : pass ALL history as-is (token-heavy, good for short convos)
+ *   - 'window'  : pass only the last N messages in full, drop older ones
+ *   - 'summary' : pass older messages as one-line summaries + last N in full (default)
+ */
+function buildConversationContext(conv: ConversationState): string {
+  const config = conv.config;
+  const strategy = config.contextStrategy || 'summary';
+  const windowSize = config.contextWindow || 4;
+  const maxLen = config.maxContentLength || 3000;
+
+  const doneMessages = conv.messages.filter(m => m.status === 'done' && m.content);
+
+  let context = `[Conversation — Round ${conv.currentRound}]\n\n`;
+  context += `Task: ${config.initialPrompt}\n\n`;
+
+  if (doneMessages.length === 0) {
+    context += `--- Your Turn ---\nYou are the first to respond. Please address the task above. If you believe the task is complete, include "DONE" in your response.`;
+    return context;
+  }
+
+  context += `--- Conversation History ---\n\n`;
+
+  if (strategy === 'full') {
+    // Full: all messages, truncated per maxLen
+    for (const msg of doneMessages) {
+      context += formatMessage(msg, config, maxLen);
+    }
+  } else if (strategy === 'window') {
+    // Window: only last N messages
+    const recent = doneMessages.slice(-windowSize);
+    if (doneMessages.length > windowSize) {
+      context += `[... ${doneMessages.length - windowSize} earlier messages omitted ...]\n\n`;
+    }
+    for (const msg of recent) {
+      context += formatMessage(msg, config, maxLen);
+    }
+  } else {
+    // Summary (default): older messages as one-line summaries, recent in full
+    const cutoff = doneMessages.length - windowSize;
+    if (cutoff > 0) {
+      context += `[Previous rounds summary]\n`;
+      for (let i = 0; i < cutoff; i++) {
+        const msg = doneMessages[i];
+        const summary = extractSummaryLine(msg.content);
+        context += `  R${msg.round} ${msg.agentName}: ${summary}\n`;
+      }
+      context += `\n`;
+    }
+    // Recent messages in full
+    const recent = doneMessages.slice(Math.max(0, cutoff));
+    for (const msg of recent) {
+      context += formatMessage(msg, config, maxLen);
+    }
+  }
+
+  context += `--- Your Turn ---\nRespond based on the conversation above. If you believe the task is complete, include "DONE" in your response.`;
+  return context;
+}
+
+function formatMessage(msg: ConversationMessage, config: ConversationConfig, maxLen: number): string {
+  const agentDef = config.agents.find(a => a.id === msg.agentId);
+  const label = `${msg.agentName} (${agentDef?.id || '?'})`;
+  const content = msg.content.length > maxLen
+    ? msg.content.slice(0, maxLen) + '\n[... truncated]'
+    : msg.content;
+  return `[${label} — Round ${msg.round}]:\n${content}\n\n`;
+}
+
+/** Extract a one-line summary from agent output (first meaningful line or first 120 chars) */
+function extractSummaryLine(content: string): string {
+  const lines = content.split('\n').map(l => l.trim()).filter(l => l.length > 10);
+  const first = lines[0] || content.slice(0, 120);
+  return first.length > 120 ? first.slice(0, 117) + '...' : first;
+}
+
+function checkConversationStopCondition(conv: ConversationState, latestResponse: string): boolean {
+  const condition = conv.config.stopCondition;
+  if (!condition) return false;
+
+  const lower = condition.toLowerCase();
+
+  // "any agent says DONE"
+  if (lower.includes('any') && lower.includes('done')) {
+    return latestResponse.toUpperCase().includes('DONE');
+  }
+
+  // "all agents say DONE" / "both agents say DONE"
+  if ((lower.includes('all') || lower.includes('both')) && lower.includes('done')) {
+    // Only check messages from the CURRENT round — don't mix rounds
+    const currentRound = conv.currentRound;
+    const agentIds = conv.config.agents.map(a => a.id);
+    const roundMessages = new Map<string, string>();
+    for (const msg of conv.messages) {
+      if (msg.status === 'done' && msg.round === currentRound && msg.agentId !== 'user') {
+        roundMessages.set(msg.agentId, msg.content);
+      }
+    }
+    // All agents in this round must have responded AND said DONE
+    return agentIds.every(id => {
+      const content = roundMessages.get(id);
+      return content && content.toUpperCase().includes('DONE');
+    });
+  }
+
+  // Default: check if latest response contains DONE
+  return latestResponse.toUpperCase().includes('DONE');
+}
+
+/** Cleanly finish a conversation — cancel any still-running tasks, mark messages */
+function finishConversation(pipeline: Pipeline, status: 'done' | 'failed') {
+  const conv = pipeline.conversation!;
+  for (const msg of conv.messages) {
+    if (msg.status === 'running' && msg.taskId) {
+      // Cancel the running task
+      try { const { cancelTask } = require('./task-manager'); cancelTask(msg.taskId); } catch {}
+      msg.status = status === 'done' ? 'done' : 'failed';
+      if (!msg.content) msg.content = status === 'done' ? '(conversation ended)' : '(conversation failed)';
+    }
+    if (msg.status === 'pending') {
+      msg.status = 'failed';
+    }
+  }
+  pipeline.status = status;
+  pipeline.completedAt = new Date().toISOString();
+  savePipeline(pipeline);
+  notifyPipelineComplete(pipeline);
+}
+
+/** Cancel a conversation pipeline */
+export function cancelConversation(pipelineId: string): boolean {
+  const pipeline = getPipeline(pipelineId);
+  if (!pipeline || pipeline.status !== 'running' || !pipeline.conversation) return false;
+
+  // Cancel any running task
+  for (const msg of pipeline.conversation.messages) {
+    if (msg.status === 'running' && msg.taskId) {
+      const { cancelTask } = require('./task-manager');
+      cancelTask(msg.taskId);
+    }
+    if (msg.status === 'pending') msg.status = 'failed';
+  }
+
+  pipeline.status = 'cancelled';
+  pipeline.completedAt = new Date().toISOString();
+  savePipeline(pipeline);
+  return true;
+}
+
+/**
+ * Inject a user message into a running conversation.
+ * Waits for current agent to finish, then sends the injected message
+ * as additional context to the specified agent on the next turn.
+ */
+export function injectConversationMessage(pipelineId: string, targetAgentId: string, message: string): boolean {
+  const pipeline = getPipeline(pipelineId);
+  if (!pipeline || pipeline.status !== 'running' || !pipeline.conversation) {
+    throw new Error('Pipeline not running or not a conversation');
+  }
+
+  const conv = pipeline.conversation;
+  const agentDef = conv.config.agents.find(a => a.id === targetAgentId);
+  if (!agentDef) throw new Error(`Agent not found: ${targetAgentId}`);
+
+  // Add a "user" message to the conversation
+  conv.messages.push({
+    round: conv.currentRound,
+    agentId: 'user',
+    agentName: 'Operator',
+    content: `[@${targetAgentId}] ${message}`,
+    timestamp: new Date().toISOString(),
+    status: 'done',
+  });
+
+  savePipeline(pipeline);
+
+  // If no agent is currently running, immediately schedule the target agent
+  const hasRunning = conv.messages.some(m => m.status === 'running');
+  if (!hasRunning) {
+    // Point to the target agent for next turn
+    const targetIdx = conv.config.agents.findIndex(a => a.id === targetAgentId);
+    if (targetIdx >= 0) {
+      conv.currentAgentIndex = targetIdx;
+      savePipeline(pipeline);
+      const context = buildConversationContext(conv);
+      scheduleNextConversationTurn(pipeline, context);
+    }
+  }
+  // If an agent IS running, the injected message will be included in the next context build
+
+  return true;
+}
+
+// ─── Conversation Recovery ────────────────────────────────
+
+function recoverConversationPipeline(pipeline: Pipeline) {
+  const conv = pipeline.conversation!;
+  const runningMsg = conv.messages.find(m => m.status === 'running');
+  if (!runningMsg || !runningMsg.taskId) return;
+
+  const task = getTask(runningMsg.taskId);
+  if (!task) {
+    // Task gone — mark as done with empty content, try next turn
+    runningMsg.status = 'done';
+    runningMsg.content = '(no response — task was cleaned up)';
+    savePipeline(pipeline);
+    advanceConversation(pipeline);
+    return;
+  }
+  if (task.status === 'done') {
+    runningMsg.status = 'done';
+    runningMsg.content = task.resultSummary || '';
+    savePipeline(pipeline);
+    advanceConversation(pipeline);
+  } else if (task.status === 'failed' || task.status === 'cancelled') {
+    runningMsg.status = 'failed';
+    runningMsg.content = task.error || 'Task failed';
+    pipeline.status = 'failed';
+    pipeline.completedAt = new Date().toISOString();
+    savePipeline(pipeline);
+  } else {
+    // Still running — re-attach listener
+    setupConversationTaskListener(pipeline.id, runningMsg.taskId);
+  }
+}
+
+function advanceConversation(pipeline: Pipeline) {
+  const conv = pipeline.conversation!;
+  const config = conv.config;
+  const lastDoneMsg = [...conv.messages].reverse().find(m => m.status === 'done');
+
+  if (lastDoneMsg && checkConversationStopCondition(conv, lastDoneMsg.content)) {
+    finishConversation(pipeline, 'done');
+    return;
+  }
+
+  conv.currentAgentIndex++;
+  if (conv.currentAgentIndex >= config.agents.length) {
+    conv.currentAgentIndex = 0;
+    conv.currentRound++;
+    if (conv.currentRound > config.maxRounds) {
+      finishConversation(pipeline, 'done');
+      return;
+    }
+  }
+
+  savePipeline(pipeline);
+  const contextForNext = buildConversationContext(conv);
+  scheduleNextConversationTurn(pipeline, contextForNext);
+}
+
 // ─── Recovery: check for stuck pipelines ──────────────────
 
 function recoverStuckPipelines() {
   const pipelines = listPipelines().filter(p => p.status === 'running');
   for (const pipeline of pipelines) {
+    // Conversation mode recovery
+    if (pipeline.type === 'conversation' && pipeline.conversation) {
+      recoverConversationPipeline(pipeline);
+      continue;
+    }
+
     const workflow = getWorkflow(pipeline.workflowName);
     if (!workflow) continue;
 
@@ -472,6 +1000,11 @@ setTimeout(recoverStuckPipelines, 5000);
 export function cancelPipeline(id: string): boolean {
   const pipeline = getPipeline(id);
   if (!pipeline || pipeline.status !== 'running') return false;
+
+  // Conversation mode
+  if (pipeline.type === 'conversation') {
+    return cancelConversation(id);
+  }
 
   pipeline.status = 'cancelled';
   pipeline.completedAt = new Date().toISOString();

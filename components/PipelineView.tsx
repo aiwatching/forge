@@ -1,9 +1,62 @@
 'use client';
 
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
+import type { TaskLogEntry } from '@/src/types';
 
 const PipelineEditor = lazy(() => import('./PipelineEditor'));
+const ConversationEditor = lazy(() => import('./ConversationEditor'));
+
+// ─── Live Task Log Hook ──────────────────────────────────
+// Subscribes to SSE stream for a running task, returns live log entries
+function useTaskStream(taskId: string | undefined, isRunning: boolean) {
+  const [log, setLog] = useState<TaskLogEntry[]>([]);
+  const [status, setStatus] = useState<string>('');
+
+  useEffect(() => {
+    if (!taskId || !isRunning) { setLog([]); return; }
+
+    const es = new EventSource(`/api/tasks/${taskId}/stream`);
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'log') setLog(prev => [...prev, data.entry]);
+        else if (data.type === 'status') setStatus(data.status);
+        else if (data.type === 'complete' && data.task) setLog(data.task.log);
+      } catch {}
+    };
+    es.onerror = () => es.close();
+    return () => es.close();
+  }, [taskId, isRunning]);
+
+  return { log, status };
+}
+
+// ─── Compact log renderer ─────────────────────────────────
+function LiveLog({ log, maxHeight = 200 }: { log: TaskLogEntry[]; maxHeight?: number }) {
+  const endRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [log]);
+
+  if (log.length === 0) return <div className="text-[10px] text-[var(--text-secondary)] italic">Starting...</div>;
+
+  return (
+    <div className="overflow-y-auto text-[9px] font-mono leading-relaxed space-y-0.5" style={{ maxHeight }}>
+      {log.slice(-50).map((entry, i) => (
+        <div key={i} className={
+          entry.type === 'result' ? 'text-green-400' :
+          entry.subtype === 'error' ? 'text-red-400' :
+          entry.type === 'system' ? 'text-yellow-400/70' :
+          'text-[var(--text-secondary)]'
+        }>
+          {entry.type === 'assistant' && entry.subtype === 'tool_use'
+            ? `⚙ ${entry.tool || 'tool'}: ${entry.content.slice(0, 80)}${entry.content.length > 80 ? '...' : ''}`
+            : entry.content.slice(0, 200)}{entry.content.length > 200 ? '...' : ''}
+        </div>
+      ))}
+      <div ref={endRef} />
+    </div>
+  );
+}
 
 interface WorkflowNode {
   id: string;
@@ -20,11 +73,18 @@ interface WorkflowNode {
 
 interface Workflow {
   name: string;
+  type?: 'dag' | 'conversation';
   description?: string;
   builtin?: boolean;
   vars: Record<string, string>;
   input: Record<string, string>;
   nodes: Record<string, WorkflowNode>;
+  conversation?: {
+    agents: { id: string; agent: string; role: string }[];
+    maxRounds: number;
+    stopCondition?: string;
+    initialPrompt: string;
+  };
 }
 
 interface PipelineNodeState {
@@ -37,9 +97,20 @@ interface PipelineNodeState {
   error?: string;
 }
 
+interface ConversationMessage {
+  round: number;
+  agentId: string;
+  agentName: string;
+  content: string;
+  timestamp: string;
+  taskId?: string;
+  status: 'pending' | 'running' | 'done' | 'failed';
+}
+
 interface Pipeline {
   id: string;
   workflowName: string;
+  type?: 'dag' | 'conversation';
   status: 'running' | 'done' | 'failed' | 'cancelled';
   input: Record<string, string>;
   vars: Record<string, string>;
@@ -47,6 +118,17 @@ interface Pipeline {
   nodeOrder: string[];
   createdAt: string;
   completedAt?: string;
+  conversation?: {
+    config: {
+      agents: { id: string; agent: string; role: string; project?: string }[];
+      maxRounds: number;
+      stopCondition?: string;
+      initialPrompt: string;
+    };
+    messages: ConversationMessage[];
+    currentRound: number;
+    currentAgentIndex: number;
+  };
 }
 
 const STATUS_ICON: Record<string, string> = {
@@ -65,6 +147,284 @@ const STATUS_COLOR: Record<string, string> = {
   skipped: 'text-gray-500',
 };
 
+// ─── DAG Node Card with live logs ─────────────────────────
+
+function DagNodeCard({ nodeId, node, nodeDef, onViewTask }: {
+  nodeId: string;
+  node: PipelineNodeState;
+  nodeDef?: WorkflowNode;
+  onViewTask?: (taskId: string) => void;
+}) {
+  const isRunning = node.status === 'running';
+  const { log } = useTaskStream(node.taskId, isRunning);
+
+  return (
+    <div className={`border rounded-lg p-3 ${
+      isRunning ? 'border-yellow-500/50 bg-yellow-500/5' :
+      node.status === 'done' ? 'border-green-500/30 bg-green-500/5' :
+      node.status === 'failed' ? 'border-red-500/30 bg-red-500/5' :
+      'border-[var(--border)]'
+    }`}>
+      <div className="flex items-center gap-2">
+        <span className={STATUS_COLOR[node.status]}>{STATUS_ICON[node.status]}</span>
+        <span className="text-xs font-semibold text-[var(--text-primary)]">{nodeId}</span>
+        {nodeDef && nodeDef.mode !== 'shell' && (
+          <span className="text-[8px] px-1 rounded bg-purple-500/20 text-purple-400">{nodeDef.agent || 'default'}</span>
+        )}
+        {node.taskId && (
+          <button onClick={() => onViewTask?.(node.taskId!)} className="text-[9px] text-[var(--accent)] font-mono hover:underline">
+            task:{node.taskId}
+          </button>
+        )}
+        {node.iterations > 1 && <span className="text-[9px] text-yellow-400">iter {node.iterations}</span>}
+        <span className="text-[9px] text-[var(--text-secondary)] ml-auto">{node.status}</span>
+      </div>
+
+      {/* Live log for running nodes */}
+      {isRunning && (
+        <div className="mt-2 p-2 bg-[var(--bg-tertiary)] rounded">
+          <LiveLog log={log} maxHeight={160} />
+        </div>
+      )}
+
+      {node.error && <div className="text-[10px] text-red-400 mt-1">{node.error}</div>}
+
+      {/* Outputs */}
+      {Object.keys(node.outputs).length > 0 && (
+        <div className="mt-2 space-y-1">
+          {Object.entries(node.outputs).map(([key, val]) => (
+            <details key={key} className="text-[10px]">
+              <summary className="cursor-pointer text-[var(--accent)]">output: {key} ({val.length} chars)</summary>
+              <pre className="mt-1 p-2 bg-[var(--bg-tertiary)] rounded text-[9px] text-[var(--text-secondary)] max-h-32 overflow-auto whitespace-pre-wrap">
+                {val.slice(0, 1000)}{val.length > 1000 ? '...' : ''}
+              </pre>
+            </details>
+          ))}
+        </div>
+      )}
+
+      {node.startedAt && (
+        <div className="text-[8px] text-[var(--text-secondary)] mt-1">
+          {`Started: ${new Date(node.startedAt).toLocaleTimeString()}`}
+          {node.completedAt && ` · Done: ${new Date(node.completedAt).toLocaleTimeString()}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Agent color palette for conversation bubbles ────────
+const AGENT_COLORS = [
+  { bg: 'bg-blue-500/10', border: 'border-blue-500/30', badge: 'bg-blue-500/20 text-blue-400', dot: 'text-blue-400' },
+  { bg: 'bg-purple-500/10', border: 'border-purple-500/30', badge: 'bg-purple-500/20 text-purple-400', dot: 'text-purple-400' },
+  { bg: 'bg-green-500/10', border: 'border-green-500/30', badge: 'bg-green-500/20 text-green-400', dot: 'text-green-400' },
+  { bg: 'bg-orange-500/10', border: 'border-orange-500/30', badge: 'bg-orange-500/20 text-orange-400', dot: 'text-orange-400' },
+  { bg: 'bg-pink-500/10', border: 'border-pink-500/30', badge: 'bg-pink-500/20 text-pink-400', dot: 'text-pink-400' },
+];
+
+function ConversationMessageBubble({ msg, colors, agentDef, isLeft, onViewTask }: {
+  msg: ConversationMessage; colors: typeof AGENT_COLORS[0]; agentDef?: { id: string; role: string };
+  isLeft: boolean; onViewTask?: (taskId: string) => void;
+}) {
+  const isRunning = msg.status === 'running';
+  const { log } = useTaskStream(msg.taskId, isRunning);
+
+  return (
+    <div className={`flex ${isLeft ? 'justify-start' : 'justify-end'}`}>
+      <div className={`max-w-[85%] border rounded-lg p-3 ${colors.bg} ${colors.border}`}>
+        {/* Agent header */}
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${colors.badge}`}>{msg.agentName}</span>
+          <span className="text-[8px] text-[var(--text-secondary)]">
+            {msg.agentId}{agentDef?.role ? ` — ${agentDef.role.slice(0, 40)}${agentDef.role.length > 40 ? '...' : ''}` : ''}
+          </span>
+          {isRunning && <span className="text-[8px] text-yellow-400 animate-pulse">● running</span>}
+          <span className="text-[8px] text-[var(--text-secondary)] ml-auto">R{msg.round}</span>
+        </div>
+
+        {/* Content */}
+        {isRunning ? (
+          <LiveLog log={log} maxHeight={250} />
+        ) : msg.status === 'failed' ? (
+          <div className="text-[10px] text-red-400">{msg.content || 'Failed'}</div>
+        ) : (
+          <div className="text-[10px] text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed">
+            {msg.content.slice(0, 3000)}{msg.content.length > 3000 ? '\n\n[... truncated]' : ''}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="flex items-center gap-2 mt-1.5">
+          {msg.taskId && (
+            <button onClick={() => onViewTask?.(msg.taskId!)} className="text-[8px] text-[var(--accent)] font-mono hover:underline">
+              task:{msg.taskId}
+            </button>
+          )}
+          <span className="text-[7px] text-[var(--text-secondary)] ml-auto">{new Date(msg.timestamp).toLocaleTimeString()}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const ConversationGraphView = lazy(() => import('./ConversationGraphView'));
+
+function ConversationView({ pipeline, onViewTask }: { pipeline: Pipeline; onViewTask?: (taskId: string) => void }) {
+  const conv = pipeline.conversation!;
+  const { config, messages, currentRound } = conv;
+  const [injectText, setInjectText] = useState('');
+  const [injectTarget, setInjectTarget] = useState(config.agents[0]?.id || '');
+  const [injecting, setInjecting] = useState(false);
+  const [viewMode, setViewMode] = useState<'graph' | 'chat'>('graph');
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Assign stable colors per agent
+  const agentColorMap: Record<string, typeof AGENT_COLORS[0]> = {};
+  config.agents.forEach((a, i) => {
+    agentColorMap[a.id] = AGENT_COLORS[i % AGENT_COLORS.length];
+  });
+
+  // Auto-scroll on new messages
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages.length]);
+
+  const handleInject = async () => {
+    if (!injectText.trim() || injecting) return;
+    setInjecting(true);
+    try {
+      await fetch(`/api/pipelines/${pipeline.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'inject', agentId: injectTarget, message: injectText }),
+      });
+      setInjectText('');
+    } catch {}
+    setInjecting(false);
+  };
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Conversation info bar */}
+      <div className="px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-tertiary)]/50 shrink-0">
+        <div className="flex items-center gap-3">
+          <span className="text-[9px] px-1.5 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)] font-medium">Conversation</span>
+          <span className="text-[9px] text-[var(--text-secondary)]">Round {currentRound}/{config.maxRounds}</span>
+          <div className="flex items-center gap-2 ml-auto">
+            {/* View mode toggle */}
+            <div className="flex border border-[var(--border)] rounded overflow-hidden">
+              <button
+                onClick={() => setViewMode('graph')}
+                className={`text-[8px] px-2 py-0.5 ${viewMode === 'graph' ? 'bg-[var(--accent)]/20 text-[var(--accent)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+              >Graph</button>
+              <button
+                onClick={() => setViewMode('chat')}
+                className={`text-[8px] px-2 py-0.5 ${viewMode === 'chat' ? 'bg-[var(--accent)]/20 text-[var(--accent)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+              >Chat</button>
+            </div>
+            {config.agents.map(a => {
+              const colors = agentColorMap[a.id];
+              const isRunning = messages.some(m => m.agentId === a.id && m.status === 'running');
+              return (
+                <span key={a.id} className={`text-[8px] px-1.5 py-0.5 rounded ${colors.badge} ${isRunning ? 'ring-1 ring-yellow-400/50' : ''}`}>
+                  {isRunning ? '● ' : ''}{a.id} ({a.agent})
+                </span>
+              );
+            })}
+          </div>
+        </div>
+        {config.stopCondition && (
+          <div className="text-[8px] text-[var(--text-secondary)] mt-1">Stop: {config.stopCondition}</div>
+        )}
+      </div>
+
+      {/* Graph or Chat view */}
+      {viewMode === 'graph' ? (
+        <div className="flex-1 min-h-0">
+          <Suspense fallback={<div className="flex items-center justify-center h-full text-xs text-[var(--text-secondary)]">Loading graph...</div>}>
+            <ConversationGraphView pipeline={pipeline} />
+          </Suspense>
+        </div>
+      ) : (
+        <>
+          {/* Initial prompt */}
+          <div className="px-4 pt-3">
+            <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--bg-tertiary)]/50">
+              <div className="text-[9px] text-[var(--text-secondary)] font-medium mb-1">Initial Prompt</div>
+              <div className="text-[11px] text-[var(--text-primary)] whitespace-pre-wrap">{config.initialPrompt}</div>
+            </div>
+          </div>
+
+          {/* Messages — chat-like view with live logs */}
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+            {messages.map((msg, i) => {
+              const colors = agentColorMap[msg.agentId] || AGENT_COLORS[0];
+              const agentDef = config.agents.find(a => a.id === msg.agentId);
+              const isLeft = config.agents.indexOf(agentDef!) % 2 === 0;
+
+              return (
+                <ConversationMessageBubble
+                  key={`${msg.taskId || i}-${msg.status}`}
+                  msg={msg}
+                  colors={colors}
+                  agentDef={agentDef}
+                  isLeft={isLeft}
+                  onViewTask={onViewTask}
+                />
+              );
+            })}
+
+            {/* Completion indicator */}
+            {pipeline.status === 'done' && (
+              <div className="flex justify-center py-2">
+                <span className="text-[10px] px-3 py-1 rounded-full bg-green-500/10 text-green-400 border border-green-500/30">
+                  Conversation complete — {messages.length} messages in {Math.max(...messages.map(m => m.round), 0)} rounds
+                </span>
+              </div>
+            )}
+            {pipeline.status === 'failed' && (
+              <div className="flex justify-center py-2">
+                <span className="text-[10px] px-3 py-1 rounded-full bg-red-500/10 text-red-400 border border-red-500/30">
+                  Conversation failed
+                </span>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Inject command bar */}
+      {pipeline.status === 'running' && (
+        <div className="px-4 py-2 border-t border-[var(--border)] bg-[var(--bg-tertiary)]/50 shrink-0">
+          <div className="flex items-center gap-2">
+            <select
+              value={injectTarget}
+              onChange={e => setInjectTarget(e.target.value)}
+              className="text-[10px] bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-[var(--text-primary)]"
+            >
+              {config.agents.map(a => (
+                <option key={a.id} value={a.id}>@{a.id}</option>
+              ))}
+            </select>
+            <input
+              value={injectText}
+              onChange={e => setInjectText(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleInject()}
+              placeholder="Send instruction to agent..."
+              className="flex-1 text-[10px] bg-[var(--bg-primary)] border border-[var(--border)] rounded px-2 py-1 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+            />
+            <button
+              onClick={handleInject}
+              disabled={!injectText.trim() || injecting}
+              className="text-[10px] px-3 py-1 bg-[var(--accent)] text-white rounded hover:opacity-90 disabled:opacity-50"
+            >Send</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandled }: { onViewTask?: (taskId: string) => void; focusPipelineId?: string | null; onFocusHandled?: () => void }) {
   const { sidebarWidth, onSidebarDragStart } = useSidebarResize({ defaultWidth: 256, minWidth: 140, maxWidth: 480 });
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
@@ -78,21 +438,26 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
   const [creating, setCreating] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [editorYaml, setEditorYaml] = useState<string | undefined>(undefined);
+  const [editorIsConversation, setEditorIsConversation] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [importYaml, setImportYaml] = useState('');
+  const [agents, setAgents] = useState<{ id: string; name: string; detected?: boolean }[]>([]);
 
   const fetchData = useCallback(async () => {
-    const [pRes, wRes, projRes] = await Promise.all([
+    const [pRes, wRes, projRes, agentRes] = await Promise.all([
       fetch('/api/pipelines'),
       fetch('/api/pipelines?type=workflows'),
       fetch('/api/projects'),
+      fetch('/api/agents'),
     ]);
     const pData = await pRes.json();
     const wData = await wRes.json();
     const projData = await projRes.json();
+    const agentData = await agentRes.json();
     if (Array.isArray(pData)) setPipelines(pData);
     if (Array.isArray(wData)) setWorkflows(wData);
     if (Array.isArray(projData)) setProjects(projData.map((p: any) => ({ name: p.name, path: p.path })));
+    if (Array.isArray(agentData?.agents)) setAgents(agentData.agents);
   }, []);
 
   useEffect(() => {
@@ -167,6 +532,31 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
     fetchData();
   };
 
+  const generateConversationTemplate = () => {
+    const detectedAgents = agents.filter(a => a.detected);
+    const agentEntries = detectedAgents.length >= 2
+      ? detectedAgents.slice(0, 2)
+      : [{ id: 'claude', name: 'Claude Code' }, { id: 'claude', name: 'Claude Code' }];
+
+    return `name: my-conversation
+type: conversation
+description: "Multi-agent collaboration"
+input:
+  project: "Project name"
+  task: "Task description"
+agents:
+  - id: designer
+    agent: ${agentEntries[0].id}
+    role: "You are a software architect. Design the solution and review implementations."
+  - id: builder
+    agent: ${agentEntries[1].id}
+    role: "You are a developer. Implement what the designer proposes."
+max_rounds: 5
+stop_condition: "both agents say DONE"
+initial_prompt: "{{input.task}}"
+`;
+  };
+
   const currentWorkflow = workflows.find(w => w.name === selectedWorkflow);
 
   return (
@@ -180,9 +570,13 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
             className="text-[9px] text-green-400 hover:underline"
           >Import</button>
           <button
-            onClick={() => { setEditorYaml(undefined); setShowEditor(true); }}
+            onClick={() => { setEditorYaml(undefined); setEditorIsConversation(false); setShowEditor(true); }}
             className="text-[9px] text-[var(--accent)] hover:underline"
-          >+ New</button>
+          >+ DAG</button>
+          <button
+            onClick={() => { setImportYaml(generateConversationTemplate()); setShowImport(true); }}
+            className="text-[9px] text-purple-400 hover:underline"
+          >+ Conversation</button>
         </div>
 
         {/* Import form */}
@@ -332,7 +726,8 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
                         const res = await fetch(`/api/pipelines?type=workflow-yaml&name=${encodeURIComponent(w.name)}`);
                         const data = await res.json();
                         setEditorYaml(data.yaml || undefined);
-                      } catch { setEditorYaml(undefined); }
+                        setEditorIsConversation(w.type === 'conversation' || (data.yaml || '').includes('type: conversation'));
+                      } catch { setEditorYaml(undefined); setEditorIsConversation(false); }
                       setShowEditor(true);
                     }}
                     className="text-[8px] text-green-400 hover:underline shrink-0"
@@ -356,6 +751,11 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
                           <div className="flex items-center gap-1.5">
                             <span className={`text-[9px] ${STATUS_COLOR[p.status]}`}>●</span>
                             <span className="text-[9px] text-[var(--text-secondary)] font-mono">{p.id.slice(0, 8)}</span>
+                            {p.type === 'conversation' ? (
+                              <span className="text-[7px] px-1 rounded bg-[var(--accent)]/15 text-[var(--accent)]">
+                                R{p.conversation?.currentRound || 0}/{p.conversation?.config.maxRounds || '?'}
+                              </span>
+                            ) : (
                             <div className="flex gap-0.5 ml-1">
                               {p.nodeOrder.map(nodeId => (
                                 <span key={nodeId} className={`text-[8px] ${STATUS_COLOR[p.nodes[nodeId]?.status || 'pending']}`}>
@@ -363,6 +763,7 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
                                 </span>
                               ))}
                             </div>
+                            )}
                             <span className="text-[8px] text-[var(--text-secondary)] ml-auto">
                               {new Date(p.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                             </span>
@@ -392,6 +793,23 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
       {/* Right — Pipeline detail / Editor */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {showEditor ? (
+          editorIsConversation ? (
+            <Suspense fallback={<div className="flex-1 flex items-center justify-center text-xs text-[var(--text-secondary)]">Loading editor...</div>}>
+              <ConversationEditor
+                initialYaml={editorYaml || ''}
+                onSave={async (yaml) => {
+                  await fetch('/api/pipelines', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'save-workflow', yaml }),
+                  });
+                  setShowEditor(false);
+                  fetchData();
+                }}
+                onClose={() => setShowEditor(false)}
+              />
+            </Suspense>
+          ) : (
           <Suspense fallback={<div className="flex-1 flex items-center justify-center text-xs text-[var(--text-secondary)]">Loading editor...</div>}>
             <PipelineEditor
               initialYaml={editorYaml}
@@ -407,6 +825,7 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
               onClose={() => setShowEditor(false)}
             />
           </Suspense>
+          )
         ) : selectedPipeline ? (
           <>
             {/* Header */}
@@ -416,6 +835,9 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
                   {STATUS_ICON[selectedPipeline.status]}
                 </span>
                 <span className="text-sm font-semibold text-[var(--text-primary)]">{selectedPipeline.workflowName}</span>
+                {selectedPipeline.type === 'conversation' && (
+                  <span className="text-[8px] px-1.5 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)]">conversation</span>
+                )}
                 <span className="text-[10px] text-[var(--text-secondary)] font-mono">{selectedPipeline.id}</span>
                 <div className="flex items-center gap-2 ml-auto">
                   {selectedPipeline.status === 'running' && (
@@ -445,80 +867,31 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
               )}
             </div>
 
-            {/* DAG visualization */}
-            <div className="p-4 space-y-2">
+            {/* Conversation or DAG visualization */}
+            {selectedPipeline.type === 'conversation' && selectedPipeline.conversation ? (
+              <ConversationView
+                pipeline={selectedPipeline}
+                onViewTask={onViewTask}
+              />
+            ) : (
+            <div className="p-4 space-y-2 overflow-y-auto">
               {selectedPipeline.nodeOrder.map((nodeId, idx) => {
                 const node = selectedPipeline.nodes[nodeId];
                 const wf = workflows.find(w => w.name === selectedPipeline.workflowName);
                 const nodeDef = wf?.nodes?.[nodeId];
                 return (
                   <div key={nodeId}>
-                    {/* Connection line */}
                     {idx > 0 && (
                       <div className="flex items-center pl-5 py-1">
                         <div className="w-px h-4 bg-[var(--border)]" />
                       </div>
                     )}
-
-                    {/* Node card */}
-                    <div className={`border rounded-lg p-3 ${
-                      node.status === 'running' ? 'border-yellow-500/50 bg-yellow-500/5' :
-                      node.status === 'done' ? 'border-green-500/30 bg-green-500/5' :
-                      node.status === 'failed' ? 'border-red-500/30 bg-red-500/5' :
-                      'border-[var(--border)]'
-                    }`}>
-                      <div className="flex items-center gap-2">
-                        <span className={STATUS_COLOR[node.status]}>{STATUS_ICON[node.status]}</span>
-                        <span className="text-xs font-semibold text-[var(--text-primary)]">{nodeId}</span>
-                        {nodeDef && nodeDef.mode !== 'shell' && (
-                          <span className="text-[8px] px-1 rounded bg-purple-500/20 text-purple-400">{nodeDef.agent || 'default'}</span>
-                        )}
-                        {node.taskId && (
-                          <button
-                            onClick={() => onViewTask?.(node.taskId!)}
-                            className="text-[9px] text-[var(--accent)] font-mono hover:underline"
-                          >
-                            task:{node.taskId}
-                          </button>
-                        )}
-                        {node.iterations > 1 && (
-                          <span className="text-[9px] text-yellow-400">iter {node.iterations}</span>
-                        )}
-                        <span className="text-[9px] text-[var(--text-secondary)] ml-auto">{node.status}</span>
-                      </div>
-
-                      {node.error && (
-                        <div className="text-[10px] text-red-400 mt-1">{node.error}</div>
-                      )}
-
-                      {/* Outputs */}
-                      {Object.keys(node.outputs).length > 0 && (
-                        <div className="mt-2 space-y-1">
-                          {Object.entries(node.outputs).map(([key, val]) => (
-                            <details key={key} className="text-[10px]">
-                              <summary className="cursor-pointer text-[var(--accent)]">
-                                output: {key} ({val.length} chars)
-                              </summary>
-                              <pre className="mt-1 p-2 bg-[var(--bg-tertiary)] rounded text-[9px] text-[var(--text-secondary)] max-h-32 overflow-auto whitespace-pre-wrap">
-                                {val.slice(0, 1000)}{val.length > 1000 ? '...' : ''}
-                              </pre>
-                            </details>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Timing */}
-                      {node.startedAt && (
-                        <div className="text-[8px] text-[var(--text-secondary)] mt-1">
-                          {node.startedAt && `Started: ${new Date(node.startedAt).toLocaleTimeString()}`}
-                          {node.completedAt && ` · Done: ${new Date(node.completedAt).toLocaleTimeString()}`}
-                        </div>
-                      )}
-                    </div>
+                    <DagNodeCard nodeId={nodeId} node={node} nodeDef={nodeDef} onViewTask={onViewTask} />
                   </div>
                 );
               })}
             </div>
+            )}
           </>
         ) : activeWorkflow ? (() => {
           const w = workflows.find(wf => wf.name === activeWorkflow);
@@ -530,6 +903,7 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
               <div className="px-4 py-3 border-b border-[var(--border)] shrink-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold text-[var(--text-primary)]">{w.name}</span>
+                  {w.type === 'conversation' && <span className="text-[8px] px-1.5 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)]">conversation</span>}
                   {w.builtin && <span className="text-[8px] px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">built-in</span>}
                   <div className="ml-auto flex gap-2">
                     <button
@@ -542,7 +916,8 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
                           const res = await fetch(`/api/pipelines?type=workflow-yaml&name=${encodeURIComponent(w.name)}`);
                           const data = await res.json();
                           setEditorYaml(data.yaml || undefined);
-                        } catch { setEditorYaml(undefined); }
+                          setEditorIsConversation(w.type === 'conversation' || (data.yaml || '').includes('type: conversation'));
+                        } catch { setEditorYaml(undefined); setEditorIsConversation(false); }
                         setShowEditor(true);
                       }}
                       className="text-[10px] px-3 py-1 border border-[var(--border)] text-[var(--text-secondary)] rounded hover:text-[var(--text-primary)]"
@@ -559,7 +934,37 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
                 )}
               </div>
 
-              {/* Node flow visualization */}
+              {/* Conversation or Node flow visualization */}
+              {w.type === 'conversation' && w.conversation ? (
+                <div className="p-4 space-y-3">
+                  {/* Initial prompt */}
+                  <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--bg-tertiary)]">
+                    <div className="text-[9px] text-[var(--text-secondary)] font-medium mb-1">Initial Prompt</div>
+                    <p className="text-[10px] text-[var(--text-primary)]">{w.conversation.initialPrompt}</p>
+                  </div>
+                  {/* Agents */}
+                  <div className="text-[9px] text-[var(--text-secondary)] font-medium">Agents ({w.conversation.agents.length})</div>
+                  <div className="space-y-2">
+                    {w.conversation.agents.map((a, i) => {
+                      const colors = AGENT_COLORS[i % AGENT_COLORS.length];
+                      return (
+                        <div key={a.id} className={`border rounded-lg p-3 ${colors.bg} ${colors.border}`}>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${colors.badge}`}>{a.agent}</span>
+                            <span className="text-[11px] font-semibold text-[var(--text-primary)]">{a.id}</span>
+                          </div>
+                          {a.role && <p className="text-[9px] text-[var(--text-secondary)] mt-1">{a.role}</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* Config */}
+                  <div className="text-[9px] text-[var(--text-secondary)] space-y-0.5">
+                    <div>Max rounds: {w.conversation.maxRounds}</div>
+                    {w.conversation.stopCondition && <div>Stop: {w.conversation.stopCondition}</div>}
+                  </div>
+                </div>
+              ) : (
               <div className="p-4 space-y-2">
                 {nodeEntries.map(([nodeId, node], i) => (
                   <div key={nodeId}>
@@ -593,6 +998,7 @@ export default function PipelineView({ onViewTask, focusPipelineId, onFocusHandl
                   </div>
                 ))}
               </div>
+              )}
             </div>
           );
         })() : (

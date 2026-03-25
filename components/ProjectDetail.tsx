@@ -1,7 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, memo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, memo, lazy, Suspense } from 'react';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
+
+const InlinePipelineView = lazy(() => import('./InlinePipelineView'));
 
 // ─── Syntax highlighting ─────────────────────────────────
 const KEYWORDS = new Set([
@@ -76,7 +78,9 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   // Pipeline bindings state
   const [pipelineBindings, setPipelineBindings] = useState<{ id: number; workflowName: string; enabled: boolean; config: any; lastRunAt: string | null; nextRunAt: string | null }[]>([]);
   const [pipelineRuns, setPipelineRuns] = useState<{ id: string; workflowName: string; pipelineId: string; status: string; summary: string; dedupKey: string | null; createdAt: string }[]>([]);
-  const [availableWorkflows, setAvailableWorkflows] = useState<{ name: string; description?: string; builtin?: boolean }[]>([]);
+  const [availableWorkflows, setAvailableWorkflows] = useState<{ name: string; description?: string; builtin?: boolean; type?: string }[]>([]);
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [expandedPipeline, setExpandedPipeline] = useState<any>(null);
   const [showAddPipeline, setShowAddPipeline] = useState(false);
   const [triggerInput, setTriggerInput] = useState<Record<string, string>>({});
   const [runMenu, setRunMenu] = useState<string | null>(null); // workflowName of open run menu
@@ -402,6 +406,15 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
     if (projectTab === 'pipelines') fetchPipelineBindings();
     if (projectTab === 'claudemd') fetchClaudeMd();
   }, [projectTab, fetchProjectSkills, fetchPipelineBindings, fetchClaudeMd]);
+
+  // Auto-refresh pipeline runs while any is running
+  useEffect(() => {
+    if (projectTab !== 'pipelines') return;
+    const hasRunning = pipelineRuns.some(r => r.status === 'running');
+    if (!hasRunning) return;
+    const timer = setInterval(fetchPipelineBindings, 4000);
+    return () => clearInterval(timer);
+  }, [projectTab, pipelineRuns, fetchPipelineBindings]);
 
   return (
     <>
@@ -1056,60 +1069,101 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
               <div className="text-[9px] text-[var(--text-secondary)] uppercase mb-2">Execution History</div>
               <div className="border border-[var(--border)] rounded overflow-hidden">
                 {pipelineRuns.map(run => (
-                  <div key={run.id} className="flex items-start gap-2 px-3 py-2 border-b border-[var(--border)]/30 last:border-b-0 text-[10px]">
-                    <span className={`shrink-0 ${
-                      run.status === 'done' ? 'text-green-400' : run.status === 'failed' ? 'text-red-400' : run.status === 'skipped' ? 'text-gray-400' : 'text-yellow-400'
-                    }`}>●</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[var(--text-primary)] font-medium">{run.workflowName}</span>
-                        {run.dedupKey && (
-                          <span className="text-[8px] text-[var(--accent)] font-mono">{run.dedupKey.replace('issue:', '#')}</span>
+                  <div key={run.id} className="border-b border-[var(--border)]/30 last:border-b-0">
+                    <div className="flex items-start gap-2 px-3 py-2 text-[10px]">
+                      <span className={`shrink-0 mt-0.5 ${
+                        run.status === 'done' ? 'text-green-400' : run.status === 'failed' ? 'text-red-400' : run.status === 'skipped' ? 'text-gray-400' : 'text-yellow-400'
+                      }`}>{run.status === 'running' ? '●' : '●'}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[var(--text-primary)] font-medium">{run.workflowName}</span>
+                          {run.dedupKey && (
+                            <span className="text-[8px] text-[var(--accent)] font-mono">{run.dedupKey.replace('issue:', '#')}</span>
+                          )}
+                          <button
+                            onClick={async () => {
+                              if (expandedRunId === run.pipelineId) {
+                                setExpandedRunId(null);
+                                setExpandedPipeline(null);
+                              } else {
+                                setExpandedRunId(run.pipelineId);
+                                const res = await fetch(`/api/pipelines/${run.pipelineId}`);
+                                if (res.ok) setExpandedPipeline(await res.json());
+                              }
+                            }}
+                            className={`text-[8px] font-mono hover:underline ${expandedRunId === run.pipelineId ? 'text-[var(--accent)] font-bold' : 'text-[var(--accent)]'}`}
+                            title="Expand / View in Pipelines"
+                          >{run.status === 'running' ? '▾ ' : ''}{run.pipelineId.slice(0, 8)}</button>
+                          <button
+                            onClick={() => window.dispatchEvent(new CustomEvent('forge:navigate', { detail: { view: 'pipelines', pipelineId: run.pipelineId } }))}
+                            className="text-[7px] text-[var(--text-secondary)] hover:text-[var(--accent)]"
+                            title="Open in Pipeline page"
+                          >↗</button>
+                          <span className="text-[8px] text-[var(--text-secondary)] ml-auto">{new Date(run.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                        {!expandedRunId && run.summary && (
+                          <pre className="text-[9px] text-[var(--text-secondary)] mt-1 whitespace-pre-wrap break-words line-clamp-3">{run.summary}</pre>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {run.status === 'running' && (
+                          <button
+                            onClick={async () => {
+                              await fetch(`/api/pipelines/${run.pipelineId}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: 'cancel' }),
+                              });
+                              fetchPipelineBindings();
+                            }}
+                            className="text-[8px] text-red-400 hover:underline"
+                          >Cancel</button>
+                        )}
+                        {run.status === 'failed' && run.dedupKey && (
+                          <button
+                            onClick={async () => {
+                              await fetch('/api/project-pipelines', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: 'reset-dedup', projectPath, workflowName: run.workflowName, dedupKey: run.dedupKey }),
+                              });
+                              await fetch('/api/project-pipelines', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: 'delete-run', id: run.id }),
+                              });
+                              fetchPipelineBindings();
+                            }}
+                            className="text-[8px] text-[var(--accent)] hover:underline"
+                          >Retry</button>
                         )}
                         <button
-                          onClick={() => window.dispatchEvent(new CustomEvent('forge:navigate', { detail: { view: 'pipelines', pipelineId: run.pipelineId } }))}
-                          className="text-[8px] text-[var(--accent)] font-mono hover:underline"
-                          title="View in Pipelines"
-                        >{run.pipelineId.slice(0, 8)}</button>
-                        <span className="text-[8px] text-[var(--text-secondary)] ml-auto">{new Date(run.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                      </div>
-                      {run.summary && (
-                        <pre className="text-[9px] text-[var(--text-secondary)] mt-1 whitespace-pre-wrap break-words line-clamp-3">{run.summary}</pre>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {run.status === 'failed' && run.dedupKey && (
-                        <button
                           onClick={async () => {
-                            await fetch('/api/project-pipelines', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ action: 'reset-dedup', projectPath, workflowName: run.workflowName, dedupKey: run.dedupKey }),
-                            });
-                            // Delete the failed run then re-scan
+                            if (!confirm('Delete this run?')) return;
                             await fetch('/api/project-pipelines', {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ action: 'delete-run', id: run.id }),
                             });
+                            if (expandedRunId === run.pipelineId) { setExpandedRunId(null); setExpandedPipeline(null); }
                             fetchPipelineBindings();
                           }}
-                          className="text-[8px] text-[var(--accent)] hover:underline"
-                        >Retry</button>
-                      )}
-                      <button
-                        onClick={async () => {
-                          if (!confirm('Delete this run?')) return;
-                          await fetch('/api/project-pipelines', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ action: 'delete-run', id: run.id }),
-                          });
-                          fetchPipelineBindings();
-                        }}
-                        className="text-[8px] text-[var(--text-secondary)] hover:text-[var(--red)]"
-                      >×</button>
+                          className="text-[8px] text-[var(--text-secondary)] hover:text-[var(--red)]"
+                        >×</button>
+                      </div>
                     </div>
+                    {/* Expanded inline pipeline view */}
+                    {expandedRunId === run.pipelineId && expandedPipeline && (
+                      <Suspense fallback={<div className="p-2 text-[9px] text-[var(--text-secondary)]">Loading...</div>}>
+                        <InlinePipelineView
+                          pipeline={expandedPipeline}
+                          onRefresh={async () => {
+                            const res = await fetch(`/api/pipelines/${run.pipelineId}`);
+                            if (res.ok) setExpandedPipeline(await res.json());
+                          }}
+                        />
+                      </Suspense>
+                    )}
                   </div>
                 ))}
               </div>

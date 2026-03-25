@@ -353,6 +353,56 @@ export function createDelivery(opts: {
   return delivery;
 }
 
+// ─── Standard Prompt Builder (Envelope Format) ───────────
+
+function buildStandardPrompt(
+  delivery: Delivery,
+  phase: DeliveryPhase,
+  phaseIndex: number,
+  inputArtifacts: Artifact[],
+): string {
+  const sections: string[] = [];
+
+  // 1. Role
+  sections.push(`===ROLE===\n${phase.agentRole}\n===END===`);
+
+  // 2. Context — always present
+  sections.push(`===CONTEXT===
+Project: ${delivery.input.project} (${delivery.input.projectPath})
+Delivery: ${delivery.title}
+Phase: ${phase._label || phase.name} (${phaseIndex + 1}/${delivery.phases.length})${delivery.input.prUrl ? `\nPR: ${delivery.input.prUrl}` : ''}${delivery.input.description ? `\nTask: ${delivery.input.description}` : ''}
+===END===`);
+
+  // 3. Input artifacts — from upstream agents
+  if (inputArtifacts.length > 0) {
+    for (const a of inputArtifacts) {
+      // Skip request/response audit records
+      if (a.name.includes('-request-') || a.name.includes('-response-')) continue;
+      sections.push(`===INPUT:${a.name} (from: ${a.producedBy})===\n${a.content}\n===END===`);
+    }
+  }
+
+  // 4. Feedback — from user or other agents
+  if (phase.interactions.length > 0) {
+    for (const inter of phase.interactions) {
+      sections.push(`===FEEDBACK:${inter.from}===\n${inter.message}\n===END===`);
+    }
+  }
+
+  // 5. Output instructions
+  const outputName = phase._outputArtifactName || `${phase.name}-output.md`;
+  sections.push(`===OUTPUT_FORMAT===
+Produce your output between these markers:
+===ARTIFACT:${outputName}===
+(your structured output here)
+===ARTIFACT:${outputName}===
+
+You MUST include the artifact markers. The content between markers will be saved as "${outputName}" and passed to downstream agents.
+===END===`);
+
+  return sections.join('\n\n');
+}
+
 // ─── Phase Dispatch ───────────────────────────────────────
 
 function dispatchPhase(delivery: Delivery, phaseIndex: number): void {
@@ -367,42 +417,32 @@ function dispatchPhase(delivery: Delivery, phaseIndex: number): void {
     return;
   }
 
-  // Build prompt with artifacts
-  const artifacts = listArtifacts(delivery.id);
-  const relevantArtifacts = artifacts.filter(a =>
+  // Build standardized prompt with envelope format
+  const allArtifacts = listArtifacts(delivery.id);
+  const relevantArtifacts = allArtifacts.filter(a =>
     phase.inputArtifactTypes.includes(a.type)
   );
-
-  let prompt = `[Your role: ${phase.agentRole}]\n\n`;
-
-  // Add input context
-  if (phaseIndex === 0) {
-    // Analyze phase: include original input
-    if (delivery.input.prUrl) {
-      prompt += `PR URL: ${delivery.input.prUrl}\n\n`;
-    }
-    if (delivery.input.description) {
-      prompt += `Task Description:\n${delivery.input.description}\n\n`;
-    }
-    prompt += `Project: ${delivery.input.project} (${delivery.input.projectPath})\n\n`;
-    prompt += `Please analyze the project and the task, then produce the requirements document.`;
-  } else {
-    // Other phases: include relevant artifacts
-    if (relevantArtifacts.length > 0) {
-      prompt += `--- Input Documents ---\n\n`;
-      for (const a of relevantArtifacts) {
-        prompt += `=== ${a.name} (${a.type}) ===\n${a.content}\n\n`;
-      }
-    }
-
-    // Include interactions/feedback
-    if (phase.interactions.length > 0) {
-      prompt += `--- Feedback/Instructions ---\n\n`;
-      for (const i of phase.interactions) {
-        prompt += `[${i.from}]: ${i.message}\n\n`;
+  // Also include artifacts from any upstream phase (by connection, not just type)
+  // This ensures user-connected edges pass data even with custom types
+  const upstreamPhases = delivery.phases.slice(0, phaseIndex).filter(p => p.status === 'done');
+  for (const up of upstreamPhases) {
+    for (const aid of up.outputArtifactIds) {
+      if (!relevantArtifacts.find(a => a.id === aid)) {
+        const a = allArtifacts.find(x => x.id === aid);
+        if (a) relevantArtifacts.push(a);
       }
     }
   }
+
+  const prompt = buildStandardPrompt(delivery, phase, phaseIndex, relevantArtifacts);
+
+  // Record the request as an artifact for audit trail
+  createArtifact(delivery.id, {
+    type: 'custom',
+    name: `${phase.name}-request-${phase.taskIds.length + 1}.md`,
+    content: prompt,
+    producedBy: 'system',
+  });
 
   // Create task
   const task = createTask({
@@ -443,6 +483,13 @@ function setupDeliveryTaskListener(deliveryId: string, taskId: string, phaseInde
     const task = getTask(taskId);
 
     if (data === 'failed' || !task) {
+      // Record failed response
+      createArtifact(deliveryId, {
+        type: 'custom',
+        name: `${phase.name}-response-${phase.taskIds.length}-failed.md`,
+        content: task?.error || 'Task failed',
+        producedBy: phase.name,
+      });
       phase.status = 'failed';
       phase.error = task?.error || 'Task failed';
       phase.completedAt = new Date().toISOString();
@@ -452,8 +499,14 @@ function setupDeliveryTaskListener(deliveryId: string, taskId: string, phaseInde
       return;
     }
 
-    // Extract artifacts from output
+    // Record response as artifact for audit trail
     const output = task.resultSummary || '';
+    createArtifact(deliveryId, {
+      type: 'custom',
+      name: `${phase.name}-response-${phase.taskIds.length}.md`,
+      content: output,
+      producedBy: phase.name,
+    });
     const extracted = extractArtifacts(output, deliveryId, phase.name);
 
     // If no structured artifacts found, create a fallback from the full output

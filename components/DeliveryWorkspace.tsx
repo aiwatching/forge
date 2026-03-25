@@ -28,6 +28,9 @@ interface DeliveryPhase {
   _label?: string;
   _icon?: string;
   _waitForHuman?: boolean;
+  _outputArtifactName?: string;
+  _requires?: string[];
+  _produces?: string[];
 }
 
 interface Delivery {
@@ -368,11 +371,11 @@ function ApprovalPanel({ deliveryId, artifacts, onRefresh }: { deliveryId: strin
 // ─── Grid Flow Overlay (SVG arrows between panels) ────────
 
 function GridFlowOverlay({ phases }: { phases: DeliveryPhase[] }) {
-  // Dynamic: draw arrows between sequential phases in a 2-column grid
-  // Phase positions in 2-col grid: (col, row) = (i%2, floor(i/2))
-  // Center of each cell in 1000x500 viewBox
-  const cols = 2;
-  const cellW = 500, cellH = phases.length <= 2 ? 500 : 250;
+  // Draw arrows based on actual _requires/_produces relationships, not sequential order
+  const cols = phases.length <= 2 ? 2 : phases.length <= 4 ? 2 : 3;
+  const rows = Math.ceil(phases.length / cols);
+  const cellW = 1000 / cols;
+  const cellH = 500 / rows;
 
   function cellCenter(i: number): [number, number] {
     const col = i % cols;
@@ -380,29 +383,50 @@ function GridFlowOverlay({ phases }: { phases: DeliveryPhase[] }) {
     return [col * cellW + cellW / 2, row * cellH + cellH / 2];
   }
 
-  const arrows: { id: string; x1: number; y1: number; x2: number; y2: number; active: boolean; done: boolean; color: string }[] = [];
+  // Build producer map: artifact name → phase index
+  const producerMap = new Map<string, number>();
+  phases.forEach((p, i) => {
+    const produces = p._produces || [p._outputArtifactName || `${p.name}-output.md`];
+    for (const name of produces) {
+      producerMap.set(name, i);
+    }
+  });
 
-  for (let i = 0; i < phases.length - 1; i++) {
-    const [x1, y1] = cellCenter(i);
-    const [x2, y2] = cellCenter(i + 1);
-    const fromDone = phases[i].status === 'done';
-    const toActive = phases[i + 1].status === 'running' || phases[i + 1].status === 'waiting_human';
-
-    // Offset endpoints toward each other (not dead center)
-    const dx = x2 - x1, dy = y2 - y1;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const offset = 100;
-    arrows.push({
-      id: `flow-${i}`,
-      x1: x1 + (dx / len) * offset,
-      y1: y1 + (dy / len) * offset,
-      x2: x2 - (dx / len) * offset,
-      y2: y2 - (dy / len) * offset,
-      active: fromDone && toActive,
-      done: fromDone,
-      color: PHASE_COLORS[i % PHASE_COLORS.length],
-    });
+  // Build arrows from requires → producer
+  interface Arrow {
+    id: string; x1: number; y1: number; x2: number; y2: number;
+    active: boolean; done: boolean; color: string; label: string;
   }
+  const arrows: Arrow[] = [];
+
+  phases.forEach((phase, targetIdx) => {
+    const requires = phase._requires || [];
+    for (const reqName of requires) {
+      const sourceIdx = producerMap.get(reqName);
+      if (sourceIdx === undefined || sourceIdx === targetIdx) continue;
+
+      const [sx, sy] = cellCenter(sourceIdx);
+      const [tx, ty] = cellCenter(targetIdx);
+      const dx = tx - sx, dy = ty - sy;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const offset = 80;
+
+      const sourceDone = phases[sourceIdx].status === 'done';
+      const targetActive = phase.status === 'running' || phase.status === 'waiting_human';
+
+      arrows.push({
+        id: `flow-${sourceIdx}-${targetIdx}-${reqName}`,
+        x1: sx + (dx / len) * offset,
+        y1: sy + (dy / len) * offset,
+        x2: tx - (dx / len) * offset,
+        y2: ty - (dy / len) * offset,
+        active: sourceDone && targetActive,
+        done: sourceDone,
+        color: PHASE_COLORS[sourceIdx % PHASE_COLORS.length],
+        label: reqName,
+      });
+    }
+  });
 
   return (
     <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 1000 500" preserveAspectRatio="none">
@@ -414,8 +438,8 @@ function GridFlowOverlay({ phases }: { phases: DeliveryPhase[] }) {
         ))}
       </defs>
       {arrows.map(a => {
-        const opacity = a.active ? 1 : a.done ? 0.5 : 0.15;
-        const markerIdx = PHASE_COLORS.indexOf(a.color) >= 0 ? PHASE_COLORS.indexOf(a.color) : parseInt(a.id.split('-')[1]) || 0;
+        const opacity = a.active ? 1 : a.done ? 0.5 : 0.12;
+        const markerIdx = PHASE_COLORS.indexOf(a.color) >= 0 ? PHASE_COLORS.indexOf(a.color) : 0;
         return (
           <g key={a.id}>
             <line
@@ -427,6 +451,17 @@ function GridFlowOverlay({ phases }: { phases: DeliveryPhase[] }) {
             >
               {a.active && <animate attributeName="stroke-dashoffset" from="24" to="0" dur="0.8s" repeatCount="indefinite" />}
             </line>
+            {/* Artifact name label on the line */}
+            {(a.active || a.done) && (
+              <text
+                x={(a.x1 + a.x2) / 2}
+                y={(a.y1 + a.y2) / 2 - 5}
+                fill={a.color}
+                fontSize="9"
+                textAnchor="middle"
+                opacity={Math.min(opacity + 0.3, 1)}
+              >📄 {a.label}</text>
+            )}
           </g>
         );
       })}

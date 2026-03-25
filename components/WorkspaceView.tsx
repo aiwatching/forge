@@ -114,6 +114,7 @@ const AgentPanel = memo(function AgentPanel({ agent, projectPath, colorIdx, onRe
       wsRef.current = ws;
 
       let isNewSession = false;
+      let connectedSession = '';
 
       ws.onopen = () => {
         isNewSession = true;
@@ -124,9 +125,10 @@ const AgentPanel = memo(function AgentPanel({ agent, projectPath, colorIdx, onRe
         if (disposed) return;
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === 'data') {
-            term.write(msg.data);
+          if (msg.type === 'output') {
+            try { term.write(msg.data); } catch {}
           } else if (msg.type === 'connected') {
+            connectedSession = msg.sessionName || '';
             // Terminal session ready — launch agent
             if (isNewSession) {
               isNewSession = false;
@@ -145,15 +147,42 @@ const AgentPanel = memo(function AgentPanel({ agent, projectPath, colorIdx, onRe
                 ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
               }, 50);
             }, 200);
-          } else if (msg.type === 'error' && msg.message?.includes('no longer exists')) {
-            isNewSession = true;
-            ws.send(JSON.stringify({ type: 'create', cols: term.cols, rows: term.rows }));
+          } else if (msg.type === 'error') {
+            if (msg.message?.includes('no longer exists')) {
+              isNewSession = true;
+              ws.send(JSON.stringify({ type: 'create', cols: term.cols, rows: term.rows }));
+            } else {
+              term.write(`\r\n\x1b[93m[${msg.message || 'error'}]\x1b[0m\r\n`);
+            }
           }
         } catch {}
       };
 
       ws.onclose = () => {
-        if (!disposed) term.write('\r\n\x1b[90m[disconnected]\x1b[0m\r\n');
+        if (disposed) return;
+        term.write('\r\n\x1b[90m[disconnected — reconnecting...]\x1b[0m\r\n');
+        // Auto-reconnect after 2s
+        setTimeout(() => {
+          if (disposed) return;
+          const ws2 = new WebSocket(getWsUrl());
+          wsRef.current = ws2;
+          ws2.onopen = () => {
+            if (connectedSession) {
+              ws2.send(JSON.stringify({ type: 'attach', sessionName: connectedSession, cols: term.cols, rows: term.rows }));
+            } else {
+              isNewSession = true;
+              ws2.send(JSON.stringify({ type: 'create', cols: term.cols, rows: term.rows }));
+            }
+          };
+          ws2.onmessage = ws.onmessage;
+          ws2.onclose = ws.onclose;
+          term.onData((data) => {
+            if (ws2.readyState === WebSocket.OPEN) ws2.send(JSON.stringify({ type: 'input', data }));
+          });
+          term.onResize(({ cols, rows }) => {
+            if (ws2.readyState === WebSocket.OPEN) ws2.send(JSON.stringify({ type: 'resize', cols, rows }));
+          });
+        }, 2000);
       };
 
       // Forward user input to tmux

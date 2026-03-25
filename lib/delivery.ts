@@ -344,6 +344,10 @@ export function createDelivery(opts: {
         interactions: [],
         _requires: requires,
         _produces: [preset?.outputArtifactName || `${p.name}-output.md`],
+        _outputArtifactName: preset?.outputArtifactName || `${p.name}-output.md`,
+        _outputArtifactType: preset?.outputArtifactType,
+        _label: preset?.label,
+        _icon: preset?.icon,
       };
     });
   }

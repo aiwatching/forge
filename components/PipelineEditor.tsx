@@ -36,6 +36,9 @@ function PipelineNode({ id, data }: NodeProps<Node<NodeData>>) {
       <Handle type="target" position={Position.Top} className="!bg-[var(--accent)] !w-3 !h-3" />
 
       <div className="px-3 py-2 border-b border-[#3a3a5a] flex items-center gap-2">
+        <span className={`text-[8px] px-1 py-0.5 rounded font-medium ${
+          (data as any).mode === 'shell' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-purple-500/20 text-purple-400'
+        }`}>{(data as any).mode === 'shell' ? 'shell' : ((data as any).agent || 'default')}</span>
         <span className="text-xs font-semibold text-white">{data.label}</span>
         <div className="ml-auto flex gap-1">
           <button onClick={() => data.onEdit(id)} className="text-[9px] text-[var(--accent)] hover:text-white">edit</button>

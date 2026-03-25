@@ -22,6 +22,8 @@ const SessionView = lazy(() => import('./SessionView'));
 const NewTaskModal = lazy(() => import('./NewTaskModal'));
 const SettingsModal = lazy(() => import('./SettingsModal'));
 const MonitorPanel = lazy(() => import('./MonitorPanel'));
+const DeliveryWorkspace = lazy(() => import('./DeliveryWorkspace'));
+const DeliveryList = lazy(() => import('./DeliveryList'));
 
 interface UsageSummary {
   provider: string;
@@ -95,7 +97,8 @@ function FloatingBrowser({ onClose }: { onClose: () => void }) {
 }
 
 export default function Dashboard({ user }: { user: any }) {
-  const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal' | 'docs' | 'projects' | 'pipelines' | 'skills' | 'logs' | 'usage'>('terminal');
+  const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal' | 'docs' | 'projects' | 'pipelines' | 'delivery' | 'skills' | 'logs' | 'usage'>('terminal');
+  const [deliveryId, setDeliveryId] = useState<string | null>(null);
   const [browserMode, setBrowserMode] = useState<'none' | 'float' | 'right' | 'left'>('none');
   const [showBrowserMenu, setShowBrowserMenu] = useState(false);
   const [browserWidth, setBrowserWidth] = useState(600);
@@ -318,7 +321,7 @@ export default function Dashboard({ user }: { user: any }) {
             </button>
             <span className="w-[2px] h-4 bg-[var(--text-secondary)]/30 mx-1.5" />
             {/* Automation */}
-            {(['tasks', 'pipelines'] as const).map(mode => (
+            {(['tasks', 'pipelines', 'delivery'] as const).map(mode => (
               <button
                 key={mode}
                 onClick={() => setViewMode(mode)}
@@ -328,7 +331,7 @@ export default function Dashboard({ user }: { user: any }) {
                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                 }`}
               >
-                {{ tasks: 'Tasks', pipelines: 'Pipelines' }[mode]}
+                {{ tasks: 'Tasks', pipelines: 'Pipelines', delivery: 'Delivery' }[mode]}
               </button>
             ))}
             <span className="w-[2px] h-4 bg-[var(--text-secondary)]/30 mx-1.5" />
@@ -711,6 +714,20 @@ export default function Dashboard({ user }: { user: any }) {
           </Suspense>
         )}
 
+
+        {/* Delivery */}
+        {viewMode === 'delivery' && (
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
+            {deliveryId ? (
+              <DeliveryWorkspace deliveryId={deliveryId} onClose={() => setDeliveryId(null)} />
+            ) : (
+              <DeliveryList
+                projects={projects}
+                onOpen={(id) => setDeliveryId(id)}
+              />
+            )}
+          </Suspense>
+        )}
 
         {/* Skills */}
         {viewMode === 'skills' && (

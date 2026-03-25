@@ -40,6 +40,12 @@ export interface DeliveryPhase {
   completedAt?: string;
   error?: string;
   interactions: { from: string; message: string; taskId?: string; timestamp: string }[];
+  // Custom metadata (from user-defined phases)
+  _waitForHuman?: boolean;
+  _label?: string;
+  _icon?: string;
+  _outputArtifactName?: string;
+  _outputArtifactType?: ArtifactType;
 }
 
 export interface Delivery {
@@ -202,6 +208,84 @@ Output your review between artifact markers:
   },
 ];
 
+// ─── Role Presets ─────────────────────────────────────────
+
+export interface RolePreset {
+  id: string;
+  label: string;
+  icon: string;
+  role: string;
+  inputArtifactTypes: ArtifactType[];
+  outputArtifactName: string;
+  outputArtifactType: ArtifactType;
+  waitForHuman?: boolean;  // pause after completion for approval
+}
+
+export const ROLE_PRESETS: RolePreset[] = [
+  {
+    id: 'pm', label: 'PM - Analyze', icon: '📋',
+    role: 'You are a Product Manager. Analyze the requirements, break down into modules, identify edge cases.',
+    inputArtifactTypes: [],
+    outputArtifactName: 'requirements.md', outputArtifactType: 'requirements',
+    waitForHuman: true,
+  },
+  {
+    id: 'engineer', label: 'Engineer - Implement', icon: '🔨',
+    role: 'You are a Senior Engineer. Design the architecture and implement the solution based on the requirements.',
+    inputArtifactTypes: ['requirements'],
+    outputArtifactName: 'architecture.md', outputArtifactType: 'architecture',
+  },
+  {
+    id: 'qa', label: 'QA - Test', icon: '🧪',
+    role: 'You are a QA Engineer. Design test cases from the requirements and architecture, then run them.',
+    inputArtifactTypes: ['requirements', 'architecture'],
+    outputArtifactName: 'test-plan.md', outputArtifactType: 'test-plan',
+  },
+  {
+    id: 'reviewer', label: 'Reviewer', icon: '🔍',
+    role: 'You are a Code Reviewer. Review all artifacts, check code quality, approve or request changes.',
+    inputArtifactTypes: ['requirements', 'architecture', 'test-plan', 'code-diff'],
+    outputArtifactName: 'review-report.md', outputArtifactType: 'review-report',
+  },
+  {
+    id: 'devops', label: 'DevOps - Deploy', icon: '🚀',
+    role: 'You are a DevOps engineer. Set up CI/CD, deployment configs, and infrastructure.',
+    inputArtifactTypes: ['architecture'],
+    outputArtifactName: 'deploy-plan.md', outputArtifactType: 'custom',
+  },
+  {
+    id: 'security', label: 'Security Audit', icon: '🔒',
+    role: 'You are a security auditor. Review code for vulnerabilities, check OWASP top 10, suggest fixes.',
+    inputArtifactTypes: ['architecture', 'code-diff'],
+    outputArtifactName: 'security-report.md', outputArtifactType: 'review-report',
+  },
+  {
+    id: 'docs', label: 'Tech Writer - Docs', icon: '📝',
+    role: 'You are a technical writer. Write API documentation, README updates, and user guides based on the implementation.',
+    inputArtifactTypes: ['requirements', 'architecture'],
+    outputArtifactName: 'documentation.md', outputArtifactType: 'custom',
+  },
+];
+
+function buildPhasePrompt(p: PhaseInput): string {
+  let prompt = p.role;
+  prompt += `\n\nOutput your result between artifact markers:\n===ARTIFACT:${p.outputArtifactName}===\n(your output here)\n===ARTIFACT:${p.outputArtifactName}===`;
+  return prompt;
+}
+
+/** User-defined phase input for creating a delivery */
+export interface PhaseInput {
+  name: string;         // unique id within this delivery
+  label: string;
+  icon: string;
+  role: string;
+  agentId: string;
+  inputArtifactTypes: ArtifactType[];
+  outputArtifactName: string;
+  outputArtifactType: ArtifactType;
+  waitForHuman?: boolean;
+}
+
 // ─── Create Delivery ──────────────────────────────────────
 
 export function createDelivery(opts: {
@@ -210,18 +294,41 @@ export function createDelivery(opts: {
   projectPath: string;
   prUrl?: string;
   description?: string;
-  agentId?: string;  // default agent for all phases
+  agentId?: string;       // default agent for all phases
+  customPhases?: PhaseInput[];  // user-defined phases (overrides defaults)
 }): Delivery {
   const id = randomUUID().slice(0, 8);
-  const agentId = opts.agentId || loadSettings().defaultAgent || 'claude';
+  const defaultAgentId = opts.agentId || loadSettings().defaultAgent || 'claude';
 
-  const phases: DeliveryPhase[] = DEFAULT_PHASES.map(p => ({
-    ...p,
-    agentId,
-    taskIds: [],
-    outputArtifactIds: [],
-    interactions: [],
-  }));
+  let phases: DeliveryPhase[];
+
+  if (opts.customPhases && opts.customPhases.length > 0) {
+    // Custom phases from user
+    phases = opts.customPhases.map(p => ({
+      name: p.name as PhaseName,
+      status: 'pending' as PhaseStatus,
+      agentRole: buildPhasePrompt(p),
+      agentId: p.agentId || defaultAgentId,
+      taskIds: [],
+      inputArtifactTypes: p.inputArtifactTypes,
+      outputArtifactIds: [],
+      interactions: [],
+      _waitForHuman: p.waitForHuman,
+      _label: p.label,
+      _icon: p.icon,
+      _outputArtifactName: p.outputArtifactName,
+      _outputArtifactType: p.outputArtifactType,
+    }));
+  } else {
+    // Default 4-phase
+    phases = DEFAULT_PHASES.map(p => ({
+      ...p,
+      agentId: defaultAgentId,
+      taskIds: [],
+      outputArtifactIds: [],
+      interactions: [],
+    }));
+  }
 
   const delivery: Delivery = {
     id,
@@ -351,12 +458,12 @@ function setupDeliveryTaskListener(deliveryId: string, taskId: string, phaseInde
 
     // If no structured artifacts found, create a fallback from the full output
     if (extracted.length === 0 && output.trim()) {
-      const fallbackName = `${phase.name}-output.md`;
-      let fallbackType: ArtifactType = 'custom';
-      if (phase.name === 'analyze') fallbackType = 'requirements';
-      else if (phase.name === 'implement') fallbackType = 'architecture';
-      else if (phase.name === 'test') fallbackType = 'test-plan';
-      else if (phase.name === 'review') fallbackType = 'review-report';
+      const fallbackName = phase._outputArtifactName || `${phase.name}-output.md`;
+      const fallbackType: ArtifactType = phase._outputArtifactType ||
+        (phase.name === 'analyze' ? 'requirements' :
+         phase.name === 'implement' ? 'architecture' :
+         phase.name === 'test' ? 'test-plan' :
+         phase.name === 'review' ? 'review-report' : 'custom');
 
       const fallback = createArtifact(deliveryId, {
         type: fallbackType,
@@ -374,8 +481,9 @@ function setupDeliveryTaskListener(deliveryId: string, taskId: string, phaseInde
       try { writeArtifactToProject(a, delivery.input.projectPath); } catch {}
     }
 
-    // Analyze phase: wait for human approval
-    if (phase.name === 'analyze') {
+    // Wait for human approval if configured (default: analyze phase)
+    const needsHumanApproval = phase._waitForHuman !== undefined ? phase._waitForHuman : phase.name === 'analyze';
+    if (needsHumanApproval) {
       phase.status = 'waiting_human';
       saveDelivery(delivery);
       return;
@@ -410,19 +518,20 @@ export function approveDeliveryPhase(deliveryId: string, feedback?: string): boo
   const delivery = getDelivery(deliveryId);
   if (!delivery) return false;
 
-  const analyzePhase = delivery.phases.find(p => p.name === 'analyze');
-  if (!analyzePhase || analyzePhase.status !== 'waiting_human') return false;
+  // Find any phase waiting for human approval
+  const waitingPhase = delivery.phases.find(p => p.status === 'waiting_human');
+  if (!waitingPhase) return false;
 
   if (feedback) {
-    analyzePhase.interactions.push({
+    waitingPhase.interactions.push({
       from: 'user',
       message: feedback,
       timestamp: new Date().toISOString(),
     });
   }
 
-  analyzePhase.status = 'done';
-  analyzePhase.completedAt = new Date().toISOString();
+  waitingPhase.status = 'done';
+  waitingPhase.completedAt = new Date().toISOString();
   saveDelivery(delivery);
 
   advanceToNextPhase(delivery);
@@ -433,20 +542,21 @@ export function rejectDeliveryPhase(deliveryId: string, feedback: string): boole
   const delivery = getDelivery(deliveryId);
   if (!delivery) return false;
 
-  const analyzePhase = delivery.phases.find(p => p.name === 'analyze');
-  if (!analyzePhase || analyzePhase.status !== 'waiting_human') return false;
+  const waitingPhase = delivery.phases.find(p => p.status === 'waiting_human');
+  if (!waitingPhase) return false;
 
-  analyzePhase.interactions.push({
+  const phaseIndex = delivery.phases.indexOf(waitingPhase);
+  waitingPhase.interactions.push({
     from: 'user',
     message: `REJECTED: ${feedback}`,
     timestamp: new Date().toISOString(),
   });
 
-  // Re-run analyze with feedback
-  analyzePhase.status = 'pending';
+  // Re-run the phase with feedback
+  waitingPhase.status = 'pending';
   saveDelivery(delivery);
 
-  dispatchPhase(delivery, 0);
+  dispatchPhase(delivery, phaseIndex);
   return true;
 }
 

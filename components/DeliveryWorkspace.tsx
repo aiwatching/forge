@@ -25,6 +25,9 @@ interface DeliveryPhase {
   startedAt?: string;
   completedAt?: string;
   error?: string;
+  _label?: string;
+  _icon?: string;
+  _waitForHuman?: boolean;
 }
 
 interface Delivery {
@@ -41,12 +44,30 @@ interface Delivery {
 
 // ─── Phase config ─────────────────────────────────────────
 
-const PHASE_META: Record<string, { icon: string; color: string; label: string }> = {
-  analyze:   { icon: '📋', color: '#22c55e', label: 'PM - Analyze' },
-  implement: { icon: '🔨', color: '#3b82f6', label: 'Engineer - Implement' },
-  test:      { icon: '🧪', color: '#a855f7', label: 'QA - Test' },
-  review:    { icon: '🔍', color: '#f97316', label: 'Reviewer - Review' },
+const PHASE_COLORS = ['#22c55e', '#3b82f6', '#a855f7', '#f97316', '#ec4899', '#06b6d4', '#eab308'];
+
+const PHASE_META_DEFAULTS: Record<string, { icon: string; label: string }> = {
+  analyze:   { icon: '📋', label: 'PM - Analyze' },
+  implement: { icon: '🔨', label: 'Engineer - Implement' },
+  test:      { icon: '🧪', label: 'QA - Test' },
+  review:    { icon: '🔍', label: 'Reviewer - Review' },
+  pm:        { icon: '📋', label: 'PM - Analyze' },
+  engineer:  { icon: '🔨', label: 'Engineer - Implement' },
+  qa:        { icon: '🧪', label: 'QA - Test' },
+  reviewer:  { icon: '🔍', label: 'Reviewer - Review' },
+  devops:    { icon: '🚀', label: 'DevOps - Deploy' },
+  security:  { icon: '🔒', label: 'Security Audit' },
+  docs:      { icon: '📝', label: 'Tech Writer - Docs' },
 };
+
+function getPhaseMeta(phase: DeliveryPhase, index: number) {
+  const defaults = PHASE_META_DEFAULTS[phase.name] || { icon: '⚙', label: phase.name };
+  return {
+    icon: phase._icon || defaults.icon,
+    label: phase._label || defaults.label,
+    color: PHASE_COLORS[index % PHASE_COLORS.length],
+  };
+}
 
 // ─── Task SSE stream ──────────────────────────────────────
 
@@ -70,12 +91,13 @@ function useTaskStream(taskId: string | undefined, isRunning: boolean) {
 
 // ─── Phase Terminal Panel ─────────────────────────────────
 
-function PhaseTerminal({ phase, deliveryId, artifacts }: {
+function PhaseTerminal({ phase, phaseIndex, deliveryId, artifacts }: {
   phase: DeliveryPhase;
+  phaseIndex: number;
   deliveryId: string;
   artifacts: Artifact[];
 }) {
-  const meta = PHASE_META[phase.name] || { icon: '⚙', color: '#888', label: phase.name };
+  const meta = getPhaseMeta(phase, phaseIndex);
   const isRunning = phase.status === 'running';
   const lastTaskId = phase.taskIds[phase.taskIds.length - 1];
   const log = useTaskStream(lastTaskId, isRunning);
@@ -197,7 +219,7 @@ function PhaseTimeline({ phases, currentIndex }: { phases: DeliveryPhase[]; curr
   return (
     <div className="space-y-1">
       {phases.map((phase, i) => {
-        const meta = PHASE_META[phase.name] || { icon: '⚙', color: '#888', label: phase.name };
+        const meta = getPhaseMeta(phase, i);
         const isCurrent = i === currentIndex && phase.status !== 'done';
         return (
           <div key={phase.name} className="flex items-center gap-2">
@@ -264,7 +286,7 @@ function DataFlowOverlay({ phases }: { phases: DeliveryPhase[] }) {
   return (
     <div className="flex items-center gap-1 px-2">
       {phases.map((phase, i) => {
-        const meta = PHASE_META[phase.name] || { icon: '⚙', color: '#888', label: phase.name };
+        const meta = getPhaseMeta(phase, i);
         const isDone = phase.status === 'done';
         const isRunning = phase.status === 'running' || phase.status === 'waiting_human';
         return (
@@ -343,49 +365,57 @@ function ApprovalPanel({ deliveryId, artifacts, onRefresh }: { deliveryId: strin
   );
 }
 
-// ─── Grid Flow Overlay (SVG arrows between 2x2 panels) ───
+// ─── Grid Flow Overlay (SVG arrows between panels) ────────
 
 function GridFlowOverlay({ phases }: { phases: DeliveryPhase[] }) {
-  // Layout: [analyze][implement] / [test][review]
-  // Flow: analyze→implement (right), implement→test (down-left), test→review (right)
-  // Plus: review↔implement (up), review↔test (left)
+  // Dynamic: draw arrows between sequential phases in a 2-column grid
+  // Phase positions in 2-col grid: (col, row) = (i%2, floor(i/2))
+  // Center of each cell in 1000x500 viewBox
+  const cols = 2;
+  const cellW = 500, cellH = phases.length <= 2 ? 500 : 250;
 
-  const getPhaseState = (name: string) => {
-    const p = phases.find(ph => ph.name === name);
-    return p?.status || 'pending';
-  };
+  function cellCenter(i: number): [number, number] {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    return [col * cellW + cellW / 2, row * cellH + cellH / 2];
+  }
 
-  const isActive = (from: string, to: string) => {
-    const fromS = getPhaseState(from);
-    const toS = getPhaseState(to);
-    return fromS === 'done' && (toS === 'running' || toS === 'waiting_human');
-  };
+  const arrows: { id: string; x1: number; y1: number; x2: number; y2: number; active: boolean; done: boolean; color: string }[] = [];
 
-  const isDone = (name: string) => getPhaseState(name) === 'done';
+  for (let i = 0; i < phases.length - 1; i++) {
+    const [x1, y1] = cellCenter(i);
+    const [x2, y2] = cellCenter(i + 1);
+    const fromDone = phases[i].status === 'done';
+    const toActive = phases[i + 1].status === 'running' || phases[i + 1].status === 'waiting_human';
 
-  // Arrow configs relative to SVG viewBox (percentages mapped to 1000x500)
-  const arrows = [
-    // analyze → implement (horizontal, top row)
-    { id: 'a-i', x1: 480, y1: 125, x2: 520, y2: 125, active: isActive('analyze', 'implement'), done: isDone('analyze'), color: '#22c55e', label: 'req.md' },
-    // implement → test (diagonal, top-right to bottom-left)
-    { id: 'i-t', x1: 700, y1: 240, x2: 300, y2: 260, active: isActive('implement', 'test'), done: isDone('implement'), color: '#3b82f6', label: 'arch.md' },
-    // test → review (horizontal, bottom row)
-    { id: 't-r', x1: 480, y1: 375, x2: 520, y2: 375, active: isActive('test', 'review'), done: isDone('test'), color: '#a855f7', label: 'test.md' },
-    // review ↔ implement (vertical, right col) — reviewer interaction
-    { id: 'r-i', x1: 750, y1: 260, x2: 750, y2: 240, active: getPhaseState('review') === 'running', done: false, color: '#f97316', label: 'review' },
-  ];
+    // Offset endpoints toward each other (not dead center)
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const offset = 100;
+    arrows.push({
+      id: `flow-${i}`,
+      x1: x1 + (dx / len) * offset,
+      y1: y1 + (dy / len) * offset,
+      x2: x2 - (dx / len) * offset,
+      y2: y2 - (dy / len) * offset,
+      active: fromDone && toActive,
+      done: fromDone,
+      color: PHASE_COLORS[i % PHASE_COLORS.length],
+    });
+  }
 
   return (
     <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 1000 500" preserveAspectRatio="none">
       <defs>
-        <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#22c55e" /></marker>
-        <marker id="arrow-blue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#3b82f6" /></marker>
-        <marker id="arrow-purple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#a855f7" /></marker>
-        <marker id="arrow-orange" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f97316" /></marker>
+        {PHASE_COLORS.map((c, i) => (
+          <marker key={i} id={`darrow-${i}`} markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill={c} />
+          </marker>
+        ))}
       </defs>
       {arrows.map(a => {
         const opacity = a.active ? 1 : a.done ? 0.5 : 0.15;
-        const colorName = a.color === '#22c55e' ? 'green' : a.color === '#3b82f6' ? 'blue' : a.color === '#a855f7' ? 'purple' : 'orange';
+        const markerIdx = PHASE_COLORS.indexOf(a.color) >= 0 ? PHASE_COLORS.indexOf(a.color) : parseInt(a.id.split('-')[1]) || 0;
         return (
           <g key={a.id}>
             <line
@@ -393,16 +423,10 @@ function GridFlowOverlay({ phases }: { phases: DeliveryPhase[] }) {
               stroke={a.color} strokeWidth={a.active ? 3 : 2}
               strokeDasharray={a.active ? '8 4' : a.done ? '0' : '4 4'}
               opacity={opacity}
-              markerEnd={`url(#arrow-${colorName})`}
+              markerEnd={`url(#darrow-${markerIdx % PHASE_COLORS.length})`}
             >
               {a.active && <animate attributeName="stroke-dashoffset" from="24" to="0" dur="0.8s" repeatCount="indefinite" />}
             </line>
-            {(a.active || a.done) && (
-              <text
-                x={(a.x1 + a.x2) / 2} y={(a.y1 + a.y2) / 2 - 6}
-                fill={a.color} fontSize="10" textAnchor="middle" opacity={opacity}
-              >{a.label}</text>
-            )}
           </g>
         );
       })}
@@ -434,8 +458,8 @@ export default function DeliveryWorkspace({ deliveryId, onClose }: {
     return <div className="flex-1 flex items-center justify-center text-xs text-gray-500">Loading delivery...</div>;
   }
 
-  const analyzePhase = delivery.phases.find(p => p.name === 'analyze');
-  const needsApproval = analyzePhase?.status === 'waiting_human';
+  const waitingPhase = delivery.phases.find(p => p.status === 'waiting_human');
+  const needsApproval = !!waitingPhase;
   const artifacts = delivery.artifacts || [];
 
   return (
@@ -494,11 +518,17 @@ export default function DeliveryWorkspace({ deliveryId, onClose }: {
             {/* Flow arrows overlay */}
             <GridFlowOverlay phases={delivery.phases} />
             {/* Agent panels */}
-            <div className="absolute inset-0 grid grid-cols-2 grid-rows-2 gap-2">
-              {delivery.phases.map(phase => (
+            <div className={`absolute inset-0 grid gap-2 ${
+              delivery.phases.length <= 2 ? 'grid-cols-2 grid-rows-1' :
+              delivery.phases.length <= 4 ? 'grid-cols-2 grid-rows-2' :
+              delivery.phases.length <= 6 ? 'grid-cols-3 grid-rows-2' :
+              'grid-cols-3 grid-rows-3'
+            }`}>
+              {delivery.phases.map((phase, i) => (
                 <PhaseTerminal
                   key={phase.name}
                   phase={phase}
+                  phaseIndex={i}
                   deliveryId={deliveryId}
                   artifacts={artifacts}
                 />

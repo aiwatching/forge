@@ -7,7 +7,7 @@
 
 import { generateText, stepCountIs, type ModelMessage } from 'ai';
 import { readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { getModel } from '@/src/core/providers/registry';
 import type { AgentBackend, StepExecutionParams, StepExecutionResult, Artifact } from '../types';
@@ -20,7 +20,9 @@ function createTools(projectPath: string, artifacts: Artifact[], onLog?: (e: Tas
 
   const safePath = (p: string) => {
     const abs = resolve(projectPath, p);
-    if (!abs.startsWith(resolve(projectPath))) throw new Error(`Path outside project: ${p}`);
+    const root = resolve(projectPath) + '/';
+    // Must be exactly the project root or a child (trailing slash prevents /project-evil matching /project)
+    if (abs !== resolve(projectPath) && !abs.startsWith(root)) throw new Error(`Path outside project: ${p}`);
     return abs;
   };
 
@@ -81,9 +83,10 @@ function createTools(projectPath: string, artifacts: Artifact[], onLog?: (e: Tas
         const abs = safePath(path || '.');
         onLog?.({ type: 'assistant', subtype: 'tool_use', content: `grep "${pattern}" in ${path || '.'}`, tool: 'search_files', timestamp: ts() });
         try {
-          const result = execSync(`grep -rn --include="*" "${pattern.replace(/"/g, '\\"')}" "${abs}" 2>/dev/null | head -50`, {
-            encoding: 'utf-8', timeout: 10000,
-          });
+          // Use execFileSync to avoid shell injection — pattern is passed as argument, not interpolated
+          const result = execFileSync('grep', ['-rn', '--include=*', pattern, abs], {
+            encoding: 'utf-8', timeout: 10000, maxBuffer: 512 * 1024,
+          }).split('\n').slice(0, 50).join('\n');
           return result || 'No matches found';
         } catch {
           return 'No matches found';
@@ -164,21 +167,22 @@ function createCommTools(
 
 function historyToMessages(history: TaskLogEntry[]): ModelMessage[] {
   const messages: ModelMessage[] = [];
-  // Group consecutive entries into assistant/user turns
-  // For Phase 1: simplified text-only approach
+  // Only include last 3 step results + truncate tool results to save tokens
+  const MAX_HISTORY_STEPS = 3;
+  const MAX_TOOL_RESULT = 500;
+
+  // Filter to step-level results only (skip individual tool calls)
+  const stepResults = history
+    .filter(m => m.type === 'result' && m.subtype === 'step_complete')
+    .slice(-MAX_HISTORY_STEPS);
+
   let currentAssistant = '';
 
-  for (const entry of history) {
-    if (entry.type === 'system') continue;
-    if (entry.type === 'assistant' || entry.type === 'result') {
-      if (entry.subtype === 'tool_use' && entry.tool) {
-        currentAssistant += `\n[Used tool ${entry.tool}: ${entry.content}]`;
-      } else if (entry.subtype === 'tool_result') {
-        currentAssistant += `\n[Tool result: ${entry.content}]`;
-      } else {
-        currentAssistant += (currentAssistant ? '\n' : '') + entry.content;
-      }
-    }
+  for (const entry of stepResults) {
+    const truncated = entry.content.length > 1000
+      ? entry.content.slice(0, 1000) + '... (truncated)'
+      : entry.content;
+    currentAssistant += (currentAssistant ? '\n\n' : '') + truncated;
   }
 
   if (currentAssistant) {

@@ -28,6 +28,9 @@ export interface AgentWorkerOptions {
   onBusSend?: (to: string, content: string) => void;
   onBusRequest?: (to: string, question: string) => Promise<string>;
   peerAgentIds?: string[];
+  // Memory (injected by orchestrator)
+  memoryContext?: string;              // formatted memory text to inject
+  onMemoryUpdate?: (stepResults: string[]) => void; // called after all steps complete
 }
 
 export class AgentWorker extends EventEmitter {
@@ -49,6 +52,11 @@ export class AgentWorker extends EventEmitter {
   // Bus messages queued between steps
   private pendingMessages: TaskLogEntry[] = [];
 
+  // Memory
+  private memoryContext?: string;
+  private onMemoryUpdate?: (stepResults: string[]) => void;
+  private stepResults: string[] = [];
+
   constructor(opts: AgentWorkerOptions) {
     super();
     this.config = opts.config;
@@ -59,6 +67,8 @@ export class AgentWorker extends EventEmitter {
       onBusRequest: opts.onBusRequest,
       peerAgentIds: opts.peerAgentIds,
     };
+    this.memoryContext = opts.memoryContext;
+    this.onMemoryUpdate = opts.onMemoryUpdate;
     this.state = {
       status: 'idle',
       history: [],
@@ -80,6 +90,14 @@ export class AgentWorker extends EventEmitter {
       return;
     }
 
+    // Prepend memory to upstream context
+    if (this.memoryContext) {
+      upstreamContext = upstreamContext
+        ? this.memoryContext + '\n\n---\n\n' + upstreamContext
+        : this.memoryContext;
+    }
+
+    this.stepResults = [];
     this.abortController = new AbortController();
     this.setStatus('running');
     this.state.startedAt = Date.now();
@@ -139,6 +157,16 @@ export class AgentWorker extends EventEmitter {
           this.emitEvent({ type: 'artifact', agentId: this.config.id, artifact });
         }
 
+        // Emit step summary (compact, human-friendly)
+        const stepSummary = summarizeStepResult(step.label, result.response, result.artifacts);
+        this.emitEvent({
+          type: 'log', agentId: this.config.id,
+          entry: { type: 'system', subtype: 'step_summary', content: stepSummary, timestamp: new Date().toISOString() },
+        });
+
+        // Collect step result for memory update
+        this.stepResults.push(result.response);
+
         // Checkpoint: this step succeeded
         this.state.lastCheckpoint = i;
 
@@ -153,6 +181,18 @@ export class AgentWorker extends EventEmitter {
     // All steps done
     this.setStatus('done');
     this.state.completedAt = Date.now();
+
+    // Trigger memory update (orchestrator handles the actual LLM call)
+    if (this.onMemoryUpdate && this.stepResults.length > 0) {
+      try { this.onMemoryUpdate(this.stepResults); } catch {}
+    }
+
+    // Emit final summary
+    const finalSummary = buildFinalSummary(this.config.label, this.config.steps, this.stepResults, this.state.artifacts);
+    this.emitEvent({
+      type: 'log', agentId: this.config.id,
+      entry: { type: 'result', subtype: 'final_summary', content: finalSummary, timestamp: new Date().toISOString() },
+    });
 
     const summary = this.state.artifacts.length > 0
       ? `Completed. Artifacts: ${this.state.artifacts.map(a => a.path || a.summary).join(', ')}`
@@ -227,4 +267,71 @@ export class AgentWorker extends EventEmitter {
       this.pauseResolve = resolve;
     });
   }
+}
+
+// ─── Summary helpers (no LLM, pure heuristic) ────────────
+
+/** Extract a compact step summary from raw output */
+function summarizeStepResult(stepLabel: string, rawResult: string, artifacts: { path?: string; summary?: string }[]): string {
+  const lines: string[] = [];
+  lines.push(`✅ Step "${stepLabel}" done`);
+
+  // Extract key sentences (first meaningful line, skip noise)
+  const meaningful = rawResult
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length > 15 && l.length < 300)
+    .filter(l => !/^[#\-*>|`]/.test(l))  // skip markdown headers, bullets, code blocks
+    .filter(l => !/^(Working|W$|Wo$|•)/.test(l));  // skip codex noise
+
+  if (meaningful.length > 0) {
+    lines.push(`   ${meaningful[0].slice(0, 120)}`);
+  }
+
+  // List artifacts
+  const filePaths = artifacts.filter(a => a.path).map(a => a.path!);
+  if (filePaths.length > 0) {
+    lines.push(`   Files: ${filePaths.join(', ')}`);
+  }
+
+  return lines.join('\n');
+}
+
+/** Build a final summary after all steps complete */
+function buildFinalSummary(
+  agentLabel: string,
+  steps: { label: string }[],
+  stepResults: string[],
+  artifacts: { path?: string; summary?: string }[],
+): string {
+  const lines: string[] = [];
+  lines.push(`══════════════════════════════════════`);
+  lines.push(`📊 ${agentLabel} — Summary`);
+  lines.push(`──────────────────────────────────────`);
+
+  // Steps completed
+  lines.push(`Steps: ${steps.map(s => s.label).join(' → ')}`);
+
+  // Key output per step (one line each)
+  for (let i = 0; i < steps.length; i++) {
+    const result = stepResults[i] || '';
+    const firstLine = result
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 15 && l.length < 200)
+      .filter(l => !/^[#\-*>|`]/.test(l))
+      .filter(l => !/^(Working|W$|Wo$|•)/.test(l))[0];
+    if (firstLine) {
+      lines.push(`  ${steps[i].label}: ${firstLine.slice(0, 100)}`);
+    }
+  }
+
+  // All artifacts
+  const files = artifacts.filter(a => a.path).map(a => a.path!);
+  if (files.length > 0) {
+    lines.push(`Produced: ${files.join(', ')}`);
+  }
+
+  lines.push(`══════════════════════════════════════`);
+  return lines.join('\n');
 }

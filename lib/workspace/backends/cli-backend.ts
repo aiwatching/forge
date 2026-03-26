@@ -369,23 +369,28 @@ export class CliBackend implements AgentBackend {
   private buildStepPrompt(step: AgentStep, history: TaskLogEntry[], upstreamContext?: string): string {
     let prompt = step.prompt;
 
-    // If no session to resume from, prepend history as text context
+    // If resuming with session, Claude already has conversation context — skip history injection
     if (!this.sessionId && history.length > 0) {
-      const contextLines = history
-        .filter(m => m.type === 'assistant' || m.type === 'result')
-        .filter(m => m.subtype === 'text' || m.subtype === 'step_complete' || m.subtype === 'success')
-        .map(m => m.content)
-        .filter(Boolean);
+      // Only inject last 3 step results (not full history) to save tokens
+      const MAX_HISTORY_STEPS = 3;
+      const stepResults = history
+        .filter(m => m.type === 'result' && m.subtype === 'step_complete')
+        .slice(-MAX_HISTORY_STEPS);
 
-      if (contextLines.length > 0) {
-        const contextSummary = contextLines.join('\n\n');
-        prompt = `## Context from previous steps:\n${contextSummary}\n\n---\n\n## Current task:\n${prompt}`;
+      if (stepResults.length > 0) {
+        const contextSummary = stepResults
+          .map((m, i) => `Step ${i + 1}: ${m.content.slice(0, 500)}${m.content.length > 500 ? '...' : ''}`)
+          .join('\n\n');
+        prompt = `## Context from previous steps (last ${stepResults.length}):\n${contextSummary}\n\n---\n\n## Current task:\n${prompt}`;
       }
     }
 
     if (upstreamContext) {
       prompt = `## Upstream agent output:\n${upstreamContext}\n\n---\n\n${prompt}`;
     }
+
+    // Bus marker protocol (compact, no realistic examples to prevent copying)
+    prompt += `\n\n---\nTo communicate with other agents, write on its own line:\n[SEND:AgentLabel:action] your actual message here\nWhere AgentLabel is the target agent name, action is one of: fix_request, update_request, question, info_request\nOnly use this when you have a REAL issue to report. Do NOT copy examples.`;
 
     return prompt;
   }

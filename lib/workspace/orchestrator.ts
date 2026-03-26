@@ -27,6 +27,10 @@ import { AgentBus } from './agent-bus';
 import { ApiBackend } from './backends/api-backend';
 import { CliBackend } from './backends/cli-backend';
 import { appendAgentLog, saveWorkspace, startAutoSave, stopAutoSave } from './persistence';
+import {
+  loadMemory, saveMemory, createMemory, formatMemoryForPrompt,
+  addObservation, addSessionSummary, parseStepToObservations, buildSessionSummary,
+} from './smith-memory';
 
 // ─── Orchestrator Events ─────────────────────────────────
 
@@ -57,9 +61,13 @@ export class WorkspaceOrchestrator extends EventEmitter {
     this.projectName = projectName;
     this.bus = new AgentBus();
 
-    // Forward bus messages as orchestrator events
+    // Forward bus messages as orchestrator events (after dedup, skip ACKs)
     this.bus.on('message', (msg: BusMessage) => {
-      this.emit('event', { type: 'bus_message', message: msg } satisfies OrchestratorEvent);
+      if (msg.type === 'ack') return; // ACKs are internal, don't emit to UI
+      if (msg.to === '_system') {
+        this.emit('event', { type: 'bus_message', message: msg } satisfies OrchestratorEvent);
+        return;
+      }
       this.handleBusMessage(msg);
     });
 
@@ -136,13 +144,20 @@ export class WorkspaceOrchestrator extends EventEmitter {
     if (!entry || entry.config.type !== 'input') return;
 
     const isUpdate = entry.state.status === 'done';
+
+    // Append to entries (incremental, not overwrite)
+    if (!entry.config.entries) entry.config.entries = [];
+    entry.config.entries.push({ content, timestamp: Date.now() });
+    // Also set content to latest for backward compat
     entry.config.content = content;
+
     entry.state.status = 'done';
     entry.state.completedAt = Date.now();
     entry.state.artifacts = [{ type: 'text', summary: content.slice(0, 200) }];
 
     this.emit('event', { type: 'status', agentId, status: 'done' } satisfies WorkerEvent);
     this.emit('event', { type: 'done', agentId, summary: 'Input provided' } satisfies WorkerEvent);
+    this.emitAgentsChanged(); // push updated entries to frontend
     this.bus.notifyTaskComplete(agentId, [], content.slice(0, 200));
 
     // If re-submitting, reset downstream agents to idle so they can be re-triggered
@@ -166,7 +181,10 @@ export class WorkspaceOrchestrator extends EventEmitter {
   }
 
   /** Reset all agents that depend on the given agent (recursively) */
-  private resetDownstream(agentId: string): void {
+  private resetDownstream(agentId: string, visited = new Set<string>()): void {
+    if (visited.has(agentId)) return; // cycle protection
+    visited.add(agentId);
+
     for (const [id, entry] of this.agents) {
       if (id === agentId) continue;
       if (!entry.config.dependsOn.includes(agentId)) continue;
@@ -176,8 +194,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       entry.worker = null;
       entry.state = { status: 'idle', history: [], artifacts: [] };
       this.emit('event', { type: 'status', agentId: id, status: 'idle' } satisfies WorkerEvent);
-      // Recursively reset agents that depend on this one
-      this.resetDownstream(id);
+      this.resetDownstream(id, visited);
     }
   }
 
@@ -207,16 +224,21 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     if (entry.state.status === 'running') return;
 
-    // Allow re-running done/failed/interrupted agents — reset them first
-    if (entry.state.status === 'done' || entry.state.status === 'failed' || entry.state.status === 'interrupted') {
+    // Allow re-running done/failed/interrupted/waiting_approval agents — reset them first
+    let resumeFromCheckpoint = false;
+    if (entry.state.status === 'done' || entry.state.status === 'failed' || entry.state.status === 'interrupted' || entry.state.status === 'waiting_approval') {
+      this.approvalQueue.delete(agentId);
       console.log(`[workspace] Re-running ${entry.config.label} (was ${entry.state.status})`);
+      // For failed/interrupted: keep lastCheckpoint for resume
+      resumeFromCheckpoint = (entry.state.status === 'failed' || entry.state.status === 'interrupted')
+        && entry.state.lastCheckpoint !== undefined;
       if (entry.worker) entry.worker.stop();
       entry.worker = null;
-      // For failed: keep lastCheckpoint for resume. For done: full reset.
-      if (entry.state.status === 'done') {
+      if (!resumeFromCheckpoint) {
         entry.state = { status: 'idle', history: [], artifacts: [] };
       } else {
         entry.state.status = 'idle';
+        entry.state.error = undefined;
       }
     }
 
@@ -241,18 +263,26 @@ export class WorkspaceOrchestrator extends EventEmitter {
     const backend = this.createBackend(config);
 
     // Create worker with bus callbacks for inter-agent communication
+    // Load agent memory
+    const memory = loadMemory(this.workspaceId, agentId);
+    const memoryContext = formatMemoryForPrompt(memory);
+
     const peerAgentIds = Array.from(this.agents.keys()).filter(id => id !== agentId);
     const worker = new AgentWorker({
       config,
       backend,
       projectPath: this.projectPath,
       peerAgentIds,
+      memoryContext: memoryContext || undefined,
       onBusSend: (to, content) => {
         this.bus.send(agentId, to, 'notify', { action: 'agent_message', content });
       },
       onBusRequest: async (to, question) => {
         const response = await this.bus.request(agentId, to, { action: 'question', content: question });
         return response.payload.content || '(no response)';
+      },
+      onMemoryUpdate: (stepResults) => {
+        this.updateAgentMemory(agentId, config, stepResults);
       },
     });
     entry.worker = worker;
@@ -269,40 +299,56 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
       this.emit('event', event);
 
-      // On step complete → notify bus
+      // Update liveness
+      if (event.type === 'status') {
+        this.updateAgentLiveness(agentId);
+      }
+
+      // On step complete → capture observation + notify bus
       if (event.type === 'step') {
         const step = config.steps[event.stepIndex];
         if (step) {
           this.bus.notifyStepComplete(agentId, step.label);
+
+          // Capture memory observation from the previous step's result
+          const prevStepIdx = event.stepIndex - 1;
+          if (prevStepIdx >= 0) {
+            const prevStep = config.steps[prevStepIdx];
+            const prevResult = entry.state.history
+              .filter(h => h.type === 'result' && h.subtype === 'step_complete')
+              .slice(-1)[0];
+            if (prevResult && prevStep) {
+              try {
+                const obs = parseStepToObservations(prevStep.label, prevResult.content, entry.state.artifacts);
+                for (const o of obs) {
+                  addObservation(this.workspaceId, agentId, config.label, config.role, o);
+                }
+              } catch {}
+            }
+          }
         }
       }
 
-      // On done → notify bus + trigger downstream + check pending rerun
+      // On done → parse bus markers + notify + trigger downstream
       if (event.type === 'done') {
         const files = entry.state.artifacts.filter(a => a.path).map(a => a.path!);
         console.log(`[workspace] Agent "${config.label}" (${agentId}) completed. Artifacts: ${files.length}.`);
 
-        // Broadcast update_notify so other agents know this one changed
-        this.bus.send(agentId, '*', 'notify', {
-          action: 'update_notify',
-          content: `${config.label} completed: ${event.summary}`,
-          files,
-        });
+        // Parse CLI output for bus markers: [SEND:TargetLabel:action] content
+        this.parseBusMarkers(agentId, entry.state.history);
 
+        this.bus.notifyTaskComplete(agentId, files, event.summary);
+
+        // Trigger idle downstream agents (first run)
         this.triggerDownstream(agentId);
+
+        // Notify done downstream agents to re-validate (they already ran but upstream changed)
+        this.notifyDownstreamForRevalidation(agentId, files);
+
         this.emitWorkspaceStatus();
         this.checkWorkspaceComplete();
 
-        // If flagged for re-run (received update_notify while running), re-run now
-        if ((entry as any)._pendingRerun) {
-          delete (entry as any)._pendingRerun;
-          console.log(`[workspace] Agent "${config.label}" has pending rerun, re-executing...`);
-          setTimeout(() => {
-            this.runAgent(agentId).catch(err => {
-              console.error(`[workspace] Pending rerun failed:`, err.message);
-            });
-          }, 500);
-        }
+        // Note: no auto-rerun. Bus messages that need re-run go through user approval.
       }
 
       // On error → notify bus
@@ -325,7 +371,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
     }
 
     // Start from checkpoint if recovering from failure
-    const startStep = entry.state.status === 'failed' && entry.state.lastCheckpoint !== undefined
+    const startStep = resumeFromCheckpoint && entry.state.lastCheckpoint !== undefined
       ? entry.state.lastCheckpoint + 1
       : 0;
 
@@ -333,9 +379,12 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     // Execute (non-blocking — fire and forget, events handle the rest)
     worker.execute(startStep, upstreamContext).catch(err => {
-      entry.state.status = 'failed';
-      entry.state.error = err?.message || String(err);
-      this.emit('event', { type: 'error', agentId, error: entry.state.error! } satisfies WorkerEvent);
+      // Only set failed if worker didn't already handle it (avoid duplicate error events)
+      if (entry.state.status !== 'failed') {
+        entry.state.status = 'failed';
+        entry.state.error = err?.message || String(err);
+        this.emit('event', { type: 'error', agentId, error: entry.state.error! } satisfies WorkerEvent);
+      }
     });
   }
 
@@ -366,7 +415,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
   /** Retry a failed agent from its last checkpoint */
   async retryAgent(agentId: string): Promise<void> {
     const entry = this.agents.get(agentId);
-    if (!entry || entry.state.status !== 'failed') return;
+    if (!entry) return;
+    if (entry.state.status !== 'failed' && entry.state.status !== 'interrupted') return;
     await this.runAgent(agentId);
   }
 
@@ -509,9 +559,14 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
       const label = dep.config.label;
 
-      // Input nodes: use their content directly
+      // Input nodes: only send latest entry (not full history)
       if (dep.config.type === 'input') {
-        if (dep.config.content) {
+        const entries = dep.config.entries;
+        if (entries && entries.length > 0) {
+          const latest = entries[entries.length - 1];
+          sections.push(`### ${label} (latest input):\n${latest.content}`);
+        } else if (dep.config.content) {
+          // Legacy fallback
           sections.push(`### ${label}:\n${dep.config.content}`);
         }
         continue;
@@ -545,7 +600,17 @@ export class WorkspaceOrchestrator extends EventEmitter {
       }
     }
 
-    return sections.length > 0 ? sections.join('\n\n---\n\n') : undefined;
+    if (sections.length === 0) return undefined;
+
+    let combined = sections.join('\n\n---\n\n');
+
+    // Cap total upstream context to ~50K chars (~12K tokens) to prevent token explosion
+    const MAX_UPSTREAM_CHARS = 50000;
+    if (combined.length > MAX_UPSTREAM_CHARS) {
+      combined = combined.slice(0, MAX_UPSTREAM_CHARS) + '\n\n... (upstream context truncated, ' + combined.length + ' chars total)';
+    }
+
+    return combined;
   }
 
   /** After an agent completes, check if any downstream agents should be triggered */
@@ -596,18 +661,31 @@ export class WorkspaceOrchestrator extends EventEmitter {
     }
   }
 
-  // ─── Bus-driven behavior ────────────────────────────────
+  // ─── Agent liveness ─────────────────────────────────────
+
+  private updateAgentLiveness(agentId: string): void {
+    const entry = this.agents.get(agentId);
+    if (!entry) {
+      this.bus.setAgentStatus(agentId, 'down');
+      return;
+    }
+    const s = entry.state.status;
+    if (s === 'running') this.bus.setAgentStatus(agentId, 'busy');
+    else if (s === 'idle' || s === 'done' || s === 'paused') this.bus.setAgentStatus(agentId, 'alive');
+    else this.bus.setAgentStatus(agentId, 'down');
+  }
+
+  // ─── Bus message handling ──────────────────────────────
 
   private handleBusMessage(msg: BusMessage): void {
-    const targets = msg.to === '*'
-      ? Array.from(this.agents.keys()).filter(id => id !== msg.from)
-      : [msg.to];
+    // Dedup
+    if (this.bus.isDuplicate(msg.id)) return;
 
-    for (const targetId of targets) {
-      this.routeMessageToAgent(targetId, msg);
-    }
+    // Emit to UI after dedup (no duplicates, no ACKs)
+    this.emit('event', { type: 'bus_message', message: msg } satisfies OrchestratorEvent);
 
-    // Check if workspace is globally complete after each message cycle
+    // Route to target
+    this.routeMessageToAgent(msg.to, msg);
     this.checkWorkspaceComplete();
   }
 
@@ -619,7 +697,10 @@ export class WorkspaceOrchestrator extends EventEmitter {
     const action = msg.payload.action;
     const content = msg.payload.content || '';
 
-    console.log(`[workspace] Bus: ${fromLabel} → ${target.config.label}: ${action} "${content.slice(0, 80)}"`);
+    console.log(`[bus] ${fromLabel} → ${target.config.label}: ${action} "${content.slice(0, 80)}"`);
+
+    // ACK: tell sender we received it
+    this.bus.ack(targetId, msg.from, msg.id);
 
     const logEntry = {
       type: 'system' as const,
@@ -631,7 +712,6 @@ export class WorkspaceOrchestrator extends EventEmitter {
     // ── Input node: request user input ──
     if (target.config.type === 'input') {
       if (action === 'info_request' || action === 'question') {
-        // Emit event so frontend can show input dialog
         this.emit('event', {
           type: 'user_input_request',
           agentId: targetId,
@@ -642,73 +722,36 @@ export class WorkspaceOrchestrator extends EventEmitter {
       return;
     }
 
-    // ── Agent: behavior depends on action + current status ──
-    const status = target.state.status;
+    // ── Store message in agent history (always) ──
+    target.state.history.push(logEntry);
 
-    switch (action) {
-      case 'fix_request':
-      case 'update_request': {
-        // Another agent is requesting this agent to re-do work
-        // Store the message as context for the re-run
-        target.state.history.push(logEntry);
-
-        if (status === 'running') {
-          // Stop current execution, then re-run with new context
-          console.log(`[workspace] Stopping ${target.config.label} for fix_request, will re-run`);
-          target.worker?.stop();
-          // Schedule re-run after stop completes
-          setTimeout(() => {
-            this.runAgent(targetId).catch(err => {
-              console.error(`[workspace] Re-run after fix_request failed:`, err.message);
-            });
-          }, 500);
-        } else if (status === 'done' || status === 'idle' || status === 'failed') {
-          // Re-run with the fix request as context
-          this.runAgent(targetId).catch(err => {
-            console.error(`[workspace] Re-run for fix_request failed:`, err.message);
-          });
-        }
-        break;
+    // ── Actionable messages → queue for user confirmation ──
+    if (action === 'fix_request' || action === 'update_request' || action === 'update_notify') {
+      // Don't auto-rerun. Set waiting_approval so user decides.
+      if (target.state.status !== 'running') {
+        target.state.status = 'waiting_approval';
+        this.approvalQueue.add(targetId);
+        this.emit('event', {
+          type: 'approval_required',
+          agentId: targetId,
+          upstreamId: msg.from,
+        } satisfies OrchestratorEvent);
+        this.emit('event', {
+          type: 'status',
+          agentId: targetId,
+          status: 'waiting_approval',
+        } satisfies WorkerEvent);
+        console.log(`[bus] ${target.config.label} needs approval to re-run (${action} from ${fromLabel})`);
+      } else {
+        // Running: inject message into current execution for awareness
+        if (target.worker) target.worker.injectMessage(logEntry);
       }
+      return;
+    }
 
-      case 'update_notify': {
-        // An upstream agent has changed its output — downstream should re-validate
-        target.state.history.push(logEntry);
-
-        if (status === 'running') {
-          // Option: let it finish, then re-run. Inject message for current step.
-          if (target.worker) {
-            target.worker.injectMessage(logEntry);
-          }
-          // Mark for re-run after completion
-          (target as any)._pendingRerun = true;
-        } else if (status === 'done') {
-          // Already done — re-run to incorporate changes
-          this.runAgent(targetId).catch(err => {
-            console.error(`[workspace] Re-run for update_notify failed:`, err.message);
-          });
-        }
-        break;
-      }
-
-      case 'task_complete':
-      case 'step_complete': {
-        // Informational — just inject into running agent's context
-        if (target.worker) {
-          target.worker.injectMessage(logEntry);
-        }
-        break;
-      }
-
-      default: {
-        // Generic message: inject if running, store in history if not
-        if (target.worker) {
-          target.worker.injectMessage(logEntry);
-        } else {
-          target.state.history.push(logEntry);
-        }
-        break;
-      }
+    // ── Informational messages → inject if running, store only if not ──
+    if (target.worker) {
+      target.worker.injectMessage(logEntry);
     }
   }
 
@@ -761,6 +804,82 @@ export class WorkspaceOrchestrator extends EventEmitter {
     return ready;
   }
 
+  /**
+   * Parse CLI agent output for bus message markers.
+   * Format: [SEND:TargetLabel:action] content
+   * Example: [SEND:Engineer:fix_request] SQL injection found in auth module
+   */
+  /**
+   * After an agent completes, notify downstream agents that already ran (done/failed)
+   * to re-validate their work. Sets them to waiting_approval so user decides.
+   */
+  private notifyDownstreamForRevalidation(completedAgentId: string, files: string[]): void {
+    const completedLabel = this.agents.get(completedAgentId)?.config.label || completedAgentId;
+
+    for (const [id, entry] of this.agents) {
+      if (id === completedAgentId) continue;
+      if (!entry.config.dependsOn.includes(completedAgentId)) continue;
+
+      // Only notify agents that already completed — they need to re-validate
+      if (entry.state.status !== 'done' && entry.state.status !== 'failed') continue;
+
+      console.log(`[workspace] ${completedLabel} changed → ${entry.config.label} needs re-validation`);
+
+      // Send bus message
+      this.bus.send(completedAgentId, id, 'notify', {
+        action: 'update_notify',
+        content: `${completedLabel} completed with changes. Please re-validate.`,
+        files,
+      });
+
+      // Set to waiting_approval so user confirms re-run
+      entry.state.status = 'waiting_approval';
+      entry.state.history.push({
+        type: 'system',
+        subtype: 'revalidation_request',
+        content: `[${completedLabel}] completed with changes — approve to re-run validation`,
+        timestamp: new Date().toISOString(),
+      });
+      this.approvalQueue.add(id);
+      this.emit('event', { type: 'status', agentId: id, status: 'waiting_approval' } satisfies WorkerEvent);
+      this.emit('event', {
+        type: 'approval_required',
+        agentId: id,
+        upstreamId: completedAgentId,
+      } satisfies OrchestratorEvent);
+    }
+  }
+
+  private parseBusMarkers(fromAgentId: string, history: { type: string; content: string }[]): void {
+    const markerRegex = /\[SEND:([^:]+):([^\]]+)\]\s*(.+)/g;
+    const labelToId = new Map<string, string>();
+    for (const [id, e] of this.agents) {
+      labelToId.set(e.config.label.toLowerCase(), id);
+    }
+
+    // Dedup: same target+action+content = only send once
+    const sent = new Set<string>();
+
+    for (const entry of history) {
+      let match;
+      while ((match = markerRegex.exec(entry.content)) !== null) {
+        const targetLabel = match[1].trim();
+        const action = match[2].trim();
+        const content = match[3].trim();
+        const targetId = labelToId.get(targetLabel.toLowerCase());
+
+        if (targetId && targetId !== fromAgentId) {
+          const key = `${targetId}:${action}:${content}`;
+          if (sent.has(key)) continue;
+          sent.add(key);
+
+          console.log(`[bus] Parsed marker from ${fromAgentId}: → ${targetLabel} (${action}): ${content.slice(0, 60)}`);
+          this.bus.send(fromAgentId, targetId, 'notify', { action, content });
+        }
+      }
+    }
+  }
+
   private saveNow(): void {
     try { saveWorkspace(this.getFullState()); } catch {}
   }
@@ -784,5 +903,37 @@ export class WorkspaceOrchestrator extends EventEmitter {
       done,
       total: this.agents.size,
     } satisfies OrchestratorEvent);
+  }
+
+  /**
+   * Update agent memory after execution completes.
+   * Parses step results into structured memory entries.
+   */
+  private updateAgentMemory(agentId: string, config: WorkspaceAgentConfig, stepResults: string[]): void {
+    try {
+      const entry = this.agents.get(agentId);
+
+      // Capture observation from the last step (previous steps captured in 'step' event handler)
+      const lastStep = config.steps[config.steps.length - 1];
+      const lastResult = stepResults[stepResults.length - 1];
+      if (lastStep && lastResult) {
+        const obs = parseStepToObservations(lastStep.label, lastResult, entry?.state.artifacts || []);
+        for (const o of obs) {
+          addObservation(this.workspaceId, agentId, config.label, config.role, o);
+        }
+      }
+
+      // Add session summary
+      const summary = buildSessionSummary(
+        config.steps.map(s => s.label),
+        stepResults,
+        entry?.state.artifacts || [],
+      );
+      addSessionSummary(this.workspaceId, agentId, summary);
+
+      console.log(`[workspace] Updated memory for ${config.label}`);
+    } catch (err: any) {
+      console.error(`[workspace] Failed to update memory for ${config.label}:`, err.message);
+    }
   }
 }

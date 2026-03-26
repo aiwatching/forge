@@ -54,3 +54,22 @@ export {
   stopAutoSave,
   type WorkspaceSummary,
 } from './persistence';
+
+// Smith Memory
+export {
+  loadMemory,
+  saveMemory,
+  createMemory,
+  addObservation,
+  addSessionSummary,
+  formatMemoryForPrompt,
+  formatMemoryForDisplay,
+  getMemoryStats,
+  parseStepToObservations,
+  buildSessionSummary,
+  type SmithMemory,
+  type Observation,
+  type ObservationType,
+  type SessionSummary,
+  type MemoryDisplayEntry,
+} from './smith-memory';

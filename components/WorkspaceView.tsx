@@ -13,7 +13,8 @@ import '@xyflow/react/dist/style.css';
 interface AgentConfig {
   id: string; label: string; icon: string; role: string;
   type?: 'agent' | 'input';
-  content?: string; // Input node content
+  content?: string;
+  entries?: { content: string; timestamp: number }[];
   backend: 'api' | 'cli';
   agentId?: string; provider?: string; model?: string;
   dependsOn: string[]; outputs: string[];
@@ -129,15 +130,26 @@ function useWorkspaceStream(workspaceId: string | null, onEvent?: (event: any) =
         if (event.type === 'status') {
           setStates(prev => ({
             ...prev,
-            [event.agentId]: { ...prev[event.agentId], status: event.status },
+            [event.agentId]: {
+              ...prev[event.agentId],
+              status: event.status,
+              // Clear error when status changes to non-error state
+              ...(event.status !== 'failed' ? { error: undefined } : {}),
+            },
           }));
         }
 
         if (event.type === 'log') {
-          const content = event.entry?.content;
-          if (content) {
+          const entry = event.entry;
+          if (entry?.content) {
             setLogPreview(prev => {
-              const lines = [...(prev[event.agentId] || []), content].slice(-3);
+              // Summary entries replace the preview entirely (cleaner display)
+              if (entry.subtype === 'step_summary' || entry.subtype === 'final_summary') {
+                const summaryLines = entry.content.split('\n').filter((l: string) => l.trim()).slice(0, 4);
+                return { ...prev, [event.agentId]: summaryLines };
+              }
+              // Regular logs: append, keep last 3
+              const lines = [...(prev[event.agentId] || []), entry.content].slice(-3);
               return { ...prev, [event.agentId]: lines };
             });
           }
@@ -413,10 +425,10 @@ function LogPanel({ agentId, agentLabel, workspaceId, onClose }: {
   agentId: string; agentLabel: string; workspaceId: string; onClose: () => void;
 }) {
   const [logs, setLogs] = useState<any[]>([]);
+  const [filter, setFilter] = useState<'all' | 'messages' | 'summaries'>('all');
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Fetch full logs
     fetch(`/api/workspace/${workspaceId}/agents`).then(r => r.json()).then(data => {
       const state = data.states?.[agentId];
       if (state?.history) setLogs(state.history);
@@ -425,7 +437,13 @@ function LogPanel({ agentId, agentLabel, workspaceId, onClose }: {
 
   useEffect(() => {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
-  }, [logs]);
+  }, [logs, filter]);
+
+  const filteredLogs = filter === 'all' ? logs :
+    filter === 'messages' ? logs.filter((e: any) => e.subtype === 'bus_message' || e.subtype === 'revalidation_request' || e.subtype === 'user_message') :
+    logs.filter((e: any) => e.subtype === 'step_summary' || e.subtype === 'final_summary');
+
+  const msgCount = logs.filter((e: any) => e.subtype === 'bus_message' || e.subtype === 'revalidation_request' || e.subtype === 'user_message').length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.85)' }}
@@ -433,16 +451,182 @@ function LogPanel({ agentId, agentLabel, workspaceId, onClose }: {
       <div className="flex flex-col rounded-xl overflow-hidden shadow-2xl" style={{ width: '75vw', height: '65vh', border: '1px solid #30363d', background: '#0d1117' }}>
         <div className="flex items-center gap-2 px-4 py-2 border-b border-[#30363d] shrink-0">
           <span className="text-sm font-bold text-white">Logs: {agentLabel}</span>
-          <span className="text-[9px] text-gray-500">{logs.length} entries</span>
+          <span className="text-[9px] text-gray-500">{filteredLogs.length}/{logs.length}</span>
+          {/* Filter tabs */}
+          <div className="flex gap-1 ml-3">
+            {([['all', 'All'], ['messages', `📨 Messages${msgCount > 0 ? ` (${msgCount})` : ''}`], ['summaries', '📊 Summaries']] as const).map(([key, label]) => (
+              <button key={key} onClick={() => setFilter(key as any)}
+                className={`text-[8px] px-2 py-0.5 rounded ${filter === key ? 'bg-[#21262d] text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
           <button onClick={onClose} className="text-gray-500 hover:text-white text-sm ml-auto">✕</button>
         </div>
         <div ref={scrollRef} className="flex-1 overflow-auto p-3 font-mono text-[11px] space-y-0.5">
-          {logs.length === 0 && <div className="text-gray-600 text-center mt-8">No logs yet</div>}
-          {logs.map((entry, i) => (
-            <div key={i} className={`flex gap-2 ${entry.type === 'system' ? 'text-gray-600' : entry.type === 'result' ? 'text-green-400' : 'text-gray-300'}`}>
-              <span className="text-[8px] text-gray-600 shrink-0 w-16">{entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : ''}</span>
-              {entry.tool && <span className="text-yellow-500 shrink-0">[{entry.tool}]</span>}
-              <span className="break-all">{entry.content}</span>
+          {filteredLogs.length === 0 && <div className="text-gray-600 text-center mt-8">{filter === 'all' ? 'No logs yet' : 'No matching entries'}</div>}
+          {filteredLogs.map((entry, i) => {
+            const isSummary = entry.subtype === 'step_summary' || entry.subtype === 'final_summary';
+            const isBusMsg = entry.subtype === 'bus_message' || entry.subtype === 'revalidation_request' || entry.subtype === 'user_message';
+            return (
+              <div key={i} className={`${
+                isSummary ? 'my-1 px-2 py-1.5 rounded border border-[#21262d] text-[#58a6ff] bg-[#161b22]' :
+                isBusMsg ? 'my-0.5 px-2 py-1 rounded border border-[#f0883e30] text-[#f0883e] bg-[#f0883e08]' :
+                'flex gap-2 ' + (
+                  entry.type === 'system' ? 'text-gray-600' :
+                  entry.type === 'result' ? 'text-green-400' : 'text-gray-300'
+                )
+              }`}>
+                {isSummary ? (
+                  <pre className="whitespace-pre-wrap text-[10px] leading-relaxed">{entry.content}</pre>
+                ) : isBusMsg ? (
+                  <div className="text-[10px] flex items-center gap-2">
+                    <span>📨</span>
+                    <span className="text-[8px] text-gray-500">{entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : ''}</span>
+                    <span>{entry.content}</span>
+                  </div>
+                ) : (
+                  <>
+                    <span className="text-[8px] text-gray-600 shrink-0 w-16">{entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : ''}</span>
+                    {entry.tool && <span className="text-yellow-500 shrink-0">[{entry.tool}]</span>}
+                    <span className="break-all">{entry.content}</span>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Memory Panel ────────────────────────────────────────
+
+const TYPE_COLORS: Record<string, string> = {
+  decision: 'text-yellow-400', bugfix: 'text-red-400', feature: 'text-green-400',
+  refactor: 'text-cyan-400', discovery: 'text-purple-400', change: 'text-gray-400', session: 'text-blue-400',
+};
+
+function MemoryPanel({ agentId, agentLabel, workspaceId, onClose }: {
+  agentId: string; agentLabel: string; workspaceId: string; onClose: () => void;
+}) {
+  const [data, setData] = useState<any>(null);
+
+  useEffect(() => {
+    fetch(`/api/workspace/${workspaceId}/memory?agentId=${encodeURIComponent(agentId)}`)
+      .then(r => r.json()).then(setData).catch(() => {});
+  }, [workspaceId, agentId]);
+
+  const stats = data?.stats;
+  const display: any[] = data?.display || [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.85)' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="flex flex-col rounded-xl overflow-hidden shadow-2xl" style={{ width: '70vw', height: '65vh', border: '1px solid #30363d', background: '#0d1117' }}>
+        {/* Header */}
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-[#30363d] shrink-0">
+          <span className="text-sm">🧠</span>
+          <span className="text-sm font-bold text-white">Memory: {agentLabel}</span>
+          {stats && (
+            <span className="text-[9px] text-gray-500">
+              {stats.totalObservations} observations, {stats.totalSessions} sessions
+              {stats.lastUpdated && ` · last updated ${new Date(stats.lastUpdated).toLocaleString()}`}
+            </span>
+          )}
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-sm ml-auto">✕</button>
+        </div>
+
+        {/* Stats bar */}
+        {stats?.typeBreakdown && Object.keys(stats.typeBreakdown).length > 0 && (
+          <div className="flex items-center gap-3 px-4 py-1.5 border-b border-[#21262d] text-[9px]">
+            {Object.entries(stats.typeBreakdown).map(([type, count]) => (
+              <span key={type} className={TYPE_COLORS[type] || 'text-gray-400'}>
+                {type}: {count as number}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Entries */}
+        <div className="flex-1 overflow-auto p-3 space-y-1.5">
+          {display.length === 0 && (
+            <div className="text-gray-600 text-center mt-8">No memory yet. Run this agent to build memory.</div>
+          )}
+          {display.map((entry: any) => (
+            <div key={entry.id} className={`rounded px-3 py-2 ${entry.isCompact ? 'opacity-60' : ''}`}
+              style={{ background: '#161b22', border: '1px solid #21262d' }}>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px]">{entry.icon}</span>
+                <span className={`text-[9px] font-medium ${TYPE_COLORS[entry.type] || 'text-gray-400'}`}>{entry.type}</span>
+                <span className="text-[10px] text-white flex-1 truncate">{entry.title}</span>
+                <span className="text-[8px] text-gray-600 shrink-0">
+                  {new Date(entry.timestamp).toLocaleString()}
+                </span>
+              </div>
+              {!entry.isCompact && entry.subtitle && (
+                <div className="text-[9px] text-gray-500 mt-1">{entry.subtitle}</div>
+              )}
+              {!entry.isCompact && entry.facts && entry.facts.length > 0 && (
+                <div className="mt-1 space-y-0.5">
+                  {entry.facts.map((f: string, i: number) => (
+                    <div key={i} className="text-[8px] text-gray-500">• {f}</div>
+                  ))}
+                </div>
+              )}
+              {entry.files && entry.files.length > 0 && (
+                <div className="text-[8px] text-gray-600 mt-1">
+                  Files: {entry.files.join(', ')}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Bus Message Panel ───────────────────────────────────
+
+function BusPanel({ busLog, agents, onClose }: {
+  busLog: any[]; agents: AgentConfig[]; onClose: () => void;
+}) {
+  const labelMap = new Map(agents.map(a => [a.id, `${a.icon} ${a.label}`]));
+  const getLabel = (id: string) => labelMap.get(id) || id;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.85)' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="flex flex-col rounded-xl overflow-hidden shadow-2xl" style={{ width: '65vw', height: '55vh', border: '1px solid #30363d', background: '#0d1117' }}>
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-[#30363d] shrink-0">
+          <span className="text-sm">📡</span>
+          <span className="text-sm font-bold text-white">Agent Communication Logs</span>
+          <span className="text-[9px] text-gray-500">{busLog.length} messages</span>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-sm ml-auto">✕</button>
+        </div>
+        <div className="flex-1 overflow-auto p-3 space-y-1">
+          {busLog.length === 0 && <div className="text-gray-600 text-center mt-8">No messages yet</div>}
+          {[...busLog].reverse().map((msg, i) => (
+            <div key={i} className="flex items-start gap-2 text-[10px] px-3 py-1.5 rounded"
+              style={{ background: '#161b22', border: '1px solid #21262d' }}>
+              <span className="text-gray-600 shrink-0 w-14">{new Date(msg.timestamp).toLocaleTimeString()}</span>
+              <span className="text-blue-400 shrink-0">{getLabel(msg.from)}</span>
+              <span className="text-gray-600">→</span>
+              <span className="text-green-400 shrink-0">{msg.to === '_system' ? '📡 system' : getLabel(msg.to)}</span>
+              <span className={`px-1 rounded text-[8px] ${
+                msg.payload?.action === 'fix_request' ? 'bg-red-500/20 text-red-400' :
+                msg.payload?.action === 'task_complete' ? 'bg-green-500/20 text-green-400' :
+                msg.payload?.action === 'ack' ? 'bg-gray-500/20 text-gray-500' :
+                'bg-blue-500/20 text-blue-400'
+              }`}>{msg.payload?.action}</span>
+              <span className="text-gray-400 truncate flex-1">{msg.payload?.content || ''}</span>
+              {msg.status && msg.status !== 'delivered' && (
+                <span className={`text-[7px] px-1 rounded ${
+                  msg.status === 'acked' ? 'text-green-500' : msg.status === 'failed' ? 'text-red-500' : 'text-yellow-500'
+                }`}>{msg.status}</span>
+              )}
             </div>
           ))}
         </div>
@@ -465,11 +649,11 @@ interface InputNodeData {
 function InputFlowNode({ data }: NodeProps<Node<InputNodeData>>) {
   const { config, state, onSubmit, onEdit, onRemove } = data;
   const isDone = state?.status === 'done';
-  const [editing, setEditing] = useState(!isDone);
-  const [text, setText] = useState(config.content || '');
+  const [text, setText] = useState('');
+  const entries = config.entries || [];
 
   return (
-    <div className="w-56 flex flex-col rounded-lg select-none"
+    <div className="w-60 flex flex-col rounded-lg select-none"
       style={{ border: `1px solid ${isDone ? '#58a6ff60' : '#30363d50'}`, background: '#0d1117',
         boxShadow: isDone ? '0 0 10px #58a6ff15' : 'none' }}>
       <Handle type="source" position={Position.Right} style={{ background: '#58a6ff', width: 8, height: 8, border: 'none' }} />
@@ -478,37 +662,43 @@ function InputFlowNode({ data }: NodeProps<Node<InputNodeData>>) {
       <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: '1px solid #21262d' }}>
         <span className="text-sm">{config.icon || '📝'}</span>
         <span className="text-xs font-semibold text-white flex-1">{config.label || 'Input'}</span>
+        {entries.length > 0 && <span className="text-[8px] text-gray-600">{entries.length}</span>}
         <div className="w-2 h-2 rounded-full" style={{ background: isDone ? '#58a6ff' : '#484f58', boxShadow: isDone ? '0 0 6px #58a6ff' : 'none' }} />
       </div>
 
-      {/* Content */}
+      {/* History entries (scrollable, compact) */}
+      {entries.length > 0 && (
+        <div className="max-h-24 overflow-auto px-3 py-1.5 space-y-1" style={{ borderBottom: '1px solid #21262d' }}
+          onPointerDown={e => e.stopPropagation()}>
+          {entries.map((e, i) => (
+            <div key={i} className={`text-[9px] leading-relaxed ${i === entries.length - 1 ? 'text-gray-300' : 'text-gray-600'}`}>
+              <span className="text-[7px] text-gray-700 mr-1">#{i + 1}</span>
+              {e.content.length > 80 ? e.content.slice(0, 80) + '…' : e.content}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* New input */}
       <div className="px-3 py-2">
-        {editing ? (
-          <textarea value={text} onChange={e => setText(e.target.value)} rows={3} autoFocus
-            placeholder="Describe requirements..."
-            className="w-full text-[10px] bg-[#0d1117] border border-[#21262d] rounded px-2 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-[#58a6ff]/50 resize-none"
-            onPointerDown={e => e.stopPropagation()} />
-        ) : (
-          <div className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 whitespace-pre-wrap max-h-20 overflow-hidden leading-relaxed"
-            onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setEditing(true); }}>
-            {config.content || '(click to add requirements)'}
-          </div>
-        )}
+        <textarea value={text} onChange={e => setText(e.target.value)} rows={2}
+          placeholder={entries.length > 0 ? 'Add new requirement or change...' : 'Describe requirements...'}
+          className="w-full text-[10px] bg-[#0d1117] border border-[#21262d] rounded px-2 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-[#58a6ff]/50 resize-none"
+          onPointerDown={e => e.stopPropagation()} />
       </div>
 
       {/* Actions */}
       <div className="flex items-center gap-1 px-2 py-1.5" style={{ borderTop: '1px solid #21262d' }}>
-        {editing ? (
-          <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onSubmit(text); setEditing(false); }}
-            className="text-[9px] px-2 py-0.5 rounded bg-[#238636]/20 text-[#3fb950] hover:bg-[#238636]/30">
-            {isDone ? 'Update' : '✓ Submit'}
-          </button>
-        ) : (
-          <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setEditing(true); }}
-            className="text-[9px] px-2 py-0.5 rounded bg-[#1f6feb]/15 text-[#58a6ff] hover:bg-[#1f6feb]/25">
-            Edit
-          </button>
-        )}
+        <button onPointerDown={e => e.stopPropagation()} onClick={e => {
+          e.stopPropagation();
+          if (!text.trim()) return;
+          onSubmit(text.trim());
+          setText('');
+        }}
+          className="text-[9px] px-2 py-0.5 rounded bg-[#238636]/20 text-[#3fb950] hover:bg-[#238636]/30 disabled:opacity-30"
+          disabled={!text.trim()}>
+          {entries.length > 0 ? '+ Add' : '✓ Submit'}
+        </button>
         <div className="flex-1" />
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onRemove(); }}
           className="text-[9px] text-gray-700 hover:text-red-400 px-1">✕</button>
@@ -533,11 +723,12 @@ interface AgentNodeData {
   onMessage: () => void;
   onApprove: () => void;
   onShowLog: () => void;
+  onShowMemory: () => void;
   [key: string]: unknown;
 }
 
 function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
-  const { config, state, colorIdx, previewLines, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog } = data;
+  const { config, state, colorIdx, previewLines, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory } = data;
   const c = COLORS[colorIdx % COLORS.length];
   const status = state?.status || 'idle';
   const statusInfo = STATUS_MAP[status] || STATUS_MAP.idle;
@@ -621,8 +812,10 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
             className="text-[9px] px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30">💬</button>
         )}
         <div className="flex-1" />
+        <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onShowMemory(); }}
+          className="text-[9px] text-gray-600 hover:text-purple-400 px-1" title="Memory">🧠</button>
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onShowLog(); }}
-          className="text-[9px] text-gray-600 hover:text-gray-300 px-1">📋</button>
+          className="text-[9px] text-gray-600 hover:text-gray-300 px-1" title="Logs">📋</button>
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onEdit(); }}
           className="text-[9px] text-gray-600 hover:text-blue-400 px-1">✏️</button>
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onRemove(); }}
@@ -648,6 +841,8 @@ export default function WorkspaceView({ projectPath, projectName, onClose }: {
   const [logTarget, setLogTarget] = useState<{ id: string; label: string } | null>(null);
   const [runPromptTarget, setRunPromptTarget] = useState<{ id: string; label: string } | null>(null);
   const [userInputRequest, setUserInputRequest] = useState<{ agentId: string; fromAgent: string; question: string } | null>(null);
+  const [memoryTarget, setMemoryTarget] = useState<{ id: string; label: string } | null>(null);
+  const [showBusPanel, setShowBusPanel] = useState(false);
 
   // Initialize workspace
   useEffect(() => {
@@ -723,6 +918,7 @@ export default function WorkspaceView({ projectPath, projectName, onClose }: {
             onMessage: () => setMessageTarget({ id: agent.id, label: agent.label }),
             onApprove: () => wsApi(workspaceId!, 'approve', { agentId: agent.id }),
             onShowLog: () => setLogTarget({ id: agent.id, label: agent.label }),
+            onShowMemory: () => setMemoryTarget({ id: agent.id, label: agent.label }),
           } satisfies AgentNodeData,
         };
       });
@@ -738,16 +934,27 @@ export default function WorkspaceView({ projectPath, projectName, onClose }: {
         const targetState = states[agent.id];
         const depStatus = depState?.status || 'idle';
         const targetStatus = targetState?.status || 'idle';
-        // Animated only when data is actively flowing (upstream running or target running)
         const isFlowing = depStatus === 'running' || targetStatus === 'running';
-        // Completed = upstream done
         const isCompleted = depStatus === 'done';
         const color = isFlowing ? '#58a6ff70' : isCompleted ? '#58a6ff40' : '#30363d60';
+
+        // Find last bus message between these two agents
+        const lastMsg = [...busLog].reverse().find(m =>
+          (m.from === depId && m.to === agent.id) || (m.from === agent.id && m.to === depId)
+        );
+        const edgeLabel = lastMsg?.payload?.action && lastMsg.payload.action !== 'task_complete' && lastMsg.payload.action !== 'ack'
+          ? `${lastMsg.payload.action}${lastMsg.payload.content ? ': ' + lastMsg.payload.content.slice(0, 30) : ''}`
+          : undefined;
+
         edges.push({
           id: `${depId}-${agent.id}`,
           source: depId,
           target: agent.id,
           animated: isFlowing,
+          label: edgeLabel,
+          labelStyle: { fill: '#8b949e', fontSize: 8 },
+          labelBgStyle: { fill: '#0d1117', fillOpacity: 0.8 },
+          labelBgPadding: [4, 2] as [number, number],
           style: { stroke: color, strokeWidth: isFlowing ? 2 : isCompleted ? 1.5 : 1 },
           markerEnd: { type: MarkerType.ArrowClosed, color },
         });
@@ -781,10 +988,22 @@ export default function WorkspaceView({ projectPath, projectName, onClose }: {
     if (!workspaceId) return;
     const config: AgentConfig = {
       id: `input-${Date.now()}`, label: 'Requirements', icon: '📝',
-      type: 'input', content: '', role: '', backend: 'cli',
+      type: 'input', content: '', entries: [], role: '', backend: 'cli',
       dependsOn: [], outputs: [], steps: [],
     };
     await wsApi(workspaceId, 'add', { config });
+  };
+
+  const handleCreatePipeline = async () => {
+    if (!workspaceId) return;
+    // Create pipeline via API — server uses presets with full prompts
+    const res = await fetch(`/api/workspace/${workspaceId}/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'create_pipeline' }),
+    });
+    const data = await res.json();
+    if (!res.ok && data.error) alert(`Error: ${data.error}`);
   };
 
   const handleRunAll = () => { if (workspaceId) wsApi(workspaceId, 'run_all'); };
@@ -803,6 +1022,10 @@ export default function WorkspaceView({ projectPath, projectName, onClose }: {
           </button>
         )}
         <div className="ml-auto flex items-center gap-2">
+          <button onClick={() => setShowBusPanel(true)}
+            className={`text-[8px] px-2 py-0.5 rounded border border-[#30363d] hover:border-[#58a6ff]/60 ${busLog.length > 0 ? 'text-[#58a6ff]' : 'text-gray-500'}`}>
+            📡 Logs{busLog.length > 0 ? ` (${busLog.length})` : ''}
+          </button>
           <button onClick={handleAddInput}
             className="text-[8px] px-2 py-0.5 rounded border border-[#30363d] text-gray-400 hover:text-white hover:border-[#58a6ff]/60">
             📝 + Input
@@ -827,10 +1050,16 @@ export default function WorkspaceView({ projectPath, projectName, onClose }: {
               </button>
             ))}
           </div>
-          <button onClick={() => setModal({ mode: 'add', initial: {} })}
-            className="text-[10px] px-3 py-1.5 rounded border border-dashed border-[#30363d] text-gray-500 hover:text-white hover:border-[#58a6ff]/60">
-            ⚙️ Custom
-          </button>
+          <div className="flex gap-2 mt-1">
+            <button onClick={() => setModal({ mode: 'add', initial: {} })}
+              className="text-[10px] px-3 py-1.5 rounded border border-dashed border-[#30363d] text-gray-500 hover:text-white hover:border-[#58a6ff]/60">
+              ⚙️ Custom
+            </button>
+            <button onClick={handleCreatePipeline}
+              className="text-[10px] px-3 py-1.5 rounded border border-[#238636] text-[#3fb950] hover:bg-[#238636]/20">
+              🚀 Dev Pipeline
+            </button>
+          </div>
         </div>
       ) : (
         <div className="flex-1 min-h-0">
@@ -893,6 +1122,21 @@ export default function WorkspaceView({ projectPath, projectName, onClose }: {
           agentLabel={logTarget.label}
           workspaceId={workspaceId}
           onClose={() => setLogTarget(null)}
+        />
+      )}
+
+      {/* Bus message panel */}
+      {showBusPanel && (
+        <BusPanel busLog={busLog} agents={agents} onClose={() => setShowBusPanel(false)} />
+      )}
+
+      {/* Memory panel */}
+      {memoryTarget && workspaceId && (
+        <MemoryPanel
+          agentId={memoryTarget.id}
+          agentLabel={memoryTarget.label}
+          workspaceId={workspaceId}
+          onClose={() => setMemoryTarget(null)}
         />
       )}
 

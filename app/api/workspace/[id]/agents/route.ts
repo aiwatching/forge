@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getOrchestrator } from '@/lib/workspace/manager';
+import { createDevPipeline } from '@/lib/workspace/presets';
 import type { WorkspaceAgentConfig } from '@/lib/workspace';
 
 // Agent operations: run, pause, resume, stop, retry, message, approve
@@ -19,6 +20,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         if (!config) return NextResponse.json({ error: 'config required' }, { status: 400 });
         orch.addAgent(config as WorkspaceAgentConfig);
         return NextResponse.json({ ok: true });
+      }
+      case 'create_pipeline': {
+        const pipeline = createDevPipeline();
+        for (const cfg of pipeline) {
+          orch.addAgent(cfg);
+        }
+        return NextResponse.json({ ok: true, agents: pipeline.length });
       }
       case 'remove': {
         if (!agentId) return NextResponse.json({ error: 'agentId required' }, { status: 400 });

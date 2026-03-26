@@ -12,8 +12,9 @@ export interface WorkspaceAgentConfig {
   icon: string;
   // Node type: 'agent' (default) or 'input' (user-provided requirements)
   type?: 'agent' | 'input';
-  // Input node content (only for type === 'input')
-  content?: string;
+  // Input node: append-only entries (latest is active, older are history)
+  content?: string;                    // legacy single content (migrated to entries)
+  entries?: InputEntry[];              // incremental input history
   role: string;                      // system prompt / role description
   backend: AgentBackendType;
   // CLI mode
@@ -32,6 +33,11 @@ export interface WorkspaceAgentConfig {
 }
 
 export type AgentBackendType = 'api' | 'cli';
+
+export interface InputEntry {
+  content: string;
+  timestamp: number;
+}
 
 export interface AgentStep {
   id: string;
@@ -75,15 +81,29 @@ export interface Artifact {
 export interface BusMessage {
   id: string;
   from: string;                      // source agent ID
-  to: string;                        // target agent ID, or '*' for broadcast
-  type: 'notify' | 'request' | 'response' | 'artifact';
+  to: string;                        // target agent ID (no broadcast)
+  type: 'notify' | 'request' | 'response' | 'artifact' | 'ack';
   payload: {
-    action: string;                  // 'task_complete' | 'step_complete' | 'question' | 'file_ready' | 'error'
+    action: string;                  // 'task_complete' | 'step_complete' | 'question' | 'fix_request' | ...
     content?: string;                // natural language message
     files?: string[];                // related file paths
     replyTo?: string;                // reply to which message ID
   };
   timestamp: number;
+  // Delivery tracking
+  status?: 'pending' | 'delivered' | 'acked' | 'failed';
+  retries?: number;
+}
+
+// ─── Agent Heartbeat ─────────────────────────────────────
+
+export type AgentLiveness = 'alive' | 'busy' | 'down';
+
+export interface AgentHeartbeat {
+  agentId: string;
+  liveness: AgentLiveness;
+  lastSeen: number;
+  currentStep?: string;
 }
 
 // ─── Workspace State (persistence) ───────────────────────

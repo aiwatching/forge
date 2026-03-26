@@ -110,6 +110,16 @@ export function loadWorkspace(workspaceId: string): WorkspaceState | null {
       }
     }
 
+    // Migrate Input nodes: content → entries
+    for (const agent of state.agents) {
+      if (agent.type === 'input') {
+        if (!agent.entries) agent.entries = [];
+        if (agent.entries.length === 0 && agent.content) {
+          agent.entries.push({ content: agent.content, timestamp: state.updatedAt || Date.now() });
+        }
+      }
+    }
+
     return state;
   } catch {
     return null;

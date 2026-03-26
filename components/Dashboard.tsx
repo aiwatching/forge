@@ -23,6 +23,7 @@ const NewTaskModal = lazy(() => import('./NewTaskModal'));
 const SettingsModal = lazy(() => import('./SettingsModal'));
 const MonitorPanel = lazy(() => import('./MonitorPanel'));
 const WorkspaceView = lazy(() => import('./WorkspaceView'));
+const WorkspaceTree = lazy(() => import('./WorkspaceTree'));
 
 interface UsageSummary {
   provider: string;
@@ -98,6 +99,21 @@ function FloatingBrowser({ onClose }: { onClose: () => void }) {
 export default function Dashboard({ user }: { user: any }) {
   const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal' | 'docs' | 'projects' | 'pipelines' | 'workspace' | 'skills' | 'logs' | 'usage'>('terminal');
   const [workspaceProject, setWorkspaceProject] = useState<{ name: string; path: string } | null>(null);
+  const wsViewRef = useRef<import('./WorkspaceView').WorkspaceViewHandle>(null);
+  const [wsTreeCollapsed, setWsTreeCollapsed] = useState(false);
+  const [wsTreeWidth, setWsTreeWidth] = useState(220);
+  const wsTreeDragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const onWsTreeDragStart = useCallback((e: React.MouseEvent) => {
+    wsTreeDragRef.current = { startX: e.clientX, startW: wsTreeWidth };
+    const onMove = (ev: MouseEvent) => {
+      if (!wsTreeDragRef.current) return;
+      const newW = Math.max(140, Math.min(400, wsTreeDragRef.current.startW + ev.clientX - wsTreeDragRef.current.startX));
+      setWsTreeWidth(newW);
+    };
+    const onUp = () => { wsTreeDragRef.current = null; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [wsTreeWidth]);
   const [browserMode, setBrowserMode] = useState<'none' | 'float' | 'right' | 'left'>('none');
   const [showBrowserMenu, setShowBrowserMenu] = useState(false);
   const [browserWidth, setBrowserWidth] = useState(600);
@@ -149,11 +165,10 @@ export default function Dashboard({ user }: { user: any }) {
   // Listen for open-terminal events from ProjectManager
   useEffect(() => {
     const handler = (e: Event) => {
-      const { projectPath, projectName } = (e as CustomEvent).detail;
+      const { projectPath, projectName, agentId } = (e as CustomEvent).detail;
       setViewMode('terminal');
-      // Give terminal time to render, then trigger open
       setTimeout(() => {
-        terminalRef.current?.openProjectTerminal?.(projectPath, projectName);
+        terminalRef.current?.openProjectTerminal?.(projectPath, projectName, agentId);
       }, 300);
     };
     window.addEventListener('forge:open-terminal', handler);
@@ -714,32 +729,50 @@ export default function Dashboard({ user }: { user: any }) {
         )}
 
 
-        {/* Workspace — keep alive when switching tabs (display:none instead of unmount) */}
-        {workspaceProject && (
-          <div className={`flex-1 flex flex-col min-h-0 ${viewMode !== 'workspace' ? 'hidden' : ''}`}>
-            <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
-              <WorkspaceView
-                projectPath={workspaceProject.path}
-                projectName={workspaceProject.name}
-                onClose={() => setWorkspaceProject(null)}
-              />
-            </Suspense>
+        {/* Workspace — tree panel + ReactFlow, keep alive */}
+        <div className={`flex-1 flex min-h-0 ${viewMode !== 'workspace' ? 'hidden' : ''}`}>
+          {/* Left tree panel (collapsible) */}
+          {!wsTreeCollapsed && (
+            <>
+              <aside style={{ width: wsTreeWidth }} className="flex flex-col shrink-0 overflow-hidden border-r border-[var(--border)]" >
+                <Suspense fallback={null}>
+                  <WorkspaceTree
+                    activeProjectPath={workspaceProject?.path || null}
+                    onSelectProject={(p) => setWorkspaceProject({ name: p.name, path: p.path })}
+                    onSelectAgent={(agentId) => wsViewRef.current?.focusAgent(agentId)}
+                    onCreateWorkspace={() => {}}
+                  />
+                </Suspense>
+              </aside>
+              <div onMouseDown={onWsTreeDragStart} className="w-1 cursor-col-resize shrink-0 hover:bg-[var(--accent)]/30 bg-[var(--border)]" />
+            </>
+          )}
+          {/* Collapse/expand button */}
+          <button
+            onClick={() => setWsTreeCollapsed(v => !v)}
+            className="w-5 shrink-0 flex items-center justify-center text-[8px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]"
+          >
+            {wsTreeCollapsed ? '▸' : '◂'}
+          </button>
+          {/* Main content */}
+          <div className="flex-1 flex flex-col min-h-0">
+            {workspaceProject ? (
+              <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
+                <WorkspaceView
+                  ref={wsViewRef}
+                  projectPath={workspaceProject.path}
+                  projectName={workspaceProject.name}
+                  onClose={() => setWorkspaceProject(null)}
+                />
+              </Suspense>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ background: '#080810' }}>
+                <span className="text-3xl">🚀</span>
+                <div className="text-sm text-gray-400">Select a project from the left panel</div>
+              </div>
+            )}
           </div>
-        )}
-        {viewMode === 'workspace' && !workspaceProject && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ background: '#080810' }}>
-            <span className="text-3xl">🚀</span>
-            <div className="text-sm text-gray-400">Select a project to open Workspace</div>
-            <div className="flex flex-wrap gap-2 mt-2 max-w-md justify-center">
-              {projects.map(p => (
-                <button key={p.path} onClick={() => setWorkspaceProject({ name: p.name, path: p.path })}
-                  className="text-[10px] px-3 py-1.5 rounded border border-[#30363d] text-gray-300 hover:text-white hover:border-[var(--accent)]">
-                  {p.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        </div>
 
         {/* Skills */}
         {viewMode === 'skills' && (

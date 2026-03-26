@@ -10,7 +10,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync } from 'node:fs';
-import { appendFileSync } from 'node:fs';
+import { writeFile, appendFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { WorkspaceState, AgentState, BusMessage, WorkspaceAgentConfig } from './types';
@@ -42,17 +42,15 @@ function agentHistoryFile(workspaceId: string, agentId: string): string {
 
 // ─── Save ────────────────────────────────────────────────
 
-export function saveWorkspace(state: WorkspaceState): void {
+export async function saveWorkspace(state: WorkspaceState): Promise<void> {
   const dir = workspaceDir(state.id);
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true }); // sync mkdir is fine (fast, cached by OS)
 
-  // Save main state (without heavy history — that's per-agent)
   const stateToSave: WorkspaceState = {
     ...state,
     agentStates: Object.fromEntries(
       Object.entries(state.agentStates).map(([id, s]) => [id, {
         ...s,
-        // Don't duplicate full history in state.json — it's in per-agent files
         history: [],
         logFile: agentLogFile(state.id, id),
       }])
@@ -60,27 +58,30 @@ export function saveWorkspace(state: WorkspaceState): void {
     updatedAt: Date.now(),
   };
 
-  writeFileSync(stateFile(state.id), JSON.stringify(stateToSave, null, 2), 'utf-8');
+  // Async write — doesn't block event loop
+  await writeFile(stateFile(state.id), JSON.stringify(stateToSave, null, 2), 'utf-8');
 
-  // Save per-agent history
-  for (const [agentId, agentState] of Object.entries(state.agentStates)) {
-    saveAgentHistory(state.id, agentId, agentState);
-  }
+  // Save per-agent history in parallel
+  await Promise.all(
+    Object.entries(state.agentStates).map(([agentId, agentState]) =>
+      saveAgentHistory(state.id, agentId, agentState)
+    )
+  );
 }
 
-function saveAgentHistory(workspaceId: string, agentId: string, state: AgentState): void {
+async function saveAgentHistory(workspaceId: string, agentId: string, state: AgentState): Promise<void> {
   const dir = agentDir(workspaceId, agentId);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(agentHistoryFile(workspaceId, agentId), JSON.stringify(state.history, null, 2), 'utf-8');
+  await mkdir(dir, { recursive: true });
+  await writeFile(agentHistoryFile(workspaceId, agentId), JSON.stringify(state.history, null, 2), 'utf-8');
 }
 
 // ─── Append Log ──────────────────────────────────────────
 
-/** Append a single log entry to an agent's JSONL log file */
-export function appendAgentLog(workspaceId: string, agentId: string, entry: TaskLogEntry): void {
+/** Append a single log entry to an agent's JSONL log file (async) */
+export async function appendAgentLog(workspaceId: string, agentId: string, entry: TaskLogEntry): Promise<void> {
   const dir = agentDir(workspaceId, agentId);
-  mkdirSync(dir, { recursive: true });
-  appendFileSync(agentLogFile(workspaceId, agentId), JSON.stringify(entry) + '\n', 'utf-8');
+  await mkdir(dir, { recursive: true });
+  await appendFile(agentLogFile(workspaceId, agentId), JSON.stringify(entry) + '\n', 'utf-8');
 }
 
 // ─── Load ────────────────────────────────────────────────
@@ -234,7 +235,7 @@ export function startAutoSave(workspaceId: string, getState: () => WorkspaceStat
   const timer = setInterval(() => {
     try {
       const state = getState();
-      saveWorkspace(state);
+      saveWorkspace(state).catch(() => {});
     } catch {
       // Silently ignore save errors
     }

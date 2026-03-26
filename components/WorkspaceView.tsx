@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
 import {
-  ReactFlow, Background, Controls, Handle, Position,
+  ReactFlow, Background, Controls, Handle, Position, useReactFlow, ReactFlowProvider,
   type Node, type NodeProps, MarkerType, type NodeChange,
   applyNodeChanges,
 } from '@xyflow/react';
@@ -829,11 +829,16 @@ const nodeTypes = { agent: AgentFlowNode, input: InputFlowNode };
 
 // ─── Main Workspace ──────────────────────────────────────
 
-export default function WorkspaceView({ projectPath, projectName, onClose }: {
+export interface WorkspaceViewHandle {
+  focusAgent: (agentId: string) => void;
+}
+
+function WorkspaceViewInner({ projectPath, projectName, onClose }: {
   projectPath: string;
   projectName: string;
   onClose: () => void;
-}) {
+}, ref: React.Ref<WorkspaceViewHandle>) {
+  const reactFlow = useReactFlow();
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [rfNodes, setRfNodes] = useState<Node<any>[]>([]);
   const [modal, setModal] = useState<{ mode: 'add' | 'edit'; initial: Partial<AgentConfig>; editId?: string } | null>(null);
@@ -843,6 +848,25 @@ export default function WorkspaceView({ projectPath, projectName, onClose }: {
   const [userInputRequest, setUserInputRequest] = useState<{ agentId: string; fromAgent: string; question: string } | null>(null);
   const [memoryTarget, setMemoryTarget] = useState<{ id: string; label: string } | null>(null);
   const [showBusPanel, setShowBusPanel] = useState(false);
+
+  // Expose focusAgent to parent
+  useImperativeHandle(ref, () => ({
+    focusAgent(agentId: string) {
+      const node = rfNodes.find(n => n.id === agentId);
+      if (node && node.measured?.width) {
+        reactFlow.setCenter(
+          node.position.x + (node.measured.width / 2),
+          node.position.y + ((node.measured.height || 100) / 2),
+          { zoom: 1.2, duration: 400 }
+        );
+        // Flash highlight via selection
+        reactFlow.setNodes(nodes => nodes.map(n => ({ ...n, selected: n.id === agentId })));
+        setTimeout(() => {
+          reactFlow.setNodes(nodes => nodes.map(n => ({ ...n, selected: false })));
+        }, 1500);
+      }
+    },
+  }), [rfNodes, reactFlow]);
 
   // Initialize workspace
   useEffect(() => {
@@ -1006,6 +1030,41 @@ export default function WorkspaceView({ projectPath, projectName, onClose }: {
     if (!res.ok && data.error) alert(`Error: ${data.error}`);
   };
 
+  const handleExportTemplate = async () => {
+    if (!workspaceId) return;
+    try {
+      const res = await fetch(`/api/workspace?export=${workspaceId}`);
+      const template = await res.json();
+      // Download as JSON file
+      const blob = new Blob([JSON.stringify(template, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `workspace-template-${projectName.replace(/\s+/g, '-')}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert('Export failed');
+    }
+  };
+
+  const handleImportTemplate = async (file: File) => {
+    if (!workspaceId) return;
+    try {
+      const text = await file.text();
+      const template = JSON.parse(text);
+      await fetch('/api/workspace', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectPath, projectName, template }),
+      });
+      // Reload page to pick up new workspace
+      window.location.reload();
+    } catch {
+      alert('Import failed — invalid template file');
+    }
+  };
+
   const handleRunAll = () => { if (workspaceId) wsApi(workspaceId, 'run_all'); };
 
   return (
@@ -1026,6 +1085,12 @@ export default function WorkspaceView({ projectPath, projectName, onClose }: {
             className={`text-[8px] px-2 py-0.5 rounded border border-[#30363d] hover:border-[#58a6ff]/60 ${busLog.length > 0 ? 'text-[#58a6ff]' : 'text-gray-500'}`}>
             📡 Logs{busLog.length > 0 ? ` (${busLog.length})` : ''}
           </button>
+          {agents.length > 0 && (
+            <button onClick={handleExportTemplate}
+              className="text-[8px] px-2 py-0.5 rounded border border-[#30363d] text-gray-500 hover:text-white hover:border-[#58a6ff]/60">
+              📤 Export
+            </button>
+          )}
           <button onClick={handleAddInput}
             className="text-[8px] px-2 py-0.5 rounded border border-[#30363d] text-gray-400 hover:text-white hover:border-[#58a6ff]/60">
             📝 + Input
@@ -1059,6 +1124,14 @@ export default function WorkspaceView({ projectPath, projectName, onClose }: {
               className="text-[10px] px-3 py-1.5 rounded border border-[#238636] text-[#3fb950] hover:bg-[#238636]/20">
               🚀 Dev Pipeline
             </button>
+            <label className="text-[10px] px-3 py-1.5 rounded border border-dashed border-[#30363d] text-gray-500 hover:text-white hover:border-[#58a6ff]/60 cursor-pointer">
+              📥 Import
+              <input type="file" accept=".json" className="hidden" onChange={e => {
+                const file = e.target.files?.[0];
+                if (file) handleImportTemplate(file);
+                e.target.value = '';
+              }} />
+            </label>
           </div>
         </div>
       ) : (
@@ -1158,3 +1231,16 @@ export default function WorkspaceView({ projectPath, projectName, onClose }: {
     </div>
   );
 }
+
+const WorkspaceViewWithRef = forwardRef(WorkspaceViewInner);
+
+// Wrap with ReactFlowProvider so useReactFlow works
+export default forwardRef<WorkspaceViewHandle, { projectPath: string; projectName: string; onClose: () => void }>(
+  function WorkspaceView(props, ref) {
+    return (
+      <ReactFlowProvider>
+        <WorkspaceViewWithRef {...props} ref={ref} />
+      </ReactFlowProvider>
+    );
+  }
+);

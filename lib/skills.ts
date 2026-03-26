@@ -172,13 +172,15 @@ export async function syncSkills(): Promise<{ synced: number; error?: string }> 
 
     const tx = db().transaction(() => {
       for (const s of items) {
+        // Ensure no undefined values — better-sqlite3 throws "Too few parameters" for undefined
         stmt.run(
-          s.name, s.type || 'skill',
-          s.display_name, s.description || '',
-          s.author?.name || '', s.version || '', JSON.stringify(s.tags || []),
-          s.score || 0, s.rating || 0, s.source?.url || '',
-          '', // archive field (unused now, kept for compat)
-          s.name, s.name, s.name
+          s.name || '', s.type || 'skill',
+          s.display_name || '', s.description || '',
+          (s.author?.name || s.author || '').toString(), s.version || '',
+          JSON.stringify(s.tags || []),
+          s.score ?? 0, s.rating ?? 0, s.source?.url || s.source_url || '',
+          '', // archive
+          s.name || '', s.name || '', s.name || ''
         );
       }
     });
@@ -199,10 +201,12 @@ export async function syncSkills(): Promise<{ synced: number; error?: string }> 
       }
     }
 
-    console.log(`[skills] Synced ${items.length} items`);
+    console.log(`[skills] Synced ${items.length} items from registry`);
     return { synced: items.length };
   } catch (e) {
-    return { synced: 0, error: e instanceof Error ? e.message : String(e) };
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[skills] Sync failed:`, msg);
+    return { synced: 0, error: msg };
   }
 }
 

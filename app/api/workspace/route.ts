@@ -81,7 +81,7 @@ export async function POST(req: Request) {
     }
   }
 
-  saveWorkspace(state);
+  await saveWorkspace(state);
   return NextResponse.json(state, { status: 201 });
 }
 

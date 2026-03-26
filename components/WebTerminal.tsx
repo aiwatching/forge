@@ -9,7 +9,7 @@ import '@xterm/xterm/css/xterm.css';
 
 export interface WebTerminalHandle {
   openSessionInTerminal: (sessionId: string, projectPath: string) => void;
-  openProjectTerminal: (projectPath: string, projectName: string) => void;
+  openProjectTerminal: (projectPath: string, projectName: string, agentId?: string) => void;
 }
 
 export interface WebTerminalProps {
@@ -325,22 +325,40 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
       setTabs(prev => [...prev, newTab]);
       setTimeout(() => setActiveTabId(newTab.id), 0);
     },
-    async openProjectTerminal(projectPath: string, projectName: string) {
-      // Check for existing sessions to use -c
-      let hasSession = false;
-      try {
-        const sRes = await fetch(`/api/claude-sessions/${encodeURIComponent(projectName)}`);
-        const sData = await sRes.json();
-        hasSession = Array.isArray(sData) ? sData.length > 0 : false;
-      } catch {}
-      const sf = skipPermissions ? ' --dangerously-skip-permissions' : '';
-      const resumeFlag = hasSession ? ' -c' : '';
+    async openProjectTerminal(projectPath: string, projectName: string, agentId?: string) {
+      // Determine which agent CLI to use
+      const agent = agentId || 'claude';
+      let agentCmd = agent;
 
-      // Use a ref-stable ID so we can set active after state update
+      // For claude: check for existing sessions to use -c
+      let resumeFlag = '';
+      if (agent === 'claude') {
+        try {
+          const sRes = await fetch(`/api/claude-sessions/${encodeURIComponent(projectName)}`);
+          const sData = await sRes.json();
+          const hasSession = Array.isArray(sData) ? sData.length > 0 : false;
+          resumeFlag = hasSession ? ' -c' : '';
+        } catch {}
+      }
+
+      // Get skip-permissions flag from agent config
+      let sf = '';
+      try {
+        const agentRes = await fetch('/api/agents');
+        const agentData = await agentRes.json();
+        const agentConfig = (agentData.agents || []).find((a: any) => a.id === agent);
+        if (agentConfig?.skipPermissionsFlag && skipPermissions) {
+          sf = ` ${agentConfig.skipPermissionsFlag}`;
+        } else if (skipPermissions && agent === 'claude') {
+          sf = ' --dangerously-skip-permissions';
+        }
+      } catch {
+        if (skipPermissions && agent === 'claude') sf = ' --dangerously-skip-permissions';
+      }
+
       let targetTabId: number | null = null;
 
       setTabs(prev => {
-        // Check if there's already a tab for this project
         const existing = prev.find(t => t.projectPath === projectPath);
         if (existing) {
           targetTabId = existing.id;
@@ -348,7 +366,7 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
         }
         const tree = makeTerminal(undefined, projectPath);
         const paneId = firstTerminalId(tree);
-        pendingCommands.set(paneId, `cd "${projectPath}" && claude${resumeFlag}${sf}\n`);
+        pendingCommands.set(paneId, `cd "${projectPath}" && ${agentCmd}${resumeFlag}${sf}\n`);
         const newTab: TabState = {
           id: nextId++,
           label: projectName,

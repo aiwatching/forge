@@ -116,6 +116,7 @@ export interface WorkspaceState {
   agentStates: Record<string, AgentState>;
   nodePositions: Record<string, { x: number; y: number }>;
   busLog: BusMessage[];
+  busOutbox?: Record<string, BusMessage[]>; // agentId → undelivered messages
   createdAt: number;
   updatedAt: number;
 }

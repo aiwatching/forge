@@ -132,13 +132,23 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
 
   const sync = async () => {
     setSyncing(true);
-    await fetch('/api/skills', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'sync' }),
-    });
-    await fetchSkills();
-    setSyncing(false);
+    try {
+      const res = await fetch('/api/skills', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sync' }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(`Sync error: ${data.error}`);
+      } else {
+        await fetchSkills();
+      }
+    } catch (err: any) {
+      alert(`Sync failed: ${err.message || 'Network error'}`);
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const install = async (name: string, target: string) => {

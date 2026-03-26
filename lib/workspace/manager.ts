@@ -58,6 +58,7 @@ export function createOrchestratorFromState(state: WorkspaceState): WorkspaceOrc
       agents: state.agents,
       agentStates: state.agentStates,
       busLog: state.busLog,
+      busOutbox: state.busOutbox,
     });
   }
 

@@ -256,8 +256,25 @@ export class AgentBus extends EventEmitter {
     return this.log;
   }
 
+  /** Get all outbox queues (for persistence) */
+  getAllOutbox(): Record<string, BusMessage[]> {
+    const result: Record<string, BusMessage[]> = {};
+    for (const [id, msgs] of this.outbox) {
+      if (msgs.length > 0) result[id] = [...msgs];
+    }
+    return result;
+  }
+
   loadLog(messages: BusMessage[]): void {
     this.log = [...messages];
+  }
+
+  /** Restore outbox from persisted state */
+  loadOutbox(outbox: Record<string, BusMessage[]>): void {
+    this.outbox.clear();
+    for (const [id, msgs] of Object.entries(outbox)) {
+      this.outbox.set(id, [...msgs]);
+    }
   }
 
   clear(): void {

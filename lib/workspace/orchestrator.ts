@@ -148,6 +148,10 @@ export class WorkspaceOrchestrator extends EventEmitter {
     // Append to entries (incremental, not overwrite)
     if (!entry.config.entries) entry.config.entries = [];
     entry.config.entries.push({ content, timestamp: Date.now() });
+    // Keep bounded — max 100 entries, oldest removed
+    if (entry.config.entries.length > 100) {
+      entry.config.entries = entry.config.entries.slice(-100);
+    }
     // Also set content to latest for backward compat
     entry.config.content = content;
 
@@ -294,7 +298,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
       // Persist log entries to disk
       if (event.type === 'log') {
-        appendAgentLog(this.workspaceId, agentId, event.entry);
+        appendAgentLog(this.workspaceId, agentId, event.entry).catch(() => {});
       }
 
       this.emit('event', event);
@@ -318,12 +322,10 @@ export class WorkspaceOrchestrator extends EventEmitter {
               .filter(h => h.type === 'result' && h.subtype === 'step_complete')
               .slice(-1)[0];
             if (prevResult && prevStep) {
-              try {
-                const obs = parseStepToObservations(prevStep.label, prevResult.content, entry.state.artifacts);
-                for (const o of obs) {
-                  addObservation(this.workspaceId, agentId, config.label, config.role, o);
-                }
-              } catch {}
+              const obs = parseStepToObservations(prevStep.label, prevResult.content, entry.state.artifacts);
+              for (const o of obs) {
+                addObservation(this.workspaceId, agentId, config.label, config.role, o).catch(() => {});
+              }
             }
           }
         }
@@ -489,6 +491,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       agentStates: this.getAllAgentStates(),
       nodePositions: {},
       busLog: [...this.bus.getLog()],
+      busOutbox: this.bus.getAllOutbox(),
       createdAt: this.createdAt,
       updatedAt: Date.now(),
     };
@@ -511,6 +514,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
     agents: WorkspaceAgentConfig[];
     agentStates: Record<string, AgentState>;
     busLog: BusMessage[];
+    busOutbox?: Record<string, BusMessage[]>;
   }): void {
     this.agents.clear();
     for (const config of data.agents) {
@@ -522,13 +526,16 @@ export class WorkspaceOrchestrator extends EventEmitter {
       this.agents.set(config.id, { config, worker: null, state });
     }
     this.bus.loadLog(data.busLog);
+    if (data.busOutbox) {
+      this.bus.loadOutbox(data.busOutbox);
+    }
   }
 
   /** Stop all agents, save final state, and clean up */
   shutdown(): void {
     stopAutoSave(this.workspaceId);
     // Final save before shutdown
-    try { saveWorkspace(this.getFullState()); } catch {}
+    saveWorkspace(this.getFullState()).catch(() => {});
     for (const [, entry] of this.agents) {
       entry.worker?.stop();
     }
@@ -881,7 +888,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
   }
 
   private saveNow(): void {
-    try { saveWorkspace(this.getFullState()); } catch {}
+    saveWorkspace(this.getFullState()).catch(() => {});
   }
 
   /** Emit agents_changed so SSE pushes the updated list to frontend */
@@ -909,7 +916,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
    * Update agent memory after execution completes.
    * Parses step results into structured memory entries.
    */
-  private updateAgentMemory(agentId: string, config: WorkspaceAgentConfig, stepResults: string[]): void {
+  private async updateAgentMemory(agentId: string, config: WorkspaceAgentConfig, stepResults: string[]): Promise<void> {
     try {
       const entry = this.agents.get(agentId);
 
@@ -919,7 +926,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       if (lastStep && lastResult) {
         const obs = parseStepToObservations(lastStep.label, lastResult, entry?.state.artifacts || []);
         for (const o of obs) {
-          addObservation(this.workspaceId, agentId, config.label, config.role, o);
+          await addObservation(this.workspaceId, agentId, config.label, config.role, o);
         }
       }
 
@@ -929,7 +936,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
         stepResults,
         entry?.state.artifacts || [],
       );
-      addSessionSummary(this.workspaceId, agentId, summary);
+      await addSessionSummary(this.workspaceId, agentId, summary);
 
       console.log(`[workspace] Updated memory for ${config.label}`);
     } catch (err: any) {

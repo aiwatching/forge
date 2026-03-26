@@ -429,17 +429,8 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
           {gitInfo?.behind ? <span className="text-[9px] text-yellow-400">↓{gitInfo.behind}</span> : null}
           {/* Action buttons */}
           <div className="flex items-center gap-1.5 ml-auto">
-            {/* Open Terminal */}
-            <button
-              onClick={() => {
-                const event = new CustomEvent('forge:open-terminal', { detail: { projectPath, projectName } });
-                window.dispatchEvent(event);
-              }}
-              className="text-[9px] px-2 py-0.5 border border-[var(--accent)] text-[var(--accent)] rounded hover:bg-[var(--accent)] hover:text-white transition-colors"
-              title="Open terminal with claude -c"
-            >
-              Terminal
-            </button>
+            {/* Open Terminal with agent selection */}
+            <AgentTerminalButton projectPath={projectPath} projectName={projectName} />
             <button
               onClick={() => { fetchGitInfo(); fetchTree(); if (selectedFile) openFile(selectedFile); }}
               className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
@@ -1293,3 +1284,81 @@ const FileTreeNode = memo(function FileTreeNode({ node, depth, selected, onSelec
     </button>
   );
 });
+
+// ─── Agent Terminal Button ───────────────────────────────
+
+function AgentTerminalButton({ projectPath, projectName }: { projectPath: string; projectName: string }) {
+  const [agents, setAgents] = useState<{ id: string; name: string; detected?: boolean }[]>([]);
+  const [showMenu, setShowMenu] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch('/api/agents').then(r => r.json())
+      .then(d => setAgents(d.agents || []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!showMenu) return;
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as globalThis.Node)) setShowMenu(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [showMenu]);
+
+  const openWithAgent = (agentId?: string) => {
+    setShowMenu(false);
+    const event = new CustomEvent('forge:open-terminal', {
+      detail: { projectPath, projectName, agentId },
+    });
+    window.dispatchEvent(event);
+  };
+
+  const detected = agents.filter(a => a.detected !== false);
+
+  // If only one agent (claude), just a simple button
+  if (detected.length <= 1) {
+    return (
+      <button
+        onClick={() => openWithAgent()}
+        className="text-[9px] px-2 py-0.5 border border-[var(--accent)] text-[var(--accent)] rounded hover:bg-[var(--accent)] hover:text-white transition-colors"
+        title="Open terminal"
+      >
+        Terminal
+      </button>
+    );
+  }
+
+  // Multiple agents: button with dropdown
+  return (
+    <div ref={ref} className="relative">
+      <div className="flex items-center">
+        <button
+          onClick={() => openWithAgent()}
+          className="text-[9px] px-2 py-0.5 border border-[var(--accent)] text-[var(--accent)] rounded-l hover:bg-[var(--accent)] hover:text-white transition-colors"
+          title="Open terminal with default agent"
+        >
+          Terminal
+        </button>
+        <button
+          onClick={() => setShowMenu(v => !v)}
+          className="text-[9px] px-1 py-0.5 border border-l-0 border-[var(--accent)] text-[var(--accent)] rounded-r hover:bg-[var(--accent)] hover:text-white transition-colors"
+        >
+          ▾
+        </button>
+      </div>
+      {showMenu && (
+        <div className="absolute right-0 top-full mt-1 w-36 rounded border border-[var(--border)] shadow-lg z-40 overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
+          {detected.map(a => (
+            <button key={a.id} onClick={() => openWithAgent(a.id)}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)] text-left">
+              <span className="font-bold w-4 text-center text-[var(--accent)]">
+                {a.id === 'claude' ? 'C' : a.id === 'codex' ? 'X' : a.id === 'aider' ? 'A' : a.id.charAt(0).toUpperCase()}
+              </span>
+              <span>{a.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

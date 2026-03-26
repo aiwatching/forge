@@ -11,7 +11,8 @@
  * Storage: ~/.forge/workspaces/{workspace-id}/agents/{agent-id}/memory.json
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -98,10 +99,10 @@ export function loadMemory(workspaceId: string, agentId: string): SmithMemory | 
   }
 }
 
-export function saveMemory(workspaceId: string, agentId: string, memory: SmithMemory): void {
+export async function saveMemory(workspaceId: string, agentId: string, memory: SmithMemory): Promise<void> {
   const dir = memoryDir(workspaceId, agentId);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(memoryFile(workspaceId, agentId), JSON.stringify(memory, null, 2), 'utf-8');
+  await mkdir(dir, { recursive: true });
+  await writeFile(memoryFile(workspaceId, agentId), JSON.stringify(memory, null, 2), 'utf-8');
 }
 
 export function createMemory(agentId: string, agentLabel: string, role: string): SmithMemory {
@@ -152,13 +153,13 @@ function mapLegacyType(t: string): ObservationType {
 // ─── Observation capture ─────────────────────────────────
 
 /** Add a single observation after a step completes */
-export function addObservation(
+export async function addObservation(
   workspaceId: string,
   agentId: string,
   agentLabel: string,
   role: string,
   obs: Omit<Observation, 'id' | 'timestamp'>,
-): void {
+): Promise<void> {
   let memory = loadMemory(workspaceId, agentId) || createMemory(agentId, agentLabel, role);
   memory.agentLabel = agentLabel;
   memory.role = role;
@@ -169,31 +170,28 @@ export function addObservation(
     timestamp: Date.now(),
   });
 
-  // Prune: keep max observations, compact older ones
   pruneObservations(memory);
-
   memory.lastUpdated = Date.now();
-  saveMemory(workspaceId, agentId, memory);
+  await saveMemory(workspaceId, agentId, memory);
 }
 
 /** Add session summary when agent finishes all steps */
-export function addSessionSummary(
+export async function addSessionSummary(
   workspaceId: string,
   agentId: string,
   summary: Omit<SessionSummary, 'timestamp'>,
-): void {
+): Promise<void> {
   let memory = loadMemory(workspaceId, agentId);
   if (!memory) return;
 
   memory.sessions.push({ ...summary, timestamp: Date.now() });
 
-  // Keep bounded
   if (memory.sessions.length > MAX_SESSIONS) {
     memory.sessions = memory.sessions.slice(-MAX_SESSIONS);
   }
 
   memory.lastUpdated = Date.now();
-  saveMemory(workspaceId, agentId, memory);
+  await saveMemory(workspaceId, agentId, memory);
 }
 
 // ─── Progressive disclosure pruning ──────────────────────

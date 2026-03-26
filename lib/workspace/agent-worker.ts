@@ -143,6 +143,12 @@ export class AgentWorker extends EventEmitter {
           },
         });
 
+        // Validate result — detect if the agent hit an error but backend didn't catch it
+        const failureCheck = detectStepFailure(result.response);
+        if (failureCheck) {
+          throw new Error(failureCheck);
+        }
+
         // Record the assistant's final response for this step
         this.state.history.push({
           type: 'result',
@@ -272,6 +278,55 @@ export class AgentWorker extends EventEmitter {
 // ─── Summary helpers (no LLM, pure heuristic) ────────────
 
 /** Extract a compact step summary from raw output */
+/**
+ * Detect if a step's result indicates failure — covers all agent types:
+ * - Rate/usage limits (codex, claude, API)
+ * - Auth failures
+ * - Subscription limits (claude code)
+ * - Empty/meaningless output
+ * Returns error message if failure detected, null if OK.
+ */
+function detectStepFailure(response: string): string | null {
+  if (!response || response.trim().length === 0) {
+    return 'Agent produced no output — step may not have executed';
+  }
+
+  const patterns: [RegExp, string][] = [
+    // Usage/rate limits
+    [/usage limit/i, 'Usage limit reached'],
+    [/rate limit/i, 'Rate limit reached'],
+    [/hit your.*limit/i, 'Account limit reached'],
+    [/upgrade to (plus|pro|max)/i, 'Subscription upgrade required'],
+    [/try again (at|in|after)/i, 'Temporarily unavailable — try again later'],
+    // Claude Code specific
+    [/exceeded.*monthly.*limit/i, 'Monthly usage limit exceeded'],
+    [/opus limit|sonnet limit/i, 'Model usage limit reached'],
+    [/you've been rate limited/i, 'Rate limited'],
+    // API errors
+    [/api key.*invalid/i, 'Invalid API key'],
+    [/authentication failed/i, 'Authentication failed'],
+    [/insufficient.*quota/i, 'Insufficient API quota'],
+    [/billing.*not.*active/i, 'Billing not active'],
+    [/overloaded|server error|503|502/i, 'Service temporarily unavailable'],
+  ];
+
+  for (const [pattern, msg] of patterns) {
+    if (pattern.test(response)) {
+      // Extract the actual error line for context
+      const errorLine = response.split('\n').find(l => pattern.test(l))?.trim();
+      return `${msg}${errorLine ? ': ' + errorLine.slice(0, 150) : ''}`;
+    }
+  }
+
+  // Check for very short output that's just noise (spinner artifacts, etc.)
+  const meaningful = response.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '').trim();
+  if (meaningful.length < 10 && response.length > 50) {
+    return 'Agent output appears to be only terminal noise — execution may have failed';
+  }
+
+  return null;
+}
+
 function summarizeStepResult(stepLabel: string, rawResult: string, artifacts: { path?: string; summary?: string }[]): string {
   const lines: string[] = [];
   lines.push(`✅ Step "${stepLabel}" done`);

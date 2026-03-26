@@ -63,6 +63,7 @@ export interface AgentState {
   artifacts: Artifact[];
   logFile?: string;                  // path to JSONL log file
   lastCheckpoint?: number;           // last successfully completed step index
+  cliSessionId?: string;             // claude session ID for --resume (persisted across re-runs)
   startedAt?: number;
   completedAt?: number;
   error?: string;

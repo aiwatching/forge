@@ -115,10 +115,14 @@ export class WorkspaceOrchestrator extends EventEmitter {
       entry.worker.stop();
     }
     entry.config = config;
-    entry.state = { status: 'idle', history: [], artifacts: [] };
+    // Reset status but keep history/artifacts (don't wipe logs)
+    entry.state.status = 'idle';
+    entry.state.error = undefined;
     entry.worker = null;
     this.saveNow();
     this.emitAgentsChanged();
+    // Push status update so frontend reflects the reset
+    this.emit('event', { type: 'status', agentId: id, status: 'idle' } satisfies WorkerEvent);
   }
 
   getAgentState(id: string): Readonly<AgentState> | undefined {
@@ -264,7 +268,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
     }
 
     // Create backend
-    const backend = this.createBackend(config);
+    const backend = this.createBackend(config, agentId);
 
     // Create worker with bus callbacks for inter-agent communication
     // Load agent memory
@@ -544,13 +548,24 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
   // ─── Private ───────────────────────────────────────────
 
-  private createBackend(config: WorkspaceAgentConfig) {
+  private createBackend(config: WorkspaceAgentConfig, agentId?: string) {
     switch (config.backend) {
       case 'api':
         return new ApiBackend();
       case 'cli':
-      default:
-        return new CliBackend();
+      default: {
+        // Resume existing claude session if available
+        const existingSessionId = agentId ? this.agents.get(agentId)?.state.cliSessionId : undefined;
+        const backend = new CliBackend(existingSessionId);
+        // Persist new sessionId back to agent state
+        if (agentId) {
+          backend.onSessionId = (id) => {
+            const entry = this.agents.get(agentId);
+            if (entry) entry.state.cliSessionId = id;
+          };
+        }
+        return backend;
+      }
     }
   }
 

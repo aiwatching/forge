@@ -85,9 +85,14 @@ export default function SessionView({
   }, []);
 
   useEffect(() => {
-    loadTree(true);
+    // In single-project mode: load cached first (fast), then sync in background
+    if (singleProject) {
+      loadTree(false).then(() => loadTree(true));
+    } else {
+      loadTree(true);
+    }
     loadWatchers();
-  }, [loadTree, loadWatchers]);
+  }, [loadTree, loadWatchers, singleProject]);
 
   // Auto-expand project if only one or if pre-selected
   useEffect(() => {

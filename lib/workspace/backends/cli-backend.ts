@@ -88,6 +88,12 @@ function detectArtifacts(parsed: any): Artifact[] {
 export class CliBackend implements AgentBackend {
   private child: ChildProcess | null = null;
   private sessionId: string | undefined;
+  /** Callback to persist sessionId back to agent state */
+  onSessionId?: (id: string) => void;
+
+  constructor(initialSessionId?: string) {
+    this.sessionId = initialSessionId;
+  }
 
   async executeStep(params: StepExecutionParams): Promise<StepExecutionResult> {
     const { config, step, history, projectPath, upstreamContext, onLog, abortSignal } = params;
@@ -154,8 +160,23 @@ export class CliBackend implements AgentBackend {
       };
       abortSignal?.addEventListener('abort', onAbort, { once: true });
 
+      // Real-time fatal error detection — shared across all CLI agents
+      const FATAL_PATTERN = /usage limit|rate limit|hit your.*limit|upgrade to (plus|pro|max)|exceeded.*monthly|you've been rate limited|api key.*invalid|insufficient.*quota|billing.*not.*active/i;
+      let fatalDetected = false;
+
       this.child.stdout?.on('data', (data: Buffer) => {
-        buffer += data.toString();
+        const raw = data.toString();
+        // Check for fatal errors in raw output before parsing
+        if (!fatalDetected && FATAL_PATTERN.test(raw)) {
+          fatalDetected = true;
+          const errorLine = raw.split('\n').find(l => FATAL_PATTERN.test(l))?.trim() || 'Agent hit limit';
+          console.log(`[cli-backend] Fatal error detected: ${errorLine.slice(0, 100)}`);
+          onLog?.({ type: 'system', subtype: 'error', content: errorLine.slice(0, 200), timestamp: new Date().toISOString() });
+          this.child?.kill('SIGTERM');
+          return;
+        }
+
+        buffer += raw;
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
@@ -208,6 +229,12 @@ export class CliBackend implements AgentBackend {
 
       this.child.stderr?.on('data', (data: Buffer) => {
         const text = data.toString().trim();
+        // Also check stderr for fatal errors
+        if (!fatalDetected && FATAL_PATTERN.test(text)) {
+          fatalDetected = true;
+          console.log(`[cli-backend] Fatal error in stderr: ${text.slice(0, 100)}`);
+          this.child?.kill('SIGTERM');
+        }
         if (text) {
           onLog?.({
             type: 'system',
@@ -247,9 +274,16 @@ export class CliBackend implements AgentBackend {
 
         // Persist session ID for multi-step resume
         this.sessionId = sessionId || this.sessionId;
+        if (this.sessionId && this.onSessionId) this.onSessionId(this.sessionId);
         this.child = null;
 
-        if (code === 0 || code === null) {
+        // Check for error patterns even if exit code is 0
+        const KNOWN_ERRORS = /usage limit|rate limit|upgrade to|authentication failed|api key.*invalid/i;
+        const errorInOutput = resultText.split('\n').find(l => KNOWN_ERRORS.test(l))?.trim();
+
+        if (errorInOutput) {
+          reject(new Error(errorInOutput.slice(0, 200)));
+        } else if (code === 0 || code === null) {
           resolve({
             response: resultText,
             artifacts,
@@ -336,6 +370,15 @@ export class CliBackend implements AgentBackend {
           }
         }
 
+        // Detect fatal errors in real-time — kill immediately instead of waiting for idle
+        if (/usage limit|rate limit|hit your.*limit|upgrade to (plus|pro)/i.test(clean)) {
+          console.log(`[cli-backend] Detected usage limit — killing PTY immediately`);
+          onLog?.({ type: 'system', subtype: 'error', content: 'Agent hit usage limit', timestamp: new Date().toISOString() });
+          if (idleTimer) clearTimeout(idleTimer);
+          try { ptyProcess.kill(); } catch {}
+          return;
+        }
+
         // Idle timer: kill after 15s of silence (interactive agents don't exit on their own)
         if (idleTimer) clearTimeout(idleTimer);
         if (ptyBytes > 500) {
@@ -352,7 +395,24 @@ export class CliBackend implements AgentBackend {
           onLog?.({ type: 'assistant', subtype: 'text', content: lineBuf.trim(), timestamp: new Date().toISOString() });
         }
 
-        // Extract meaningful result from the full output
+        // Detect error patterns in output (rate limit, auth failure, etc.)
+        const ERROR_PATTERNS = [
+          /usage limit/i,
+          /rate limit/i,
+          /upgrade to/i,
+          /authentication failed/i,
+          /api key/i,
+          /permission denied/i,
+          /error:.*fatal/i,
+        ];
+        const errorMatch = ERROR_PATTERNS.find(p => p.test(resultText));
+        if (errorMatch) {
+          // Extract the error line
+          const errorLine = resultText.split('\n').find(l => errorMatch.test(l))?.trim() || 'Agent execution failed';
+          reject(new Error(errorLine.slice(0, 200)));
+          return;
+        }
+
         const meaningful = resultText.split('\n').filter(l => !isNoise(l)).join('\n');
         resolve({
           response: meaningful.slice(-2000) || resultText.slice(-500),

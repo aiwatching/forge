@@ -698,12 +698,12 @@ export default function Dashboard({ user }: { user: any }) {
           </>
         ) : null}
 
-        {/* Projects */}
-        {viewMode === 'projects' && (
+        {/* Projects — keep alive to preserve state across tab switches */}
+        <div className={`flex-1 flex flex-col min-h-0 ${viewMode !== 'projects' ? 'hidden' : ''}`}>
           <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
             <ProjectManager />
           </Suspense>
-        )}
+        </div>
 
         {/* Pipelines */}
         {viewMode === 'pipelines' && (

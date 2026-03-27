@@ -55,8 +55,6 @@ export class WorkspaceOrchestrator extends EventEmitter {
   private agents = new Map<string, { config: WorkspaceAgentConfig; worker: AgentWorker | null; state: AgentState }>();
   private bus: AgentBus;
   private approvalQueue = new Set<string>();
-  /** Track which bus message triggered the current execution per agent — acked on done, failed on error */
-  private processingMessage = new Map<string, BusMessage>();
   private daemonActive = false;
   private createdAt = Date.now();
 
@@ -490,8 +488,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
     await Promise.all(ready.map(id => this.runAgentDaemon(id)));
   }
 
-  /** Run a single agent in daemon mode. force=true resets failed/interrupted agents. */
-  async runAgentDaemon(agentId: string, userInput?: string, force = false): Promise<void> {
+  /** Run a single agent in daemon mode. force=true resets failed/interrupted agents. triggerMessageId tracks which bus message started this. */
+  async runAgentDaemon(agentId: string, userInput?: string, force = false, triggerMessageId?: string): Promise<void> {
     const entry = this.agents.get(agentId);
     if (!entry) throw new Error(`Agent "${agentId}" not found`);
 
@@ -579,6 +577,22 @@ export class WorkspaceOrchestrator extends EventEmitter {
         const response = await this.bus.request(agentId, to, { action: 'question', content: question });
         return response.payload.content || '(no response)';
       },
+      onMessageDone: (messageId) => {
+        const busMsg = this.bus.getLog().find(m => m.id === messageId);
+        if (busMsg) {
+          busMsg.status = 'done';
+          this.emit('event', { type: 'bus_message_status', messageId, status: 'done' } as any);
+          this.emitAgentsChanged();
+        }
+      },
+      onMessageFailed: (messageId) => {
+        const busMsg = this.bus.getLog().find(m => m.id === messageId);
+        if (busMsg) {
+          busMsg.status = 'failed';
+          this.emit('event', { type: 'bus_message_status', messageId, status: 'failed' } as any);
+          this.emitAgentsChanged();
+        }
+      },
       onMemoryUpdate: (stepResults) => {
         try {
           const observations = stepResults.flatMap((r, i) =>
@@ -594,13 +608,17 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     entry.worker = worker;
 
+    // Track trigger message so smith can mark it done/failed on completion
+    if (triggerMessageId) {
+      worker.setProcessingMessage(triggerMessageId);
+    }
+
     // Forward events (same as runAgent)
     worker.on('event', (event: WorkerEvent) => {
       if (event.type === 'task_status') {
         entry.state.taskStatus = event.taskStatus;
         entry.state.error = event.error;
         if (event.taskStatus === 'running') entry.state.startedAt = Date.now();
-        // Sync daemon state from worker
         const workerState = worker.getState();
         entry.state.daemonIteration = workerState.daemonIteration;
       }
@@ -620,42 +638,17 @@ export class WorkspaceOrchestrator extends EventEmitter {
         if (step) this.bus.notifyStepComplete(agentId, step.label);
       }
       if (event.type === 'done') {
-        // ACK the message that triggered this execution
-        const triggerMsg = this.processingMessage.get(agentId);
-        if (triggerMsg) {
-          triggerMsg.status = 'done';
-          this.processingMessage.delete(agentId);
-          console.log(`[bus] ${config.label}: acked trigger message (${triggerMsg.payload.action})`);
-        }
+        // Trigger message already marked done in task_status handler above
         const files = entry.state.artifacts.filter(a => a.path).map(a => a.path!);
         this.parseBusMarkers(agentId, entry.state.history);
         this.bus.notifyTaskComplete(agentId, files, event.summary);
         this.broadcastCompletion(agentId);
         this.emitWorkspaceStatus();
 
-        // Check for pending messages queued while this agent was running
-        const pendingMsgs = this.bus.getPendingMessagesFor(agentId).filter(m => m.from !== agentId && m.type !== 'ack');
-        if (pendingMsgs.length > 0 && entry.worker?.isListening()) {
-          const nextMsg = pendingMsgs[0];
-          const fromLabel = this.agents.get(nextMsg.from)?.config.label || nextMsg.from;
-          console.log(`[bus] ${config.label}: processing queued message from ${fromLabel} (${nextMsg.payload.action})`);
-          this.processingMessage.set(agentId, nextMsg);
-          entry.worker.wake({
-            type: nextMsg.payload.action === 'input_updated' ? 'input_changed' : 'upstream_changed',
-            ...(nextMsg.payload.action === 'input_updated'
-              ? { content: nextMsg.payload.content || '' }
-              : { agentId: nextMsg.from, files: nextMsg.payload.files || [] }),
-          } as any);
-        }
+        // Message loop will auto-consume next pending message
       }
       if (event.type === 'error') {
-        // Mark trigger message as failed so user can retry
-        const triggerMsg = this.processingMessage.get(agentId);
-        if (triggerMsg) {
-          triggerMsg.status = 'failed';
-          this.processingMessage.delete(agentId);
-          console.log(`[bus] ${config.label}: trigger message failed (${triggerMsg.payload.action})`);
-        }
+        // Trigger message already marked failed in task_status handler above
         this.bus.notifyError(agentId, event.error);
         this.emitWorkspaceStatus();
       }
@@ -701,11 +694,18 @@ export class WorkspaceOrchestrator extends EventEmitter {
       this.updateAgentLiveness(id);
     }
 
-    // For agents with all deps done: start their daemon worker (enters listening loop)
-    // Pending bus messages will be injected on worker startup — no need to re-broadcast
-    const ready = this.getDaemonReadyAgents();
-    console.log(`[workspace] ${ready.length} agents ready to start daemon workers`);
-    await Promise.all(ready.map(id => this.runAgentDaemon(id)));
+    // Clean up stale running messages from previous crash/restart
+    this.bus.markAllRunningAsFailed();
+
+    // Start daemon loop for ALL non-input smiths — they all need to listen for messages
+    for (const [id, entry] of this.agents) {
+      if (entry.config.type === 'input') continue;
+      if (entry.worker) continue;
+      this.enterDaemonListening(id);
+      // Start independent message consumption loop
+      this.startMessageLoop(id);
+    }
+    console.log(`[workspace] All smiths active and listening`);
 
     this.emitAgentsChanged();
   }
@@ -750,12 +750,29 @@ export class WorkspaceOrchestrator extends EventEmitter {
       config, backend,
       projectPath: this.projectPath,
       peerAgentIds,
+      initialTaskStatus: entry.state.taskStatus, // preserve current task status
       onBusSend: (to, content) => {
         this.bus.send(agentId, to, 'notify', { action: 'agent_message', content });
       },
       onBusRequest: async (to, question) => {
         const response = await this.bus.request(agentId, to, { action: 'question', content: question });
         return response.payload.content || '(no response)';
+      },
+      onMessageDone: (messageId) => {
+        const busMsg = this.bus.getLog().find(m => m.id === messageId);
+        if (busMsg) {
+          busMsg.status = 'done';
+          this.emit('event', { type: 'bus_message_status', messageId, status: 'done' } as any);
+          this.emitAgentsChanged();
+        }
+      },
+      onMessageFailed: (messageId) => {
+        const busMsg = this.bus.getLog().find(m => m.id === messageId);
+        if (busMsg) {
+          busMsg.status = 'failed';
+          this.emit('event', { type: 'bus_message_status', messageId, status: 'failed' } as any);
+          this.emitAgentsChanged();
+        }
       },
     });
 
@@ -781,8 +798,6 @@ export class WorkspaceOrchestrator extends EventEmitter {
         this.updateAgentLiveness(agentId);
       }
       if (event.type === 'done') {
-        const triggerMsg = this.processingMessage.get(agentId);
-        if (triggerMsg) { triggerMsg.status = 'done'; this.processingMessage.delete(agentId); }
         const files = entry.state.artifacts.filter(a => a.path).map(a => a.path!);
         this.parseBusMarkers(agentId, entry.state.history);
         this.bus.notifyTaskComplete(agentId, files, event.summary);
@@ -794,19 +809,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
       }
     });
 
-    // Inject pending messages
-    const pendingMsgs = this.bus.getPendingMessagesFor(agentId).filter(m => m.from !== agentId);
-    for (const msg of pendingMsgs) {
-      const fromLabel = this.agents.get(msg.from)?.config.label || msg.from;
-      worker.injectMessage({
-        type: 'system', subtype: 'bus_message',
-        content: `[From ${fromLabel}]: ${msg.payload.content || msg.payload.action}`,
-        timestamp: new Date(msg.timestamp).toISOString(),
-      });
-      msg.status = 'done';
-    }
+    // Message loop (startMessageLoop) handles auto-consumption of pending messages
 
-    console.log(`[workspace] Agent "${config.label}" entering daemon listening (was done, skipping steps)`);
+    console.log(`[workspace] Agent "${config.label}" entering daemon listening (task=${entry.state.taskStatus})`);
 
     // executeDaemon with skipSteps=true → goes directly to listening loop
     worker.executeDaemon(0, undefined, true).catch(err => {
@@ -817,6 +822,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
   /** Stop all agents (exit daemon mode) */
   stopDaemon(): void {
     this.daemonActive = false;
+    this.stopAllMessageLoops();
     for (const [id, entry] of this.agents) {
       if (entry.worker) entry.worker.stop();
       if (entry.config.type !== 'input') {
@@ -824,8 +830,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
         this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'down', mode: entry.state.mode } satisfies WorkerEvent);
       }
     }
-    // Mark all pending messages as failed — smiths are going down
-    this.bus.markAllPendingAsFailed();
+    // Only mark running messages as failed — pending can be retried on next startDaemon
+    this.bus.markAllRunningAsFailed();
     this.emitAgentsChanged();
     console.log('[workspace] Daemon mode stopped');
   }
@@ -868,33 +874,16 @@ export class WorkspaceOrchestrator extends EventEmitter {
   }
 
   /** Send a message to a running agent (human intervention) */
+  /** Send a message to a smith — becomes a pending inbox message, processed by message loop */
   sendMessageToAgent(agentId: string, content: string): void {
     const entry = this.agents.get(agentId);
     if (!entry) return;
 
-    const logEntry = {
-      type: 'system' as const,
-      subtype: 'user_message',
-      content: `[User]: ${content}`,
-      timestamp: new Date().toISOString(),
-    };
-
-    // Always log to bus
+    // Send via bus → becomes pending inbox message → message loop will consume it
     this.bus.send('user', agentId, 'notify', {
       action: 'user_message',
       content,
     });
-
-    if (entry.worker) {
-      // Agent is running — inject into pending messages for next step
-      entry.worker.injectMessage(logEntry);
-    } else {
-      // Agent is idle/done — store in history so it's available on next run
-      entry.state.history.push(logEntry);
-    }
-
-    // Emit so UI can show the message
-    this.emit('event', { type: 'log', agentId, entry: logEntry } satisfies WorkerEvent);
   }
 
   /** Approve a waiting agent to start execution */
@@ -920,11 +909,11 @@ export class WorkspaceOrchestrator extends EventEmitter {
     if (entry.worker) entry.worker.stop();
     entry.worker = null;
     entry.state.mode = 'manual';
-    entry.state.tmuxSession = undefined; // clear stale session — new one will be saved via setTmuxSession
+    entry.state.tmuxSession = undefined;
     entry.state.smithStatus = 'active';
-    entry.state.taskStatus = 'running';
-    entry.state.startedAt = Date.now();
+    // Don't set running — user hasn't started working yet. Keep current taskStatus.
     entry.state.error = undefined;
+
     this.emit('event', { type: 'smith_status', agentId, smithStatus: 'active', mode: 'manual' } satisfies WorkerEvent);
     this.emit('event', { type: 'task_status', agentId, taskStatus: 'running' } satisfies WorkerEvent);
     this.emitAgentsChanged();
@@ -1088,7 +1077,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     // Mark all pending messages as failed (they were lost on shutdown)
     // Users can retry agents manually if needed
-    this.bus.markAllPendingAsFailed();
+    // Running messages from before crash → failed (pending stays pending for retry)
+    this.bus.markAllRunningAsFailed();
 
     // Initialize liveness for all loaded agents so bus delivery works
     for (const [agentId] of this.agents) {
@@ -1098,6 +1088,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
   /** Stop all agents, save final state, and clean up */
   shutdown(): void {
+    this.stopAllMessageLoops();
     stopAutoSave(this.workspaceId);
     // Sync save — must complete before process exits
     try { saveWorkspaceSync(this.getFullState()); } catch (err) {
@@ -1303,80 +1294,84 @@ export class WorkspaceOrchestrator extends EventEmitter {
       return;
     }
 
-    // ── Store message in agent history (always) ──
+    // ── Store message in agent history ──
     target.state.history.push(logEntry);
 
-    // ── Upstream complete / Input updated → auto-execute or manual inbox ──
-    // Trust the sender: if a message arrived, the sender completed its work.
-    // Only check THIS smith's readiness, not upstream deps.
-    if (action === 'upstream_complete' || action === 'input_updated') {
-      if (target.state.smithStatus !== 'active') {
-        console.log(`[bus] ${target.config.label}: received ${action} but smith is down — message stays pending`);
-        return;
-      }
-
-      if (target.state.mode === 'manual') {
-        ackAndDeliver();
-        console.log(`[bus] ${target.config.label}: received ${action} in manual mode — stored in inbox`);
-        return;
-      }
-
-      // If already running, queue the message — will be picked up after current task
-      if (target.state.taskStatus === 'running') {
-        console.log(`[bus] ${target.config.label}: received ${action} but already running — message queued`);
-        return;
-      }
-
-      // Approval gate
-      if (target.config.requiresApproval) {
-        ackAndDeliver();
-        this.approvalQueue.add(targetId);
-        this.emit('event', { type: 'approval_required', agentId: targetId, upstreamId: msg.from } satisfies OrchestratorEvent);
-        console.log(`[bus] ${target.config.label}: needs user approval before executing`);
-        return;
-      }
-
-      // All checks passed — track message, ACK only after execution completes
-      this.processingMessage.set(targetId, msg);
-
-      // Execute: wake if listening, or start daemon if idle
-      if (target.worker?.isListening()) {
-        console.log(`[bus] ${target.config.label}: waking (${action})`);
-        const wakeReason: DaemonWakeReason = action === 'input_updated'
-          ? { type: 'input_changed', content }
-          : { type: 'upstream_changed', agentId: msg.from, files: msg.payload.files || [] };
-        target.worker.wake(wakeReason);
-      } else {
-        console.log(`[bus] ${target.config.label}: starting execution (${action})`);
-        this.runAgentDaemon(targetId, undefined, true).catch(err => {
-          target.state.taskStatus = 'failed';
-          target.state.error = err?.message || String(err);
-          this.emit('event', { type: 'error', agentId: targetId, error: target.state.error! } satisfies WorkerEvent);
-        });
-      }
+    // ── Manual mode → mark done (user handles in terminal) ──
+    if (target.state.mode === 'manual') {
+      ackAndDeliver();
+      console.log(`[bus] ${target.config.label}: received ${action} in manual mode — stored in inbox`);
       return;
     }
 
-    // ── Fix/update requests → queue for user confirmation ──
-    if (action === 'fix_request' || action === 'update_request' || action === 'update_notify') {
-      if (target.state.taskStatus !== 'running') {
-        this.approvalQueue.add(targetId);
-        this.emit('event', { type: 'approval_required', agentId: targetId, upstreamId: msg.from } satisfies OrchestratorEvent);
-        console.log(`[bus] ${target.config.label} needs approval to re-run (${action} from ${fromLabel})`);
-      } else {
-        ackAndDeliver();
-        if (target.worker) target.worker.injectMessage(logEntry);
-      }
-      return;
-    }
+    // ── Message stays pending — message loop will consume it when smith is ready ──
+    console.log(`[bus] ${target.config.label}: received ${action} — queued in inbox (${msg.status})`);
+  }
 
-    // ── Other messages → inject if running, wake if listening ──
-    if (target.worker?.isListening()) {
-      ackAndDeliver();
-      target.worker.wake({ type: 'bus_message', messages: [logEntry] });
-    } else if (target.worker) {
-      ackAndDeliver();
-      target.worker.injectMessage(logEntry);
+  // ─── Message consumption loop ─────────────────────────
+  private messageLoopTimers = new Map<string, NodeJS.Timeout>();
+
+  /** Start the message consumption loop for a smith */
+  private startMessageLoop(agentId: string): void {
+    if (this.messageLoopTimers.has(agentId)) return; // already running
+
+    const tick = () => {
+      const entry = this.agents.get(agentId);
+      if (!entry || entry.state.smithStatus !== 'active') {
+        this.stopMessageLoop(agentId);
+        return;
+      }
+
+      // Skip if task is running — check again next tick
+      if (entry.state.taskStatus === 'running') return;
+
+      // Skip if no worker or worker not listening
+      if (!entry.worker?.isListening()) return;
+
+      // Find next pending message
+      const pending = this.bus.getPendingMessagesFor(agentId).filter(m => m.from !== agentId && m.type !== 'ack');
+      if (pending.length === 0) return;
+
+      const nextMsg = pending[0];
+      const fromLabel = this.agents.get(nextMsg.from)?.config.label || nextMsg.from;
+      console.log(`[inbox] ${entry.config.label}: consuming message from ${fromLabel} (${nextMsg.payload.action})`);
+
+      // Mark message as running (being processed)
+      nextMsg.status = 'running' as any;
+      this.emit('event', { type: 'bus_message_status', messageId: nextMsg.id, status: 'running' } as any);
+
+      const logEntry = {
+        type: 'system' as const,
+        subtype: 'bus_message',
+        content: `[From ${fromLabel}]: ${nextMsg.payload.content || nextMsg.payload.action}`,
+        timestamp: new Date(nextMsg.timestamp).toISOString(),
+      };
+
+      entry.worker.setProcessingMessage(nextMsg.id);
+      entry.worker.wake({ type: 'bus_message', messages: [logEntry] });
+    };
+
+    // Check every 2 seconds
+    const timer = setInterval(tick, 2000);
+    timer.unref(); // Don't prevent process exit in tests
+    this.messageLoopTimers.set(agentId, timer);
+    // Also run immediately
+    tick();
+  }
+
+  /** Stop the message consumption loop for a smith */
+  private stopMessageLoop(agentId: string): void {
+    const timer = this.messageLoopTimers.get(agentId);
+    if (timer) {
+      clearInterval(timer);
+      this.messageLoopTimers.delete(agentId);
+    }
+  }
+
+  /** Stop all message loops */
+  private stopAllMessageLoops(): void {
+    for (const [id] of this.messageLoopTimers) {
+      this.stopMessageLoop(id);
     }
   }
 

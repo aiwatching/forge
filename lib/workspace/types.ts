@@ -115,7 +115,7 @@ export interface BusMessage {
   };
   timestamp: number;
   // Delivery tracking
-  status?: 'pending' | 'done' | 'failed';
+  status?: 'pending' | 'running' | 'done' | 'failed';
   retries?: number;
 }
 

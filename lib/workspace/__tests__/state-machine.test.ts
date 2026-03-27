@@ -380,9 +380,9 @@ async function runAll() {
   }
 }
 
-// Force exit after 5s in case of dangling timers/workers
+// Force exit after 8s in case of dangling timers/workers
 setTimeout(() => {
   console.log('\n(Force exit due to dangling timers)');
   process.exit(passed > 0 && failed === 0 ? 0 : 1);
-}, 5000).unref();
+}, 8000);
 runAll();

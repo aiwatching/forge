@@ -199,6 +199,12 @@ function useWorkspaceStream(workspaceId: string | null, onEvent?: (event: any) =
           setBusLog(prev => [...prev, event.message]);
         }
 
+        if (event.type === 'bus_message_status') {
+          setBusLog(prev => prev.map(m =>
+            m.id === event.messageId ? { ...m, status: event.status } : m
+          ));
+        }
+
         // Server pushed updated agents list + states (after add/remove/update/reset)
         if (event.type === 'agents_changed') {
           const newAgents = event.agents || [];
@@ -679,12 +685,18 @@ function InboxPanel({ agentId, agentLabel, busLog, agents, workspaceId, onClose 
 }) {
   const labelMap = new Map(agents.map(a => [a.id, `${a.icon} ${a.label}`]));
   const getLabel = (id: string) => labelMap.get(id) || id;
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
 
-  // Filter messages related to this agent
-  const inbox = busLog.filter(m => m.to === agentId && m.type !== 'ack');
-  const outbox = busLog.filter(m => m.from === agentId && m.to !== '_system' && m.type !== 'ack');
+  // Filter messages related to this agent, exclude locally deleted
+  const inbox = busLog.filter(m => m.to === agentId && m.type !== 'ack' && !deletedIds.has(m.id));
+  const outbox = busLog.filter(m => m.from === agentId && m.to !== '_system' && m.type !== 'ack' && !deletedIds.has(m.id));
   const [tab, setTab] = useState<'inbox' | 'outbox'>('inbox');
   const messages = tab === 'inbox' ? inbox : outbox;
+
+  const handleDelete = async (msgId: string) => {
+    await wsApi(workspaceId, 'delete_message', { messageId: msgId });
+    setDeletedIds(prev => new Set(prev).add(msgId));
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.85)' }}
@@ -724,15 +736,25 @@ function InboxPanel({ agentId, agentLabel, busLog, agents, workspaceId, onClose 
                   msg.payload?.action === 'question' ? 'bg-yellow-500/20 text-yellow-400' :
                   'bg-gray-500/20 text-gray-400'
                 }`}>{msg.payload?.action}</span>
-                <span className={`text-[7px] ${msg.status === 'done' ? 'text-green-500' : msg.status === 'failed' ? 'text-red-500' : 'text-yellow-500'}`}>
+                <span className={`text-[7px] ${msg.status === 'done' ? 'text-green-500' : msg.status === 'running' ? 'text-blue-400' : msg.status === 'failed' ? 'text-red-500' : 'text-yellow-500'}`}>
                   {msg.status || 'pending'}
                 </span>
-                {msg.status !== 'pending' && msg.type !== 'ack' && (
+                {msg.status === 'pending' && msg.type !== 'ack' && (
+                  <button onClick={() => wsApi(workspaceId, 'abort_message', { messageId: msg.id })}
+                    className="text-[7px] px-1.5 py-0.5 rounded bg-red-600/20 text-red-400 hover:bg-red-600/30 ml-1">
+                    ✕ Abort
+                  </button>
+                )}
+                {(msg.status === 'done' || msg.status === 'failed') && msg.type !== 'ack' && (<>
                   <button onClick={() => wsApi(workspaceId, 'retry_message', { messageId: msg.id })}
                     className="text-[7px] px-1.5 py-0.5 rounded bg-orange-600/20 text-orange-400 hover:bg-orange-600/30 ml-1">
                     {msg.status === 'done' ? '↻ Re-run' : '↻ Retry'}
                   </button>
-                )}
+                  <button onClick={() => handleDelete(msg.id)}
+                    className="text-[7px] px-1.5 py-0.5 rounded bg-gray-600/20 text-gray-400 hover:bg-red-600/20 hover:text-red-400 ml-1">
+                    🗑
+                  </button>
+                </>)}
               </div>
               <div className="text-gray-300">{msg.payload?.content || ''}</div>
               {msg.payload?.files?.length > 0 && (
@@ -1112,11 +1134,13 @@ interface AgentNodeData {
   onShowMemory: () => void;
   onShowInbox: () => void;
   onOpenTerminal: () => void;
+  inboxPending?: number;
+  inboxFailed?: number;
   [key: string]: unknown;
 }
 
 function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
-  const { config, state, colorIdx, previewLines, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory, onShowInbox, onOpenTerminal } = data;
+  const { config, state, colorIdx, previewLines, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory, onShowInbox, onOpenTerminal, inboxPending = 0, inboxFailed = 0 } = data;
   const c = COLORS[colorIdx % COLORS.length];
   const smithStatus = state?.smithStatus || 'down';
   const taskStatus = state?.taskStatus || 'idle';
@@ -1179,6 +1203,18 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
         </div>
       )}
 
+      {/* Inbox — prominent, shows pending/failed counts */}
+      {(inboxPending > 0 || inboxFailed > 0) && (
+        <div className="px-2 py-1" style={{ borderTop: `1px solid ${c.border}15` }}>
+          <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onShowInbox(); }}
+            className="w-full text-[9px] px-2 py-1 rounded flex items-center justify-center gap-1.5 bg-orange-600/15 text-orange-400 hover:bg-orange-600/25 border border-orange-600/30">
+            📨 Inbox
+            {inboxPending > 0 && <span className="px-1 rounded-full bg-yellow-600/30 text-yellow-400 text-[8px]">{inboxPending} pending</span>}
+            {inboxFailed > 0 && <span className="px-1 rounded-full bg-red-600/30 text-red-400 text-[8px]">{inboxFailed} failed</span>}
+          </button>
+        </div>
+      )}
+
       {/* Actions */}
       <div className="flex items-center gap-1 px-2 py-1.5" style={{ borderTop: `1px solid ${c.border}15` }}>
         {taskStatus === 'running' && (
@@ -1191,8 +1227,10 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
             className="text-[9px] px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30">💬 Message</button>
         )}
         <div className="flex-1" />
-        <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onOpenTerminal(); }}
-          className="text-[9px] text-gray-600 hover:text-green-400 px-1" title="Open terminal (manual mode)">⌨️</button>
+        {taskStatus !== 'running' && (
+          <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onOpenTerminal(); }}
+            className="text-[9px] text-gray-600 hover:text-green-400 px-1" title="Open terminal (manual mode)">⌨️</button>
+        )}
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onShowInbox(); }}
           className="text-[9px] text-gray-600 hover:text-orange-400 px-1" title="Messages (inbox/outbox)">📨</button>
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onShowMemory(); }}
@@ -1346,6 +1384,8 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
             onShowLog: () => setLogTarget({ id: agent.id, label: agent.label }),
             onShowMemory: () => setMemoryTarget({ id: agent.id, label: agent.label }),
             onShowInbox: () => setInboxTarget({ id: agent.id, label: agent.label }),
+            inboxPending: busLog.filter(m => m.to === agent.id && m.status === 'pending' && m.type !== 'ack').length,
+            inboxFailed: busLog.filter(m => m.to === agent.id && m.status === 'failed' && m.type !== 'ack').length,
             onOpenTerminal: async () => {
               if (!workspaceId) return;
               // Use current state via setState callback to avoid stale closure

@@ -27,13 +27,17 @@ export interface AgentWorkerOptions {
   config: WorkspaceAgentConfig;
   backend: AgentBackend;
   projectPath: string;
+  initialTaskStatus?: 'idle' | 'running' | 'done' | 'failed';
   // Bus communication callbacks (injected by orchestrator)
   onBusSend?: (to: string, content: string) => void;
   onBusRequest?: (to: string, question: string) => Promise<string>;
   peerAgentIds?: string[];
+  // Message status callback — smith marks its own messages
+  onMessageDone?: (messageId: string) => void;
+  onMessageFailed?: (messageId: string) => void;
   // Memory (injected by orchestrator)
-  memoryContext?: string;              // formatted memory text to inject
-  onMemoryUpdate?: (stepResults: string[]) => void; // called after all steps complete
+  memoryContext?: string;
+  onMemoryUpdate?: (stepResults: string[]) => void;
 }
 
 export class AgentWorker extends EventEmitter {
@@ -63,6 +67,9 @@ export class AgentWorker extends EventEmitter {
   // Daemon mode
   private wakeResolve: ((reason: DaemonWakeReason) => void) | null = null;
   private daemonRetryCount = 0;
+  private currentMessageId: string | null = null; // ID of the bus message being processed
+  private onMessageDone?: (messageId: string) => void;
+  private onMessageFailed?: (messageId: string) => void;
 
   constructor(opts: AgentWorkerOptions) {
     super();
@@ -76,10 +83,12 @@ export class AgentWorker extends EventEmitter {
     };
     this.memoryContext = opts.memoryContext;
     this.onMemoryUpdate = opts.onMemoryUpdate;
+    this.onMessageDone = opts.onMessageDone;
+    this.onMessageFailed = opts.onMessageFailed;
     this.state = {
       smithStatus: 'down',
       mode: 'auto',
-      taskStatus: 'idle',
+      taskStatus: opts.initialTaskStatus || 'idle',
       history: [],
       artifacts: [],
     };
@@ -118,6 +127,7 @@ export class AgentWorker extends EventEmitter {
       // Check abort
       if (this.abortController.signal.aborted) {
         console.log(`[worker] ${this.config.label}: abort detected before step ${i} (signal already aborted)`);
+        this.markMessageFailed();
         this.setTaskStatus('failed', 'Interrupted');
         return;
       }
@@ -190,9 +200,11 @@ export class AgentWorker extends EventEmitter {
         // Aborted = graceful stop (SIGTERM/SIGINT), not an error
         if (msg === 'Aborted' || this.abortController?.signal.aborted) {
           console.log(`[worker] ${this.config.label}: step catch — msg="${msg}", aborted=${this.abortController?.signal.aborted}`);
+          this.markMessageFailed();
           this.setTaskStatus('failed', 'Interrupted');
           return;
         }
+        this.markMessageFailed();
         this.setTaskStatus('failed', msg);
         this.emitEvent({ type: 'error', agentId: this.config.id, error: this.state.error! });
         return;
@@ -200,6 +212,7 @@ export class AgentWorker extends EventEmitter {
     }
 
     // All steps done
+    this.markMessageDone(); // mark trigger message before emitting done
     this.setTaskStatus('done');
     this.state.completedAt = Date.now();
 
@@ -308,14 +321,17 @@ export class AgentWorker extends EventEmitter {
 
       try {
         await this.executeDaemonStep(reason);
+        this.markMessageDone();
         this.setTaskStatus('done');
+        this.emitEvent({ type: 'done', agentId: this.config.id, summary: `Daemon iteration ${this.state.daemonIteration}` });
       } catch (err: any) {
         const msg = err?.message || String(err);
 
         // Aborted = graceful stop, exit daemon loop
         if (msg === 'Aborted' || this.abortController?.signal.aborted) break;
 
-        // Real errors: set failed, backoff, then return to idle
+        // Real errors: mark message failed, then backoff
+        this.markMessageFailed();
         this.setTaskStatus('failed', msg);
         this.emitEvent({ type: 'error', agentId: this.config.id, error: msg });
         this.emitEvent({
@@ -346,6 +362,27 @@ export class AgentWorker extends EventEmitter {
   /** Check if smith is active and idle (ready to receive messages) */
   isListening(): boolean {
     return this.state.smithStatus === 'active' && this.state.taskStatus !== 'running';
+  }
+
+  /** Set the bus message ID being processed — smith marks it done/failed on completion */
+  setProcessingMessage(messageId: string): void {
+    this.currentMessageId = messageId;
+  }
+
+  /** Mark current message as done and clear */
+  private markMessageDone(): void {
+    if (this.currentMessageId && this.onMessageDone) {
+      this.onMessageDone(this.currentMessageId);
+    }
+    this.currentMessageId = null;
+  }
+
+  /** Mark current message as failed and clear */
+  private markMessageFailed(): void {
+    if (this.currentMessageId && this.onMessageFailed) {
+      this.onMessageFailed(this.currentMessageId);
+    }
+    this.currentMessageId = null;
   }
 
   private waitForWake(): Promise<DaemonWakeReason> {

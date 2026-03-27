@@ -267,6 +267,35 @@ export class AgentBus extends EventEmitter {
     return msg;
   }
 
+  /** Delete a message from the log (only done/failed) */
+  deleteMessage(messageId: string): void {
+    const idx = this.log.findIndex(m => m.id === messageId);
+    if (idx !== -1 && (this.log[idx].status === 'done' || this.log[idx].status === 'failed')) {
+      this.log.splice(idx, 1);
+    }
+  }
+
+  /** Abort a pending message — mark as failed */
+  abortMessage(messageId: string): BusMessage | null {
+    const msg = this.log.find(m => m.id === messageId);
+    if (!msg || msg.status !== 'pending') return null;
+    msg.status = 'failed';
+    console.log(`[bus] Aborted message ${msg.payload.action} from ${msg.from} to ${msg.to}`);
+    return msg;
+  }
+
+  /** Mark all running messages as failed — called on stopDaemon/crash */
+  markAllRunningAsFailed(): void {
+    let count = 0;
+    for (const msg of this.log) {
+      if (msg.status === 'running' && msg.type !== 'ack') {
+        msg.status = 'failed';
+        count++;
+      }
+    }
+    if (count > 0) console.log(`[bus] Marked ${count} running messages as failed (shutdown)`);
+  }
+
   /** Mark all pending (non-ack) messages as failed — called on restart/reload */
   markAllPendingAsFailed(): void {
     let count = 0;

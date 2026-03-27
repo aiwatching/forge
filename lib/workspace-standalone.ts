@@ -268,6 +268,9 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
         const agentState = orch.getAgentState(agentId);
         const agentConfig = orch.getSnapshot().agents.find(a => a.id === agentId);
         if (!agentState || !agentConfig) return jsonError(res, 'Agent not found', 404);
+        if (agentState.taskStatus === 'running') return jsonError(res, 'Cannot open terminal while agent is running. Wait for it to finish.');
+        const hasPending = orch.getBus().getPendingMessagesFor(agentId).length > 0;
+        if (hasPending) return jsonError(res, 'Agent has pending messages being processed. Wait for execution to complete.');
 
         if (agentState.mode === 'manual') {
           return json(res, { ok: true, mode: 'manual', alreadyManual: true });
@@ -307,6 +310,19 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
         const msg = orch.getBus().retryMessage(messageId);
         if (!msg) return jsonError(res, 'Message not found or already pending');
         return json(res, { ok: true, messageId: msg.id, action: msg.payload.action });
+      }
+      case 'abort_message': {
+        const { messageId } = body;
+        if (!messageId) return jsonError(res, 'messageId required');
+        const abortMsg = orch.getBus().abortMessage(messageId);
+        if (!abortMsg) return jsonError(res, 'Message not found or not pending');
+        return json(res, { ok: true, messageId: abortMsg.id });
+      }
+      case 'delete_message': {
+        const { messageId } = body;
+        if (!messageId) return jsonError(res, 'messageId required');
+        orch.getBus().deleteMessage(messageId);
+        return json(res, { ok: true });
       }
       case 'start_daemon': {
         orch.startDaemon().catch(err => {
@@ -491,13 +507,34 @@ async function handleSmith(id: string, body: any, res: ServerResponse): Promise<
         .filter(m => m.type !== 'ack')
         .slice(-20)
         .map(m => ({
+          id: m.id,
           from: (orch.getSnapshot().agents.find(a => a.id === m.from)?.label || m.from),
           action: m.payload.action,
           content: m.payload.content,
+          status: m.status || 'pending',
           time: new Date(m.timestamp).toLocaleTimeString(),
         }));
 
       return json(res, { messages });
+    }
+
+    case 'message_done': {
+      // Manual mode: user marks a specific inbox message as done
+      const { messageId } = body;
+      if (!agentId || !messageId) return jsonError(res, 'agentId and messageId required');
+      const busMsg = orch.getBus().getLog().find(m => m.id === messageId && m.to === agentId);
+      if (!busMsg) return jsonError(res, 'Message not found');
+      busMsg.status = 'done';
+      return json(res, { ok: true });
+    }
+
+    case 'message_failed': {
+      const { messageId } = body;
+      if (!agentId || !messageId) return jsonError(res, 'agentId and messageId required');
+      const busMsg = orch.getBus().getLog().find(m => m.id === messageId && m.to === agentId);
+      if (!busMsg) return jsonError(res, 'Message not found');
+      busMsg.status = 'failed';
+      return json(res, { ok: true });
     }
 
     case 'status': {

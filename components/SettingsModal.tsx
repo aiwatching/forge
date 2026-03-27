@@ -857,7 +857,31 @@ function ProfileRow({ id, cfg, inputClass, onUpdate, onDelete }: {
                 <input value={cfg.base || ''} onChange={e => onUpdate({ ...cfg, base: e.target.value })} className={inputClass} />
               </div>
               <div>
-                <label className="text-[8px] text-[var(--text-secondary)]">Environment Variables (KEY=VALUE per line)</label>
+                <div className="flex items-center gap-2">
+                  <label className="text-[8px] text-[var(--text-secondary)]">Environment Variables (KEY=VALUE per line)</label>
+                  {cfg.base && (
+                    <button onClick={() => {
+                      const templates: Record<string, string> = {
+                        claude: 'ANTHROPIC_AUTH_TOKEN=\nANTHROPIC_BASE_URL=\nANTHROPIC_SMALL_FAST_MODEL=\nCLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=true\nDISABLE_TELEMETRY=true\nDISABLE_ERROR_REPORTING=true\nDISABLE_AUTOUPDATER=true\nDISABLE_NON_ESSENTIAL_MODEL_CALLS=true',
+                        codex: 'OPENAI_API_KEY=\nOPENAI_BASE_URL=',
+                        aider: 'ANTHROPIC_API_KEY=\nOPENAI_API_KEY=',
+                      };
+                      const tpl = templates[cfg.base!];
+                      if (tpl) {
+                        const env: Record<string, string> = {};
+                        for (const line of tpl.split('\n')) {
+                          const eq = line.indexOf('=');
+                          if (eq > 0) env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+                        }
+                        // Merge with existing (don't overwrite filled values)
+                        const merged = { ...env, ...(cfg.env || {}) };
+                        onUpdate({ ...cfg, env: merged });
+                      }
+                    }} className="text-[7px] px-1.5 py-0.5 rounded bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20">
+                      Fill {cfg.base} template
+                    </button>
+                  )}
+                </div>
                 <textarea
                   value={envStr}
                   onChange={e => {
@@ -868,7 +892,7 @@ function ProfileRow({ id, cfg, inputClass, onUpdate, onDelete }: {
                     }
                     onUpdate({ ...cfg, env: Object.keys(env).length > 0 ? env : undefined });
                   }}
-                  rows={3}
+                  rows={5}
                   placeholder="ANTHROPIC_AUTH_TOKEN=sk-...\nANTHROPIC_BASE_URL=http://..."
                   className={inputClass + ' resize-none font-mono'} />
               </div>
@@ -895,6 +919,35 @@ function AddProfileForm({ type, baseAgents, onAdd }: {
   const [apiKey, setApiKey] = useState('');
 
   const inputClass = "w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]";
+
+  // Env var templates per CLI type
+  const envTemplates: Record<string, string> = {
+    claude: [
+      'ANTHROPIC_AUTH_TOKEN=',
+      'ANTHROPIC_BASE_URL=',
+      'ANTHROPIC_SMALL_FAST_MODEL=',
+      'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=true',
+      'DISABLE_TELEMETRY=true',
+      'DISABLE_ERROR_REPORTING=true',
+      'DISABLE_AUTOUPDATER=true',
+      'DISABLE_NON_ESSENTIAL_MODEL_CALLS=true',
+    ].join('\n'),
+    codex: [
+      'OPENAI_API_KEY=',
+      'OPENAI_BASE_URL=',
+    ].join('\n'),
+    aider: [
+      'ANTHROPIC_API_KEY=',
+      'OPENAI_API_KEY=',
+    ].join('\n'),
+  };
+
+  const fillEnvTemplate = () => {
+    const tpl = envTemplates[base] || '';
+    if (tpl && (!envText.trim() || confirm('Replace current env vars with template?'))) {
+      setEnvText(tpl);
+    }
+  };
 
   if (!open) {
     return (
@@ -964,9 +1017,16 @@ function AddProfileForm({ type, baseAgents, onAdd }: {
           </div>
         </div>
         <div>
-          <label className="text-[8px] text-[var(--text-secondary)]">Environment Variables (one per line: KEY=VALUE)</label>
-          <textarea value={envText} onChange={e => setEnvText(e.target.value)} rows={3}
-            placeholder={'ANTHROPIC_AUTH_TOKEN=sk-...\nANTHROPIC_BASE_URL=http://...\nDISABLE_TELEMETRY=true'}
+          <div className="flex items-center gap-2">
+            <label className="text-[8px] text-[var(--text-secondary)]">Environment Variables (KEY=VALUE per line)</label>
+            {envTemplates[base] && (
+              <button onClick={fillEnvTemplate} className="text-[7px] px-1.5 py-0.5 rounded bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20">
+                Fill {base} template
+              </button>
+            )}
+          </div>
+          <textarea value={envText} onChange={e => setEnvText(e.target.value)} rows={5}
+            placeholder={envTemplates[base] || 'KEY=VALUE\nKEY2=VALUE2'}
             className={inputClass + ' resize-none font-mono'} />
         </div>
       </>) : (

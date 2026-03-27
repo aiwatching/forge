@@ -90,10 +90,13 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     // Validate workDir is within project (no ../ escape)
     if (config.workDir) {
-      // Strip leading / — workDir is always relative to project root
-      const relativeDir = config.workDir.replace(/^\//, '');
+      const relativeDir = config.workDir.replace(/^\.?\//, '');
+      if (relativeDir.includes('..')) {
+        return `Work directory "${config.workDir}" contains "..". Must be a subdirectory of the project.`;
+      }
+      const projectRoot = this.projectPath.endsWith('/') ? this.projectPath : this.projectPath + '/';
       const resolved = resolve(this.projectPath, relativeDir);
-      if (!resolved.startsWith(this.projectPath)) {
+      if (resolved !== this.projectPath && !resolved.startsWith(projectRoot)) {
         return `Work directory "${config.workDir}" is outside the project. Must be a subdirectory.`;
       }
     }

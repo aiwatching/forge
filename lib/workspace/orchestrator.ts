@@ -689,6 +689,11 @@ export class WorkspaceOrchestrator extends EventEmitter {
     // Clean up stale state from previous run
     this.bus.markAllRunningAsFailed();
 
+    // Install forge skills globally (once per daemon start)
+    try {
+      installForgeSkills(this.projectPath, this.workspaceId, '', Number(process.env.PORT) || 8403);
+    } catch {}
+
     // Start each smith one by one, verify each starts correctly
     let started = 0;
     let failed = 0;
@@ -776,14 +781,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     const { config } = entry;
 
-    // Ensure forge skills are installed for CLI agents
-    if (config.backend !== 'api' && !hasForgeSkills(this.projectPath)) {
-      try {
-        const port = Number(process.env.PORT) || 8403;
-        installForgeSkills(this.projectPath, this.workspaceId, agentId, port);
-        console.log(`[workspace] Installed forge skills for ${config.label}`);
-      } catch {}
-    }
+    // TODO: per-smith install hook for future use (commands, custom skills, etc.)
+    // Skills are installed globally in startDaemon, not per-smith
 
     const backend = this.createBackend(config, agentId);
     const peerAgentIds = Array.from(this.agents.keys()).filter(id => id !== agentId);

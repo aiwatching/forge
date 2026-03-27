@@ -12,8 +12,16 @@ Check the current status of all agents in the Forge Workspace.
 
 ## How to check
 
+IMPORTANT: Do NOT check environment variables. Just run the commands.
+
+Step 1 — Get workspace ID:
 ```bash
-_FP=${FORGE_PORT:-8403}; _FW=${FORGE_WORKSPACE_ID:-$(curl -s "http://localhost:$_FP/api/workspace?projectPath=$(pwd)" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)}; _FA=${FORGE_AGENT_ID:-unknown}; curl -s -X POST "http://localhost:$_FP/api/workspace/$_FW/smith" -H "Content-Type: application/json" -d '{"action":"status","agentId":"'"$_FA"'"}'
+curl -s "http://localhost:8403/api/workspace?projectPath=$(pwd)" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))"
+```
+
+Step 2 — Check status (replace WORKSPACE_ID):
+```bash
+curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"status","agentId":"unknown"}'
 ```
 
 Present the results as a clear status overview:

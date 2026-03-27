@@ -13,11 +13,19 @@ When you detect that the user has completed a meaningful unit of work, automatic
 
 ## How to sync
 
+IMPORTANT: Do NOT check environment variables. Just run the commands.
+
+Step 1 — Get workspace ID:
 ```bash
-_FP=${FORGE_PORT:-8403}; _FW=${FORGE_WORKSPACE_ID:-$(curl -s "http://localhost:$_FP/api/workspace?projectPath=$(pwd)" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)}; _FA=${FORGE_AGENT_ID:-unknown}; curl -s -X POST "http://localhost:$_FP/api/workspace/$_FW/smith" -H "Content-Type: application/json" -d '{"action":"done","agentId":"'"$_FA"'","output":"PASTE_YOUR_RECENT_OUTPUT_WITH_SEND_MARKERS_HERE"}'
+curl -s "http://localhost:8403/api/workspace?projectPath=$(pwd)" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))"
 ```
 
-Include any `[SEND:AgentLabel:action] message` markers in the `output` field so messages get delivered.
+Step 2 — Sync (replace WORKSPACE_ID):
+```bash
+curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"done","agentId":"unknown","output":"PASTE_YOUR_RECENT_OUTPUT_HERE"}'
+```
+
+Include any `[SEND:AgentLabel:action] message` markers in the `output` field.
 
 This will:
 1. Detect git changes since last sync

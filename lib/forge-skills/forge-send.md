@@ -4,7 +4,7 @@ description: Send a message to another Forge Workspace agent immediately via API
 
 # Forge Send
 
-Send a message to another agent in the Forge Workspace. Use this INSTEAD of writing [SEND:...] markers — this delivers the message immediately.
+Send a message to another agent in the Forge Workspace.
 
 ## When to trigger
 - You fixed a bug that QA reported → notify QA immediately
@@ -14,15 +14,22 @@ Send a message to another agent in the Forge Workspace. Use this INSTEAD of writ
 
 ## How to send
 
-Run this command (it auto-discovers the workspace from your current directory):
+IMPORTANT: Do NOT check environment variables first. Just run the command below — it auto-discovers everything.
 
+Step 1 — Get workspace ID:
 ```bash
-_FP=${FORGE_PORT:-8403}; _FW=${FORGE_WORKSPACE_ID:-$(curl -s "http://localhost:$_FP/api/workspace?projectPath=$(pwd)" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)}; _FA=${FORGE_AGENT_ID:-unknown}; curl -s -X POST "http://localhost:$_FP/api/workspace/$_FW/smith" -H "Content-Type: application/json" -d '{"action":"send","agentId":"'"$_FA"'","to":"TARGET_LABEL","msgAction":"ACTION","content":"YOUR MESSAGE"}'
+curl -s "http://localhost:8403/api/workspace?projectPath=$(pwd)" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))"
+```
+
+Step 2 — Send message (replace WORKSPACE_ID with result from step 1):
+```bash
+curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"send","agentId":"unknown","to":"TARGET_LABEL","msgAction":"ACTION","content":"YOUR MESSAGE"}'
 ```
 
 Replace:
+- `WORKSPACE_ID` = the ID from step 1
 - `TARGET_LABEL` = target agent label (e.g., "QA", "PM", "Engineer", "Reviewer")
 - `ACTION` = one of: `fix_request`, `update_notify`, `question`, `info_request`
-- `YOUR MESSAGE` = your actual message (be specific, include file names and details)
+- `YOUR MESSAGE` = your actual message
 
-Tell the user the message was sent and to which agent.
+Tell the user the result.

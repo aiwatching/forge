@@ -9,32 +9,29 @@ Check for messages from other agents and manage their status.
 ## When to trigger
 - At the start of a new conversation/session
 - When the user asks about other agents' status or messages
-- Periodically during long sessions
 
-## Check inbox
+## How to use
 
+IMPORTANT: Do NOT check environment variables. Just run the commands — they auto-discover the workspace.
+
+Step 1 — Get workspace ID:
 ```bash
-_FP=${FORGE_PORT:-8403}; _FW=${FORGE_WORKSPACE_ID:-$(curl -s "http://localhost:$_FP/api/workspace?projectPath=$(pwd)" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)}; _FA=${FORGE_AGENT_ID:-unknown}; curl -s -X POST "http://localhost:$_FP/api/workspace/$_FW/smith" -H "Content-Type: application/json" -d '{"action":"inbox","agentId":"'"$_FA"'"}'
+curl -s "http://localhost:8403/api/workspace?projectPath=$(pwd)" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))"
 ```
 
-This returns messages with `id`, `from`, `action`, `content`, `status`, `time`.
-
-For each message, tell the user:
-- Who sent it (which agent)
-- What they want (fix_request, question, update_notify, upstream_complete, etc.)
-- The message content
-- Status: pending (needs action), running (processing), done (handled), failed (error)
-
-## Mark message as done (after handling it)
-
+Step 2 — Check inbox (replace WORKSPACE_ID):
 ```bash
-_FP=${FORGE_PORT:-8403}; _FW=${FORGE_WORKSPACE_ID:-$(curl -s "http://localhost:$_FP/api/workspace?projectPath=$(pwd)" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)}; _FA=${FORGE_AGENT_ID:-unknown}; curl -s -X POST "http://localhost:$_FP/api/workspace/$_FW/smith" -H "Content-Type: application/json" -d '{"action":"message_done","agentId":"'"$_FA"'","messageId":"MESSAGE_ID"}'
+curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"inbox","agentId":"unknown"}'
+```
+
+## Mark message as done
+```bash
+curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"message_done","agentId":"unknown","messageId":"MESSAGE_ID"}'
 ```
 
 ## Mark message as failed
-
 ```bash
-_FP=${FORGE_PORT:-8403}; _FW=${FORGE_WORKSPACE_ID:-$(curl -s "http://localhost:$_FP/api/workspace?projectPath=$(pwd)" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)}; _FA=${FORGE_AGENT_ID:-unknown}; curl -s -X POST "http://localhost:$_FP/api/workspace/$_FW/smith" -H "Content-Type: application/json" -d '{"action":"message_failed","agentId":"'"$_FA"'","messageId":"MESSAGE_ID"}'
+curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"message_failed","agentId":"unknown","messageId":"MESSAGE_ID"}'
 ```
 
-IMPORTANT: After handling a message, always mark it as done. If you can't handle it, mark it as failed.
+After handling a message, always mark it as done or failed.

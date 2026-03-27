@@ -855,17 +855,21 @@ function TerminalLaunchDialog({ agent, workDir, sessName, projectPath, workspace
 }) {
   const [sessions, setSessions] = useState<{ id: string; modified: string; size: number }[]>([]);
   const [showSessions, setShowSessions] = useState(false);
+  // Check if this agent uses claude (directly or via profile)
+  const knownClis = ['claude', 'codex', 'aider'];
+  const cli = agent.agentId || 'claude';
+  const isClaude = cli === 'claude' || !knownClis.includes(cli); // profiles default to claude
 
-  // Fetch recent sessions
+  // Fetch recent sessions (only for claude-based agents)
   useEffect(() => {
-    const dir = workDir ? `${projectPath}/${workDir}`.replace(/\/+$/, '') : projectPath;
+    if (!isClaude) return;
     fetch(`/api/workspace/${workspaceId}/smith`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'sessions', projectDir: dir }),
+      body: JSON.stringify({ action: 'sessions' }),
     }).then(r => r.json()).then(d => {
       if (d.sessions?.length) setSessions(d.sessions);
     }).catch(() => {});
-  }, [projectPath, workDir, workspaceId]);
+  }, [workspaceId, isClaude]);
 
   const formatTime = (iso: string) => {
     const d = new Date(iso);
@@ -891,24 +895,24 @@ function TerminalLaunchDialog({ agent, workDir, sessName, projectPath, workspace
         <div className="space-y-2">
           <button onClick={() => onLaunch(false)}
             className="w-full text-left px-3 py-2 rounded border border-[#30363d] hover:border-[#58a6ff] hover:bg-[#161b22] transition-colors">
-            <div className="text-xs text-white font-semibold">New Session</div>
-            <div className="text-[9px] text-gray-500">Start fresh</div>
+            <div className="text-xs text-white font-semibold">{isClaude ? 'New Session' : 'Open Terminal'}</div>
+            <div className="text-[9px] text-gray-500">{isClaude ? 'Start fresh claude session' : `Launch ${cli}`}</div>
           </button>
 
-          {sessions.length > 0 && (
+          {isClaude && sessions.length > 0 && (
             <button onClick={() => onLaunch(true)}
               className="w-full text-left px-3 py-2 rounded border border-[#30363d] hover:border-[#3fb950] hover:bg-[#161b22] transition-colors">
               <div className="text-xs text-white font-semibold">Resume Latest</div>
               <div className="text-[9px] text-gray-500">
-                {sessions[0].id.slice(0, 8)}... · {formatTime(sessions[0].modified)} · {formatSize(sessions[0].size)}
+                {sessions[0].id.slice(0, 8)} · {formatTime(sessions[0].modified)} · {formatSize(sessions[0].size)}
               </div>
             </button>
           )}
 
-          {sessions.length > 1 && (
+          {isClaude && sessions.length > 1 && (
             <button onClick={() => setShowSessions(!showSessions)}
               className="w-full text-[9px] text-gray-500 hover:text-white py-1">
-              {showSessions ? '▼' : '▶'} Recent sessions ({sessions.length})
+              {showSessions ? '▼' : '▶'} More sessions ({sessions.length - 1})
             </button>
           )}
 

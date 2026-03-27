@@ -13,6 +13,9 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { WorkspaceOrchestrator, type OrchestratorEvent } from './workspace/orchestrator';
 import { loadWorkspace, saveWorkspace } from './workspace/persistence';
 import { installForgeSkills, applyProfileToProject } from './workspace/skill-installer';
@@ -559,16 +562,13 @@ async function handleSmith(id: string, body: any, res: ServerResponse): Promise<
     }
 
     case 'sessions': {
-      // List recent claude sessions for a project path (for resume picker)
-      const { projectDir } = body;
-      if (!projectDir) return jsonError(res, 'projectDir required');
+      // List recent claude sessions for resume picker
+      // Uses the workspace's projectPath to find sessions in ~/.claude/projects/
       try {
-        const { readdirSync, statSync } = require('node:fs');
-        const { join, sep } = require('node:path');
-        const { homedir } = require('node:os');
-        const encoded = projectDir.replace(/\//g, '-');
+        const encoded = orch.projectPath.replace(/\//g, '-');
         const sessDir = join(homedir(), '.claude', 'projects', encoded);
-        const files = readdirSync(sessDir)
+        const entries = readdirSync(sessDir);
+        const files = entries
           .filter((f: string) => f.endsWith('.jsonl'))
           .map((f: string) => {
             const fp = join(sessDir, f);

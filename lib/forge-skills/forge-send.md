@@ -15,10 +15,19 @@ Send a message to another agent in the Forge Workspace. Use this INSTEAD of writ
 
 ## How to send
 
+First, discover your workspace context if env vars are not set:
 ```bash
-curl -s -X POST http://localhost:$FORGE_PORT/api/workspace/$FORGE_WORKSPACE_ID/smith \
+FORGE_PORT=${FORGE_PORT:-8403}
+if [ -z "$FORGE_WORKSPACE_ID" ]; then
+  FORGE_WORKSPACE_ID=$(curl -s http://localhost:$FORGE_PORT/api/workspace?projectPath=$(pwd) | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+fi
+```
+
+Then send:
+```bash
+curl -s -X POST http://localhost:${FORGE_PORT:-8403}/api/workspace/$FORGE_WORKSPACE_ID/smith \
   -H "Content-Type: application/json" \
-  -d '{"action":"send","agentId":"'$FORGE_AGENT_ID'","to":"TARGET_LABEL","msgAction":"ACTION","content":"YOUR MESSAGE"}'
+  -d '{"action":"send","agentId":"'${FORGE_AGENT_ID:-unknown}'","to":"TARGET_LABEL","msgAction":"ACTION","content":"YOUR MESSAGE"}'
 ```
 
 Where:

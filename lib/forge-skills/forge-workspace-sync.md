@@ -11,14 +11,22 @@ When you detect that the user has completed a meaningful unit of work (implement
 - You've made multiple file changes and the conversation reaches a natural stopping point
 - User asks to move on to the next task or agent
 
+## Setup (if env vars not set)
+```bash
+FORGE_PORT=${FORGE_PORT:-8403}
+if [ -z "$FORGE_WORKSPACE_ID" ]; then
+  FORGE_WORKSPACE_ID=$(curl -s http://localhost:$FORGE_PORT/api/workspace?projectPath=$(pwd) | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+fi
+```
+
 ## How to sync
 
 First, collect your recent output that contains any [SEND:...] markers. Then run:
 
 ```bash
-curl -s -X POST http://localhost:$FORGE_PORT/api/workspace/$FORGE_WORKSPACE_ID/smith \
+curl -s -X POST http://localhost:${FORGE_PORT:-8403}/api/workspace/$FORGE_WORKSPACE_ID/smith \
   -H "Content-Type: application/json" \
-  -d '{"action":"done","agentId":"'$FORGE_AGENT_ID'","output":"PASTE_YOUR_RECENT_OUTPUT_WITH_SEND_MARKERS_HERE"}'
+  -d '{"action":"done","agentId":"'${FORGE_AGENT_ID:-unknown}'","output":"PASTE_YOUR_RECENT_OUTPUT_WITH_SEND_MARKERS_HERE"}'
 ```
 
 IMPORTANT: Include any `[SEND:AgentLabel:action] message` markers you wrote in the `output` field. The server will parse them and deliver the messages to other agents.

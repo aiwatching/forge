@@ -410,6 +410,9 @@ function AgentConfigModal({ initial, mode, existingAgents, onConfirm, onCancel }
               <label className="text-[9px] text-gray-500 uppercase">Work Dir</label>
               <input value={workDirVal} onChange={e => setWorkDirVal(e.target.value)} placeholder={label ? `${label.toLowerCase().replace(/\s+/g, '-')}/` : 'engineer/'}
                 className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff]" />
+              <div className="text-[8px] text-gray-600 mt-0.5">
+                → {'{project}/'}{(workDirVal || (label ? `${label.toLowerCase().replace(/\s+/g, '-')}/` : '')).replace(/^\.?\//, '')}
+              </div>
             </div>
             <div className="flex flex-col gap-1 flex-1">
               <label className="text-[9px] text-gray-500 uppercase">Outputs</label>

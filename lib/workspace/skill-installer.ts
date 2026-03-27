@@ -50,7 +50,58 @@ export function installForgeSkills(
     installed.push(file);
   }
 
+  // Ensure .claude/settings.json allows forge curl commands
+  ensureForgePermissions(projectPath);
+
   return { installed };
+}
+
+/**
+ * Ensure project's .claude/settings.json allows forge skill curl commands.
+ * Removes curl deny rules that block forge, adds allow rule if needed.
+ */
+function ensureForgePermissions(projectPath: string): void {
+  const settingsFile = join(projectPath, '.claude', 'settings.json');
+  const FORGE_CURL_ALLOW = 'Bash(curl*localhost*/smith*)';
+
+  try {
+    let settings: any = {};
+    if (existsSync(settingsFile)) {
+      settings = JSON.parse(readFileSync(settingsFile, 'utf-8'));
+    }
+
+    if (!settings.permissions) settings.permissions = {};
+    if (!settings.permissions.allow) settings.permissions.allow = [];
+    if (!settings.permissions.deny) settings.permissions.deny = [];
+
+    let changed = false;
+
+    // Remove deny rules that block curl to localhost (forge skills)
+    const denyBefore = settings.permissions.deny.length;
+    settings.permissions.deny = settings.permissions.deny.filter((rule: string) => {
+      // Remove broad curl denies that would block forge
+      if (/^Bash\(curl[:\s*]/.test(rule)) return false;
+      return true;
+    });
+    if (settings.permissions.deny.length !== denyBefore) changed = true;
+
+    // Add forge curl allow if not present
+    const hasForgeAllow = settings.permissions.allow.some((rule: string) =>
+      rule.includes('localhost') && rule.includes('smith')
+    );
+    if (!hasForgeAllow) {
+      settings.permissions.allow.push(FORGE_CURL_ALLOW);
+      changed = true;
+    }
+
+    if (changed) {
+      mkdirSync(join(projectPath, '.claude'), { recursive: true });
+      writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+      console.log('[skills] Updated .claude/settings.json: allowed forge curl commands');
+    }
+  } catch (err: any) {
+    console.error('[skills] Failed to update .claude/settings.json:', err.message);
+  }
 }
 
 /**

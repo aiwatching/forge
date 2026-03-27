@@ -7,36 +7,53 @@ import { getDataDir } from './dirs';
 const DATA_DIR = getDataDir();
 const SETTINGS_FILE = join(DATA_DIR, 'settings.yaml');
 
+export interface AgentEntry {
+  // Base agent fields (for detected agents like claude, codex, aider)
+  path?: string; name?: string; enabled?: boolean;
+  flags?: string[]; taskFlags?: string; interactiveCmd?: string; resumeFlag?: string; outputFormat?: string;
+  models?: { terminal?: string; task?: string; telegram?: string; help?: string; mobile?: string };
+  skipPermissionsFlag?: string;
+  requiresTTY?: boolean;
+  // Profile fields (for profiles that extend a base agent)
+  base?: string;                 // base agent ID (e.g., 'claude') — makes this a profile
+  // API profile fields
+  type?: 'cli' | 'api';         // 'api' = API mode, default = 'cli'
+  provider?: string;             // API provider (e.g., 'anthropic', 'google')
+  model?: string;                // model override (for both CLI and API profiles)
+  apiKey?: string;               // per-profile API key (encrypted)
+}
+
+export interface ProviderEntry {
+  apiKey?: string;               // encrypted, fallback to env var
+  defaultModel?: string;
+  enabled?: boolean;
+}
+
 export interface Settings {
-  projectRoots: string[];       // Multiple project directories
-  docRoots: string[];           // Markdown document directories (e.g. Obsidian vaults)
-  claudePath: string;           // Path to claude binary
-  claudeHome: string;           // Claude Code home directory (default: ~/.claude)
-  telegramBotToken: string;     // Telegram Bot API token
-  telegramChatId: string;       // Telegram chat ID to send notifications to
-  notifyOnComplete: boolean;    // Notify when task completes
-  notifyOnFailure: boolean;     // Notify when task fails
-  tunnelAutoStart: boolean;     // Auto-start Cloudflare Tunnel on startup
-  telegramTunnelPassword: string; // Admin password (encrypted) — for login, tunnel, secrets, Telegram
-  taskModel: string;              // Model for tasks (default: sonnet)
-  pipelineModel: string;          // Model for pipelines (default: sonnet)
-  telegramModel: string;          // Model for Telegram AI features (default: sonnet)
-  skipPermissions: boolean;       // Add --dangerously-skip-permissions to all claude invocations
-  notificationRetentionDays: number; // Auto-cleanup notifications older than N days
-  skillsRepoUrl: string;              // GitHub raw URL for skills registry
-  displayName: string;                  // User display name (shown in header)
-  displayEmail: string;                 // User email (for session/future integrations)
-  favoriteProjects: string[];           // Favorite project paths (shown at top of sidebar)
-  defaultAgent: string;                  // Default agent ID (e.g., 'claude', 'codex', 'aider')
-  telegramAgent: string;                 // Default agent for Telegram (empty = use defaultAgent)
-  docsAgent: string;                     // Default agent for Docs terminal (empty = use defaultAgent)
-  agents: Record<string, {
-    path?: string; name?: string; enabled?: boolean;
-    flags?: string[]; taskFlags?: string; interactiveCmd?: string; resumeFlag?: string; outputFormat?: string;
-    models?: { terminal?: string; task?: string; telegram?: string; help?: string; mobile?: string };
-    skipPermissionsFlag?: string; // e.g., "--dangerously-skip-permissions" for claude, "--full-auto" for codex
-    requiresTTY?: boolean;         // needs pseudo-terminal to run
-  }>;
+  projectRoots: string[];
+  docRoots: string[];
+  claudePath: string;
+  claudeHome: string;
+  telegramBotToken: string;
+  telegramChatId: string;
+  notifyOnComplete: boolean;
+  notifyOnFailure: boolean;
+  tunnelAutoStart: boolean;
+  telegramTunnelPassword: string;
+  taskModel: string;
+  pipelineModel: string;
+  telegramModel: string;
+  skipPermissions: boolean;
+  notificationRetentionDays: number;
+  skillsRepoUrl: string;
+  displayName: string;
+  displayEmail: string;
+  favoriteProjects: string[];
+  defaultAgent: string;
+  telegramAgent: string;
+  docsAgent: string;
+  agents: Record<string, AgentEntry>;
+  providers: Record<string, ProviderEntry>;  // API provider configs
 }
 
 const defaults: Settings = {
@@ -63,7 +80,46 @@ const defaults: Settings = {
   telegramAgent: '',
   docsAgent: '',
   agents: {},
+  providers: {},
 };
+
+/** Decrypt nested apiKey fields in agents and providers */
+function decryptNestedSecrets(settings: Settings): void {
+  // Decrypt provider apiKeys
+  if (settings.providers) {
+    for (const p of Object.values(settings.providers)) {
+      if (p.apiKey && isEncrypted(p.apiKey)) {
+        p.apiKey = decryptSecret(p.apiKey);
+      }
+    }
+  }
+  // Decrypt agent profile apiKeys
+  if (settings.agents) {
+    for (const a of Object.values(settings.agents)) {
+      if (a.apiKey && isEncrypted(a.apiKey)) {
+        a.apiKey = decryptSecret(a.apiKey);
+      }
+    }
+  }
+}
+
+/** Encrypt nested apiKey fields in agents and providers */
+function encryptNestedSecrets(settings: Settings): void {
+  if (settings.providers) {
+    for (const p of Object.values(settings.providers)) {
+      if (p.apiKey && !isEncrypted(p.apiKey)) {
+        p.apiKey = encryptSecret(p.apiKey);
+      }
+    }
+  }
+  if (settings.agents) {
+    for (const a of Object.values(settings.agents)) {
+      if (a.apiKey && !isEncrypted(a.apiKey)) {
+        a.apiKey = encryptSecret(a.apiKey);
+      }
+    }
+  }
+}
 
 /** Load settings with secrets decrypted (for internal use) */
 export function loadSettings(): Settings {
@@ -71,12 +127,14 @@ export function loadSettings(): Settings {
   try {
     const raw = readFileSync(SETTINGS_FILE, 'utf-8');
     const parsed = { ...defaults, ...YAML.parse(raw) };
-    // Decrypt secret fields
+    // Decrypt top-level secret fields
     for (const field of SECRET_FIELDS) {
       if (parsed[field] && isEncrypted(parsed[field])) {
         parsed[field] = decryptSecret(parsed[field]);
       }
     }
+    // Decrypt nested apiKeys
+    decryptNestedSecrets(parsed);
     return parsed;
   } catch {
     return { ...defaults };
@@ -91,6 +149,21 @@ export function loadSettingsMasked(): Settings & { _secretStatus: Record<string,
     status[field] = !!settings[field];
     settings[field] = settings[field] ? '••••••••' : '';
   }
+  // Mask nested apiKeys
+  if (settings.providers) {
+    for (const [name, p] of Object.entries(settings.providers)) {
+      status[`providers.${name}.apiKey`] = !!p.apiKey;
+      p.apiKey = p.apiKey ? '••••••••' : '';
+    }
+  }
+  if (settings.agents) {
+    for (const [name, a] of Object.entries(settings.agents)) {
+      if (a.apiKey) {
+        status[`agents.${name}.apiKey`] = true;
+        a.apiKey = '••••••••';
+      }
+    }
+  }
   return { ...settings, _secretStatus: status };
 }
 
@@ -98,13 +171,16 @@ export function loadSettingsMasked(): Settings & { _secretStatus: Record<string,
 export function saveSettings(settings: Settings) {
   const dir = dirname(SETTINGS_FILE);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  // Encrypt secret fields before saving
-  const toSave = { ...settings };
+  // Deep copy to avoid mutating original
+  const toSave = JSON.parse(JSON.stringify(settings));
+  // Encrypt top-level secret fields
   for (const field of SECRET_FIELDS) {
     if (toSave[field] && !isEncrypted(toSave[field])) {
       toSave[field] = encryptSecret(toSave[field]);
     }
   }
+  // Encrypt nested apiKeys
+  encryptNestedSecrets(toSave);
   writeFileSync(SETTINGS_FILE, YAML.stringify(toSave), 'utf-8');
 }
 

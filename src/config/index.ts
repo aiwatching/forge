@@ -107,7 +107,18 @@ function getDefaultConfig(): AppConfig {
   };
 }
 
-export function getProviderApiKey(provider: ProviderName): string | undefined {
+export function getProviderApiKey(provider: ProviderName, profileApiKey?: string): string | undefined {
+  // Priority: profile-level key > settings provider key > env var
+  if (profileApiKey) return profileApiKey;
+
+  try {
+    const { loadSettings } = require('@/lib/settings');
+    const settings = loadSettings();
+    if (settings.providers?.[provider]?.apiKey) {
+      return settings.providers[provider].apiKey;
+    }
+  } catch {}
+
   const envMap: Record<ProviderName, string> = {
     anthropic: 'ANTHROPIC_API_KEY',
     google: 'GOOGLE_GENERATIVE_AI_API_KEY',

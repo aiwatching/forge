@@ -40,10 +40,48 @@ export function listAgents(): AgentConfig[] {
     agents.push({ ...aider, enabled: aiderConfig?.enabled !== false, detected: true, skipPermissionsFlag: aiderConfig?.skipPermissionsFlag || '--yes' } as any);
   }
 
-  // Custom agents from settings — always include, mark detected/not
+  // Custom agents + profiles from settings
   if (settings.agents) {
     for (const [id, cfg] of Object.entries(settings.agents)) {
       if (['claude', 'codex', 'aider'].includes(id)) continue;
+
+      // API profile — no CLI detection needed
+      if (cfg.type === 'api') {
+        agents.push({
+          id,
+          name: cfg.name || id,
+          path: '',
+          enabled: cfg.enabled !== false,
+          type: 'generic' as const,
+          capabilities: { supportsResume: false, supportsStreamJson: false, supportsModel: false, supportsSkipPermissions: false, hasSessionFiles: false, requiresTTY: false },
+          isProfile: true,
+          backendType: 'api',
+          provider: cfg.provider,
+          model: cfg.model,
+          apiKey: cfg.apiKey,
+        } as any);
+        continue;
+      }
+
+      // CLI profile (has base) — inherit from base agent
+      if (cfg.base) {
+        const baseAgent = agents.find(a => a.id === cfg.base);
+        agents.push({
+          ...(baseAgent || { type: 'generic' as const, capabilities: { supportsResume: false, supportsStreamJson: false, supportsModel: false, supportsSkipPermissions: false, hasSessionFiles: false, requiresTTY: false } }),
+          id,
+          name: cfg.name || id,
+          path: baseAgent?.path || '',
+          enabled: cfg.enabled !== false,
+          base: cfg.base,
+          isProfile: true,
+          backendType: 'cli',
+          model: cfg.model || cfg.models?.task,
+          skipPermissionsFlag: cfg.skipPermissionsFlag || baseAgent?.skipPermissionsFlag,
+        } as any);
+        continue;
+      }
+
+      // Custom agent (not a profile) — detect binary
       if (!cfg.path) continue;
       const flags = cfg.taskFlags ? cfg.taskFlags.split(/\s+/).filter(Boolean) : cfg.flags;
       const detected = detectAgent(id, cfg.name || id, cfg.path, flags);
@@ -68,7 +106,7 @@ export function getDefaultAgentId(): AgentId {
   return settings.defaultAgent || 'claude';
 }
 
-/** Get an agent adapter by ID (falls back to default) */
+/** Get an agent adapter by ID (falls back to default). For profiles, returns base agent's adapter. */
 export function getAgent(id?: AgentId): AgentAdapter {
   const agentId = id || getDefaultAgentId();
 
@@ -77,6 +115,19 @@ export function getAgent(id?: AgentId): AgentAdapter {
 
   const agents = listAgents();
   const config = agents.find(a => a.id === agentId && a.enabled);
+
+  // Profile with base → get base agent's adapter
+  if (config?.base) {
+    const baseAdapter = getAgent(config.base);
+    // Wrap adapter with profile's model override
+    const profileAdapter: AgentAdapter = {
+      ...baseAdapter,
+      id: agentId,
+      config: { ...baseAdapter.config, ...config, id: agentId },
+    };
+    adapterCache.set(agentId, profileAdapter);
+    return profileAdapter;
+  }
 
   if (!config) {
     // If specifically requested agent not found, only fallback for 'claude' (default)

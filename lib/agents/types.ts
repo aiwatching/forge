@@ -23,6 +23,13 @@ export interface AgentConfig {
   capabilities: AgentCapabilities;
   version?: string;
   skipPermissionsFlag?: string; // e.g., "--dangerously-skip-permissions", "--full-auto"
+  // Profile fields
+  base?: string;             // base agent ID — makes this a profile
+  isProfile?: boolean;       // true if this is a profile (not a base agent)
+  backendType?: 'cli' | 'api'; // 'api' for API profiles
+  provider?: string;         // API provider (anthropic, google, openai, grok)
+  model?: string;            // model override for profiles
+  apiKey?: string;           // per-profile API key
 }
 
 export interface AgentSpawnOptions {

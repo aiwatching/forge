@@ -858,14 +858,15 @@ function getWsUrl() {
   return `${p}//${h}:${port + 1}`;
 }
 
-function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, workDir, preferredSessionName, existingSession, onSessionReady, onClose }: {
+function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, workDir, preferredSessionName, existingSession, resumeMode, onSessionReady, onClose }: {
   agentLabel: string;
   agentIcon: string;
   projectPath: string;
   agentCliId: string;
   workDir?: string;
-  preferredSessionName?: string;     // fixed tmux session name (e.g., mw-forge-test-engineer)
-  existingSession?: string;          // attach to existing tmux session
+  preferredSessionName?: string;
+  existingSession?: string;
+  resumeMode?: boolean;              // true = claude -c (resume latest)
   onSessionReady?: (name: string) => void;
   onClose: (killSession: boolean) => void;
 }) {
@@ -966,35 +967,16 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, work
             const rawCli = agentCliId || 'claude';
             const cli = knownClis.includes(rawCli) ? rawCli : 'claude';
 
-            // Prompt user: new session or resume
+            // Launch CLI — send command to tmux shell
             const cdCmd = `mkdir -p "${targetDir}" && cd "${targetDir}"`;
             const newCmd = `${cdCmd} && ${cli}\n`;
             const resumeCmd = `${cdCmd} && ${cli} -c\n`;
 
-            term.write(`\x1b[36m── ${agentLabel} Terminal ──\x1b[0m\r\n`);
-            term.write(`\x1b[33m[1]\x1b[0m New session:    ${cli}\r\n`);
-            term.write(`\x1b[33m[2]\x1b[0m Resume latest:  ${cli} -c\r\n`);
-            term.write(`\x1b[90mPress 1 or 2 (default: 1):\x1b[0m `);
-
-            const onChoice = (e: { key: string }) => {
-              term.onKey(() => {}); // remove listener
-              const choice = e.key;
-              if (choice === '2') {
-                term.write('2\r\n');
-                if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: resumeCmd }));
-              } else {
-                term.write(choice === '1' ? '1\r\n' : '\r\n');
-                if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: newCmd }));
-              }
-            };
-            const disposable = term.onKey(onChoice);
-            // Auto-select new session after 5s if no input
+            const resumeFlag = cli === 'claude' && resumeMode ? ' -c' : '';
+            const cmd = `${cdCmd} && ${cli}${resumeFlag}\n`;
             setTimeout(() => {
-              if (!launched) return; // already chosen or disposed
-              disposable.dispose();
-              term.write('\r\n\x1b[90m(auto: new session)\x1b[0m\r\n');
-              if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: newCmd }));
-            }, 5000);
+              if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: cmd }));
+            }, 300);
           }
         } catch {}
       };
@@ -1331,7 +1313,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
   const [memoryTarget, setMemoryTarget] = useState<{ id: string; label: string } | null>(null);
   const [inboxTarget, setInboxTarget] = useState<{ id: string; label: string } | null>(null);
   const [showBusPanel, setShowBusPanel] = useState(false);
-  const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; workDir?: string; tmuxSession?: string; sessionName: string }[]>([]);
+  const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean }[]>([]);
 
   // Expose focusAgent to parent
   useImperativeHandle(ref, () => ({
@@ -1473,13 +1455,17 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 return;
               }
 
-              // Otherwise switch to manual mode + create new session
+              // Ask user: new session or resume
+              const choice = prompt(`Open terminal for ${agent.label}:\n\n1 = New session\n2 = Resume latest (claude -c)\n\nEnter 1 or 2:`, '1');
+              if (!choice) return; // cancelled
+              const useResume = choice.trim() === '2';
+
               const res = await wsApi(workspaceId, 'open_terminal', { agentId: agent.id });
               if (res.ok) {
                 setFloatingTerminals(prev => [...prev, {
                   agentId: agent.id, label: agent.label, icon: agent.icon,
                   cliId: agent.agentId || 'claude', workDir,
-                  sessionName: sessName,
+                  sessionName: sessName, resumeMode: useResume,
                 }]);
               }
             },
@@ -1803,6 +1789,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           workDir={ft.workDir}
           preferredSessionName={ft.sessionName}
           existingSession={ft.tmuxSession}
+          resumeMode={ft.resumeMode}
           onSessionReady={(name) => {
             if (workspaceId) {
               wsApi(workspaceId, 'set_tmux_session', { agentId: ft.agentId, sessionName: name });

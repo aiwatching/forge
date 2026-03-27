@@ -283,19 +283,23 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
         // Skills call Next.js API (/api/workspace/.../smith), so use FORGE_PORT not daemon PORT
         const result = installForgeSkills(orch.projectPath, id, agentId, FORGE_PORT);
 
-        // Build profile env vars (injected via export in terminal, not settings.json)
+        // Resolve profile: get cliType, env, model from agent registry
         let profileEnv: Record<string, string> | undefined;
-        if (agentConfig.agentId) {
-          try {
-            const { loadSettings } = await import('./settings.js');
-            const settings = loadSettings();
-            const profileCfg = settings.agents?.[agentConfig.agentId];
-            if (profileCfg) {
-              profileEnv = { ...(profileCfg.env || {}) };
-              if (profileCfg.model) profileEnv.CLAUDE_MODEL = profileCfg.model;
+        let cliType = 'claude-code'; // default
+        let cliCmd = 'claude';       // actual CLI binary name
+        try {
+          const { getAgent, listAgents } = await import('./agents/index.js');
+          const agentInfo = listAgents().find(a => a.id === (agentConfig.agentId || 'claude'));
+          if (agentInfo) {
+            cliType = (agentInfo as any).cliType || agentInfo.type === 'claude-code' ? 'claude-code' : 'generic';
+            cliCmd = cliType === 'claude-code' ? 'claude' : cliType === 'codex' ? 'codex' : cliType === 'aider' ? 'aider' : agentInfo.path || 'claude';
+            if ((agentInfo as any).env) profileEnv = { ...(agentInfo as any).env };
+            if ((agentInfo as any).model) {
+              if (!profileEnv) profileEnv = {};
+              profileEnv.CLAUDE_MODEL = (agentInfo as any).model;
             }
-          } catch {}
-        }
+          }
+        } catch {}
 
         return json(res, {
           ok: true,
@@ -303,6 +307,8 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
           skillsInstalled: result.installed,
           agentId,
           label: agentConfig.label,
+          cliType,
+          cliCmd,
           profileEnv,
         });
       }

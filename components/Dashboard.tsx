@@ -151,10 +151,10 @@ export default function Dashboard({ user }: { user: any }) {
   // Listen for open-terminal events from ProjectManager
   useEffect(() => {
     const handler = (e: Event) => {
-      const { projectPath, projectName, agentId } = (e as CustomEvent).detail;
+      const { projectPath, projectName, agentId, resumeMode, sessionId, profileEnv } = (e as CustomEvent).detail;
       setViewMode('terminal');
       setTimeout(() => {
-        terminalRef.current?.openProjectTerminal?.(projectPath, projectName, agentId);
+        terminalRef.current?.openProjectTerminal?.(projectPath, projectName, agentId, resumeMode, sessionId, profileEnv);
       }, 300);
     };
     window.addEventListener('forge:open-terminal', handler);

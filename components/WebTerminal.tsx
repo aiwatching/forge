@@ -9,7 +9,7 @@ import '@xterm/xterm/css/xterm.css';
 
 export interface WebTerminalHandle {
   openSessionInTerminal: (sessionId: string, projectPath: string) => void;
-  openProjectTerminal: (projectPath: string, projectName: string, agentId?: string) => void;
+  openProjectTerminal: (projectPath: string, projectName: string, agentId?: string, resumeMode?: boolean, sessionId?: string, profileEnv?: Record<string, string>) => void;
 }
 
 export interface WebTerminalProps {
@@ -325,23 +325,32 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
       setTabs(prev => [...prev, newTab]);
       setTimeout(() => setActiveTabId(newTab.id), 0);
     },
-    async openProjectTerminal(projectPath: string, projectName: string, agentId?: string) {
-      // Determine which agent CLI to use
+    async openProjectTerminal(projectPath: string, projectName: string, agentId?: string, resumeMode?: boolean, sessionId?: string, profileEnv?: Record<string, string>) {
       const agent = agentId || 'claude';
-      let agentCmd = agent;
+      // Resolve CLI command — profiles use base agent's binary
+      const knownClis = ['claude', 'codex', 'aider'];
+      const agentCmd = knownClis.includes(agent) ? agent : 'claude';
 
-      // For claude: check for existing sessions to use -c
+      // Resume flag from user's choice
       let resumeFlag = '';
-      if (agent === 'claude') {
-        try {
-          const sRes = await fetch(`/api/claude-sessions/${encodeURIComponent(projectName)}`);
-          const sData = await sRes.json();
-          const hasSession = Array.isArray(sData) ? sData.length > 0 : false;
-          resumeFlag = hasSession ? ' -c' : '';
-        } catch {}
+      if (agentCmd === 'claude') {
+        if (sessionId) resumeFlag = ` --resume ${sessionId}`;
+        else if (resumeMode) resumeFlag = ' -c';
       }
 
-      // Get skip-permissions flag from agent config
+      // Model flag from profile
+      const modelFlag = profileEnv?.CLAUDE_MODEL ? ` --model ${profileEnv.CLAUDE_MODEL}` : '';
+
+      // Build env exports from profile (exclude CLAUDE_MODEL — passed via --model)
+      const envExports = profileEnv
+        ? Object.entries(profileEnv)
+            .filter(([k]) => k !== 'CLAUDE_MODEL')
+            .map(([k, v]) => `export ${k}="${v}"`)
+            .join(' && ')
+        : '';
+      const envPrefix = envExports ? envExports + ' && ' : '';
+
+      // Get skip-permissions flag
       let sf = '';
       try {
         const agentRes = await fetch('/api/agents');
@@ -349,11 +358,11 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
         const agentConfig = (agentData.agents || []).find((a: any) => a.id === agent);
         if (agentConfig?.skipPermissionsFlag && skipPermissions) {
           sf = ` ${agentConfig.skipPermissionsFlag}`;
-        } else if (skipPermissions && agent === 'claude') {
+        } else if (skipPermissions && agentCmd === 'claude') {
           sf = ' --dangerously-skip-permissions';
         }
       } catch {
-        if (skipPermissions && agent === 'claude') sf = ' --dangerously-skip-permissions';
+        if (skipPermissions && agentCmd === 'claude') sf = ' --dangerously-skip-permissions';
       }
 
       let targetTabId: number | null = null;
@@ -366,7 +375,7 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
         }
         const tree = makeTerminal(undefined, projectPath);
         const paneId = firstTerminalId(tree);
-        pendingCommands.set(paneId, `cd "${projectPath}" && ${agentCmd}${resumeFlag}${sf}\n`);
+        pendingCommands.set(paneId, `${envPrefix}cd "${projectPath}" && ${agentCmd}${resumeFlag}${modelFlag}${sf}\n`);
         const newTab: TabState = {
           id: nextId++,
           label: projectName,

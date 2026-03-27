@@ -1330,8 +1330,11 @@ const FileTreeNode = memo(function FileTreeNode({ node, depth, selected, onSelec
 // ─── Agent Terminal Button ───────────────────────────────
 
 function AgentTerminalButton({ projectPath, projectName }: { projectPath: string; projectName: string }) {
-  const [agents, setAgents] = useState<{ id: string; name: string; detected?: boolean }[]>([]);
+  const [agents, setAgents] = useState<{ id: string; name: string; detected?: boolean; isProfile?: boolean; base?: string; backendType?: string; env?: Record<string, string>; model?: string }[]>([]);
   const [showMenu, setShowMenu] = useState(false);
+  const [launchDialog, setLaunchDialog] = useState<{ agentId: string; agentName: string; env?: Record<string, string>; model?: string } | null>(null);
+  const [sessions, setSessions] = useState<{ id: string; modified: string; size: number }[]>([]);
+  const [showSessions, setShowSessions] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1347,60 +1350,147 @@ function AgentTerminalButton({ projectPath, projectName }: { projectPath: string
     return () => document.removeEventListener('mousedown', h);
   }, [showMenu]);
 
-  const openWithAgent = (agentId?: string) => {
+  // Fetch sessions when dialog opens
+  useEffect(() => {
+    if (!launchDialog) return;
+    const encoded = projectPath.replace(/\//g, '-');
+    fetch('/api/agents').then(() => {
+      // Use workspace API if available, otherwise try direct
+      fetch(`/api/workspace?projectPath=${encodeURIComponent(projectPath)}`)
+        .then(r => r.json())
+        .then(ws => {
+          if (ws?.id) {
+            return fetch(`/api/workspace/${ws.id}/smith`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'sessions' }),
+            }).then(r => r.json()).then(d => setSessions(d.sessions || []));
+          }
+        }).catch(() => {});
+    }).catch(() => {});
+  }, [launchDialog, projectPath]);
+
+  const openWithAgent = (agentId: string, resumeMode?: boolean, sessionId?: string, env?: Record<string, string>, model?: string) => {
+    setLaunchDialog(null);
     setShowMenu(false);
-    const event = new CustomEvent('forge:open-terminal', {
-      detail: { projectPath, projectName, agentId },
-    });
-    window.dispatchEvent(event);
+    // Build profile env for the event
+    const profileEnv = env ? { ...env } : undefined;
+    if (model && profileEnv) profileEnv.CLAUDE_MODEL = model;
+    else if (model) {
+      const pe: Record<string, string> = { CLAUDE_MODEL: model };
+      window.dispatchEvent(new CustomEvent('forge:open-terminal', {
+        detail: { projectPath, projectName, agentId, resumeMode, sessionId, profileEnv: pe },
+      }));
+      return;
+    }
+    window.dispatchEvent(new CustomEvent('forge:open-terminal', {
+      detail: { projectPath, projectName, agentId, resumeMode, sessionId, profileEnv },
+    }));
   };
 
-  const detected = agents.filter(a => a.detected !== false);
+  const handleAgentClick = (a: typeof agents[0]) => {
+    setShowMenu(false);
+    const knownClis = ['claude', 'codex', 'aider'];
+    const isClaude = a.id === 'claude' || !knownClis.includes(a.id);
+    if (isClaude) {
+      // Show New/Resume dialog
+      setSessions([]);
+      setShowSessions(false);
+      setLaunchDialog({ agentId: a.id, agentName: a.name, env: a.env, model: a.model });
+    } else {
+      // Non-claude: open directly
+      openWithAgent(a.id);
+    }
+  };
 
-  // If only one agent (claude), just a simple button
-  if (detected.length <= 1) {
-    return (
-      <button
-        onClick={() => openWithAgent()}
-        className="text-[9px] px-2 py-0.5 border border-[var(--accent)] text-[var(--accent)] rounded hover:bg-[var(--accent)] hover:text-white transition-colors"
-        title="Open terminal"
-      >
-        Terminal
-      </button>
-    );
-  }
+  const formatTime = (iso: string) => {
+    const diff = Date.now() - new Date(iso).getTime();
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return new Date(iso).toLocaleDateString();
+  };
+  const formatSize = (b: number) => b < 1024 ? `${b}B` : b < 1048576 ? `${(b/1024).toFixed(0)}KB` : `${(b/1048576).toFixed(1)}MB`;
 
-  // Multiple agents: button with dropdown
+  const allAgents = agents.filter(a => a.detected !== false || a.isProfile);
+
   return (
-    <div ref={ref} className="relative">
-      <div className="flex items-center">
-        <button
-          onClick={() => openWithAgent()}
-          className="text-[9px] px-2 py-0.5 border border-[var(--accent)] text-[var(--accent)] rounded-l hover:bg-[var(--accent)] hover:text-white transition-colors"
-          title="Open terminal with default agent"
-        >
-          Terminal
-        </button>
-        <button
-          onClick={() => setShowMenu(v => !v)}
-          className="text-[9px] px-1 py-0.5 border border-l-0 border-[var(--accent)] text-[var(--accent)] rounded-r hover:bg-[var(--accent)] hover:text-white transition-colors"
-        >
-          ▾
-        </button>
-      </div>
-      {showMenu && (
-        <div className="absolute right-0 top-full mt-1 w-36 rounded border border-[var(--border)] shadow-lg z-40 overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
-          {detected.map(a => (
-            <button key={a.id} onClick={() => openWithAgent(a.id)}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)] text-left">
-              <span className="font-bold w-4 text-center text-[var(--accent)]">
-                {a.id === 'claude' ? 'C' : a.id === 'codex' ? 'X' : a.id === 'aider' ? 'A' : a.id.charAt(0).toUpperCase()}
-              </span>
-              <span>{a.name}</span>
+    <>
+      <div ref={ref} className="relative">
+        <div className="flex items-center">
+          <button
+            onClick={() => handleAgentClick({ id: 'claude', name: 'Claude' })}
+            className="text-[9px] px-2 py-0.5 border border-[var(--accent)] text-[var(--accent)] rounded-l hover:bg-[var(--accent)] hover:text-white transition-colors"
+            title="Open terminal"
+          >
+            Terminal
+          </button>
+          {allAgents.length > 1 && (
+            <button
+              onClick={() => setShowMenu(v => !v)}
+              className="text-[9px] px-1 py-0.5 border border-l-0 border-[var(--accent)] text-[var(--accent)] rounded-r hover:bg-[var(--accent)] hover:text-white transition-colors"
+            >
+              ▾
             </button>
-          ))}
+          )}
+        </div>
+        {showMenu && (
+          <div className="absolute right-0 top-full mt-1 w-44 rounded border border-[var(--border)] shadow-lg z-40 overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
+            {allAgents.map(a => (
+              <button key={a.id} onClick={() => handleAgentClick(a)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)] text-left">
+                <span className="font-bold w-4 text-center text-[var(--accent)]">
+                  {a.isProfile ? '●' : a.id === 'claude' ? 'C' : a.id === 'codex' ? 'X' : a.id === 'aider' ? 'A' : a.id.charAt(0).toUpperCase()}
+                </span>
+                <span>{a.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Launch dialog — New / Resume / Sessions */}
+      {launchDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.75)' }}
+          onClick={e => { if (e.target === e.currentTarget) setLaunchDialog(null); }}>
+          <div className="w-80 rounded-lg border border-[#30363d] p-4 shadow-xl" style={{ background: '#0d1117' }}>
+            <div className="text-sm font-bold text-white mb-3">⌨️ {launchDialog.agentName}</div>
+            <div className="space-y-2">
+              <button onClick={() => openWithAgent(launchDialog.agentId, false, undefined, launchDialog.env, launchDialog.model)}
+                className="w-full text-left px-3 py-2 rounded border border-[#30363d] hover:border-[#58a6ff] hover:bg-[#161b22] transition-colors">
+                <div className="text-xs text-white font-semibold">New Session</div>
+                <div className="text-[9px] text-gray-500">Start fresh</div>
+              </button>
+
+              {sessions.length > 0 && (
+                <button onClick={() => openWithAgent(launchDialog.agentId, true, undefined, launchDialog.env, launchDialog.model)}
+                  className="w-full text-left px-3 py-2 rounded border border-[#30363d] hover:border-[#3fb950] hover:bg-[#161b22] transition-colors">
+                  <div className="text-xs text-white font-semibold">Resume Latest</div>
+                  <div className="text-[9px] text-gray-500">{sessions[0].id.slice(0, 8)} · {formatTime(sessions[0].modified)} · {formatSize(sessions[0].size)}</div>
+                </button>
+              )}
+
+              {sessions.length > 1 && (
+                <button onClick={() => setShowSessions(!showSessions)}
+                  className="w-full text-[9px] text-gray-500 hover:text-white py-1">
+                  {showSessions ? '▼' : '▶'} More sessions ({sessions.length - 1})
+                </button>
+              )}
+
+              {showSessions && sessions.slice(1).map(s => (
+                <button key={s.id} onClick={() => openWithAgent(launchDialog.agentId, true, s.id, launchDialog.env, launchDialog.model)}
+                  className="w-full text-left px-3 py-1.5 rounded border border-[#21262d] hover:border-[#30363d] hover:bg-[#161b22] transition-colors">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] text-gray-400 font-mono">{s.id.slice(0, 8)}</span>
+                    <span className="text-[8px] text-gray-600">{formatTime(s.modified)}</span>
+                    <span className="text-[8px] text-gray-600">{formatSize(s.size)}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setLaunchDialog(null)}
+              className="w-full mt-3 text-[9px] text-gray-500 hover:text-white">Cancel</button>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

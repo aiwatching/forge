@@ -73,3 +73,10 @@ export {
   type SessionSummary,
   type MemoryDisplayEntry,
 } from './smith-memory';
+
+// Skill installer
+export {
+  installForgeSkills,
+  hasForgeSkills,
+  removeForgeSkills,
+} from './skill-installer';

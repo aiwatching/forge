@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, forwardRef, useImperativeHandle, lazy, Suspense } from 'react';
 import {
   ReactFlow, Background, Controls, Handle, Position, useReactFlow, ReactFlowProvider,
   type Node, type NodeProps, MarkerType, type NodeChange,
@@ -17,13 +17,17 @@ interface AgentConfig {
   entries?: { content: string; timestamp: number }[];
   backend: 'api' | 'cli';
   agentId?: string; provider?: string; model?: string;
-  dependsOn: string[]; outputs: string[];
+  dependsOn: string[];
+  workDir?: string;
+  outputs: string[];
   steps: { id: string; label: string; prompt: string }[];
   requiresApproval?: boolean;
 }
 
 interface AgentState {
   status: string; currentStep?: number;
+  runMode?: 'auto' | 'manual';
+  tmuxSession?: string;
   artifacts: { type: string; path?: string; summary?: string }[];
   error?: string; lastCheckpoint?: number;
 }
@@ -80,6 +84,9 @@ async function wsApi(workspaceId: string, action: string, body?: Record<string, 
     body: JSON.stringify({ action, ...body }),
   });
   const data = await res.json();
+  if (data.warning) {
+    alert(`Warning: ${data.warning}`);
+  }
   if (!res.ok && data.error) {
     alert(`Error: ${data.error}`);
   }
@@ -132,6 +139,8 @@ function useWorkspaceStream(workspaceId: string | null, onEvent?: (event: any) =
             ...prev,
             [event.agentId]: {
               ...prev[event.agentId],
+              // Clear runMode when going back to idle (kill terminal → auto mode)
+              ...(event.status === 'idle' ? { runMode: undefined } : {}),
               status: event.status,
               // Clear error when status changes to non-error state
               ...(event.status !== 'failed' ? { error: undefined } : {}),
@@ -173,9 +182,10 @@ function useWorkspaceStream(workspaceId: string | null, onEvent?: (event: any) =
           setBusLog(prev => [...prev, event.message]);
         }
 
-        // Server pushed updated agents list (after add/remove/update)
+        // Server pushed updated agents list + states (after add/remove/update/reset)
         if (event.type === 'agents_changed') {
           setAgents(event.agents || []);
+          if (event.agentStates) setStates(event.agentStates);
         }
 
         // Forward special events to the component
@@ -205,6 +215,7 @@ function AgentConfigModal({ initial, mode, existingAgents, onConfirm, onCancel }
   const [role, setRole] = useState(initial.role || '');
   const [backend, setBackend] = useState<'api' | 'cli'>(initial.backend === 'api' ? 'api' : 'cli');
   const [agentId, setAgentId] = useState(initial.agentId || 'claude');
+  const [workDirVal, setWorkDirVal] = useState(initial.workDir || './');
   const [outputs, setOutputs] = useState((initial.outputs || []).join(', '));
   const [selectedDeps, setSelectedDeps] = useState<Set<string>>(new Set(initial.dependsOn || []));
   const [stepsText, setStepsText] = useState(
@@ -214,6 +225,7 @@ function AgentConfigModal({ initial, mode, existingAgents, onConfirm, onCancel }
   const applyPreset = (p: Omit<AgentConfig, 'id'>) => {
     setLabel(p.label); setIcon(p.icon); setRole(p.role);
     setBackend(p.backend); setAgentId(p.agentId || 'claude');
+    setWorkDirVal(p.workDir || './');
     setOutputs(p.outputs.join(', '));
     setStepsText(p.steps.map(s => `${s.label}: ${s.prompt}`).join('\n'));
   };
@@ -329,11 +341,18 @@ function AgentConfigModal({ initial, mode, existingAgents, onConfirm, onCancel }
             </div>
           )}
 
-          {/* Outputs */}
-          <div className="flex flex-col gap-1">
-            <label className="text-[9px] text-gray-500 uppercase">Outputs (file paths)</label>
-            <input value={outputs} onChange={e => setOutputs(e.target.value)} placeholder="docs/prd.md, src/"
-              className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff]" />
+          {/* Work Dir + Outputs */}
+          <div className="flex gap-2">
+            <div className="flex flex-col gap-1 w-28">
+              <label className="text-[9px] text-gray-500 uppercase">Work Dir</label>
+              <input value={workDirVal} onChange={e => setWorkDirVal(e.target.value)} placeholder="./"
+                className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff]" />
+            </div>
+            <div className="flex flex-col gap-1 flex-1">
+              <label className="text-[9px] text-gray-500 uppercase">Outputs</label>
+              <input value={outputs} onChange={e => setOutputs(e.target.value)} placeholder="docs/prd.md, src/"
+                className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff]" />
+            </div>
           </div>
 
           {/* Steps */}
@@ -351,6 +370,7 @@ function AgentConfigModal({ initial, mode, existingAgents, onConfirm, onCancel }
             onConfirm({
               label: label.trim(), icon: icon.trim() || '🤖', role: role.trim(),
               backend, agentId, dependsOn: Array.from(selectedDeps),
+              workDir: workDirVal.trim() || './',
               outputs: outputs.split(',').map(s => s.trim()).filter(Boolean),
               steps: parseSteps(),
             });
@@ -590,6 +610,76 @@ function MemoryPanel({ agentId, agentLabel, workspaceId, onClose }: {
 
 // ─── Bus Message Panel ───────────────────────────────────
 
+// ─── Agent Inbox/Outbox Panel ────────────────────────────
+
+function InboxPanel({ agentId, agentLabel, busLog, agents, onClose }: {
+  agentId: string; agentLabel: string; busLog: any[]; agents: AgentConfig[]; onClose: () => void;
+}) {
+  const labelMap = new Map(agents.map(a => [a.id, `${a.icon} ${a.label}`]));
+  const getLabel = (id: string) => labelMap.get(id) || id;
+
+  // Filter messages related to this agent
+  const inbox = busLog.filter(m => m.to === agentId && m.type !== 'ack');
+  const outbox = busLog.filter(m => m.from === agentId && m.to !== '_system' && m.type !== 'ack');
+  const [tab, setTab] = useState<'inbox' | 'outbox'>('inbox');
+  const messages = tab === 'inbox' ? inbox : outbox;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.85)' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="flex flex-col rounded-xl overflow-hidden shadow-2xl" style={{ width: '60vw', height: '50vh', border: '1px solid #30363d', background: '#0d1117' }}>
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-[#30363d] shrink-0">
+          <span className="text-sm">📨</span>
+          <span className="text-sm font-bold text-white">{agentLabel}</span>
+          <div className="flex gap-1 ml-3">
+            <button onClick={() => setTab('inbox')}
+              className={`text-[9px] px-2 py-0.5 rounded ${tab === 'inbox' ? 'bg-[#21262d] text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+              Inbox ({inbox.length})
+            </button>
+            <button onClick={() => setTab('outbox')}
+              className={`text-[9px] px-2 py-0.5 rounded ${tab === 'outbox' ? 'bg-[#21262d] text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+              Outbox ({outbox.length})
+            </button>
+          </div>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-sm ml-auto">✕</button>
+        </div>
+        <div className="flex-1 overflow-auto p-3 space-y-1.5">
+          {messages.length === 0 && (
+            <div className="text-gray-600 text-center mt-8">No {tab} messages</div>
+          )}
+          {[...messages].reverse().map((msg, i) => (
+            <div key={i} className="px-3 py-2 rounded text-[10px]" style={{ background: '#161b22', border: '1px solid #21262d' }}>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[8px] text-gray-600">{new Date(msg.timestamp).toLocaleString()}</span>
+                {tab === 'inbox' ? (
+                  <span className="text-blue-400">← {getLabel(msg.from)}</span>
+                ) : (
+                  <span className="text-green-400">→ {getLabel(msg.to)}</span>
+                )}
+                <span className={`px-1.5 py-0.5 rounded text-[8px] ${
+                  msg.payload?.action === 'fix_request' ? 'bg-red-500/20 text-red-400' :
+                  msg.payload?.action === 'update_notify' ? 'bg-blue-500/20 text-blue-400' :
+                  msg.payload?.action === 'question' ? 'bg-yellow-500/20 text-yellow-400' :
+                  'bg-gray-500/20 text-gray-400'
+                }`}>{msg.payload?.action}</span>
+                {msg.status && msg.status !== 'delivered' && (
+                  <span className={`text-[7px] ${msg.status === 'acked' ? 'text-green-500' : msg.status === 'failed' ? 'text-red-500' : 'text-yellow-500'}`}>
+                    {msg.status}
+                  </span>
+                )}
+              </div>
+              <div className="text-gray-300">{msg.payload?.content || ''}</div>
+              {msg.payload?.files?.length > 0 && (
+                <div className="text-[8px] text-gray-600 mt-1">Files: {msg.payload.files.join(', ')}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BusPanel({ busLog, agents, onClose }: {
   busLog: any[]; agents: AgentConfig[]; onClose: () => void;
 }) {
@@ -631,6 +721,236 @@ function BusPanel({ busLog, agents, onClose }: {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Floating Terminal ────────────────────────────────────
+
+function getWsUrl() {
+  if (typeof window === 'undefined') return 'ws://localhost:8404';
+  const p = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const h = window.location.hostname;
+  if (h !== 'localhost' && h !== '127.0.0.1') return `${p}//${window.location.host}/terminal-ws`;
+  const port = parseInt(window.location.port) || 8403;
+  return `${p}//${h}:${port + 1}`;
+}
+
+function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, workDir, preferredSessionName, existingSession, onSessionReady, onClose }: {
+  agentLabel: string;
+  agentIcon: string;
+  projectPath: string;
+  agentCliId: string;
+  workDir?: string;
+  preferredSessionName?: string;     // fixed tmux session name (e.g., mw-forge-test-engineer)
+  existingSession?: string;          // attach to existing tmux session
+  onSessionReady?: (name: string) => void;
+  onClose: (killSession: boolean) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const sessionNameRef = useRef('');
+  const [pos, setPos] = useState({ x: 80, y: 60 });
+  const [size, setSize] = useState({ w: 750, h: 450 });
+  const [showCloseDialog, setShowCloseDialog] = useState(false);
+  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const resizeRef = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let disposed = false;
+
+    // Dynamic import xterm to avoid SSR issues
+    Promise.all([
+      import('@xterm/xterm'),
+      import('@xterm/addon-fit'),
+    ]).then(([{ Terminal }, { FitAddon }]) => {
+      if (disposed) return;
+
+      const term = new Terminal({
+        cursorBlink: true, fontSize: 13,
+        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        scrollback: 5000,
+        theme: { background: '#0d1117', foreground: '#c9d1d9', cursor: '#58a6ff' },
+      });
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(el);
+      setTimeout(() => { try { fitAddon.fit(); } catch {} }, 100);
+
+      const ro = new ResizeObserver(() => { try { fitAddon.fit(); } catch {} });
+      ro.observe(el);
+
+      // Connect WebSocket — attach to existing or create new
+      const ws = new WebSocket(getWsUrl());
+      wsRef.current = ws;
+      ws.onopen = () => {
+        if (existingSession) {
+          ws.send(JSON.stringify({ type: 'attach', sessionName: existingSession, cols: term.cols, rows: term.rows }));
+        } else {
+          // Use fixed session name so it survives refresh/suspend
+          ws.send(JSON.stringify({ type: 'create', sessionName: preferredSessionName, cols: term.cols, rows: term.rows }));
+        }
+      };
+
+      ws.onerror = () => {
+        if (!disposed) term.write('\r\n\x1b[91m[Connection error]\x1b[0m\r\n');
+      };
+      ws.onclose = () => {
+        if (!disposed) term.write('\r\n\x1b[90m[Disconnected]\x1b[0m\r\n');
+      };
+
+      let launched = false;
+      ws.onmessage = (event) => {
+        if (disposed) return;
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'output') { try { term.write(msg.data); } catch {} }
+          else if (msg.type === 'error') {
+            // Session no longer exists — fall back to creating a new one
+            if (msg.message?.includes('no longer exists') || msg.message?.includes('not found')) {
+              term.write(`\r\n\x1b[93m[Session lost — creating new one]\x1b[0m\r\n`);
+              ws.send(JSON.stringify({ type: 'create', cols: term.cols, rows: term.rows }));
+              // Clear existing session so next connected triggers CLI launch
+              (existingSession as any) = undefined;
+            } else {
+              term.write(`\r\n\x1b[91m[${msg.message || 'error'}]\x1b[0m\r\n`);
+            }
+          }
+          else if (msg.type === 'connected') {
+            if (msg.sessionName) {
+              sessionNameRef.current = msg.sessionName;
+              // Save session name (on create or if session changed after fallback)
+              onSessionReady?.(msg.sessionName);
+            }
+            if (launched) return;
+            launched = true;
+            if (existingSession) {
+              // Force terminal redraw for attached session
+              setTimeout(() => {
+                if (!disposed && ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({ type: 'resize', cols: term.cols - 1, rows: term.rows }));
+                  setTimeout(() => {
+                    if (!disposed && ws.readyState === WebSocket.OPEN)
+                      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+                  }, 50);
+                }
+              }, 200);
+              return;
+            }
+            const targetDir = workDir ? `${projectPath}/${workDir}` : projectPath;
+            const cli = agentCliId || 'claude';
+            const resumeFlag = cli === 'claude' ? ' -c' : '';
+            const cmd = `mkdir -p "${targetDir}" && cd "${targetDir}" && ${cli}${resumeFlag}\n`;
+            setTimeout(() => {
+              if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: cmd }));
+            }, 300);
+          }
+        } catch {}
+      };
+
+      term.onData(data => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
+      });
+      term.onResize(({ cols, rows }) => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+      });
+
+      return () => {
+        disposed = true;
+        ro.disconnect();
+        ws.close();
+        term.dispose();
+      };
+    });
+
+    return () => { disposed = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div
+      className="fixed z-50 bg-[#0d1117] border border-[#30363d] rounded-lg shadow-2xl flex flex-col overflow-hidden"
+      style={{ left: pos.x, top: pos.y, width: size.w, height: size.h }}
+    >
+      {/* Draggable header */}
+      <div
+        className="flex items-center gap-2 px-3 py-1.5 bg-[#161b22] border-b border-[#30363d] cursor-move shrink-0 select-none"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          dragRef.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y };
+          const onMove = (ev: MouseEvent) => {
+            if (!dragRef.current) return;
+            setPos({ x: Math.max(0, dragRef.current.origX + ev.clientX - dragRef.current.startX), y: Math.max(0, dragRef.current.origY + ev.clientY - dragRef.current.startY) });
+          };
+          const onUp = () => { dragRef.current = null; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+          window.addEventListener('mousemove', onMove);
+          window.addEventListener('mouseup', onUp);
+        }}
+      >
+        <span className="text-sm">{agentIcon}</span>
+        <span className="text-[11px] font-semibold text-white">{agentLabel}</span>
+        <span className="text-[8px] text-gray-500">⌨️ manual terminal</span>
+        <button onClick={() => setShowCloseDialog(true)} className="ml-auto text-gray-500 hover:text-white text-sm">✕</button>
+      </div>
+
+      {/* Terminal */}
+      <div ref={containerRef} className="flex-1 min-h-0" style={{ background: '#0d1117' }} />
+
+      {/* Resize handle */}
+      <div
+        className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          resizeRef.current = { startX: e.clientX, startY: e.clientY, origW: size.w, origH: size.h };
+          const onMove = (ev: MouseEvent) => {
+            if (!resizeRef.current) return;
+            setSize({ w: Math.max(400, resizeRef.current.origW + ev.clientX - resizeRef.current.startX), h: Math.max(250, resizeRef.current.origH + ev.clientY - resizeRef.current.startY) });
+          };
+          const onUp = () => { resizeRef.current = null; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+          window.addEventListener('mousemove', onMove);
+          window.addEventListener('mouseup', onUp);
+        }}
+      >
+        <svg viewBox="0 0 16 16" className="w-3 h-3 absolute bottom-0.5 right-0.5 text-gray-600">
+          <path d="M14 14L8 14L14 8Z" fill="currentColor" />
+        </svg>
+      </div>
+
+      {/* Close confirmation dialog */}
+      {showCloseDialog && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={() => setShowCloseDialog(false)}>
+          <div className="bg-[#161b22] border border-[#30363d] rounded-lg p-4 shadow-xl max-w-sm" onClick={e => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-white mb-2">Close Terminal — {agentLabel}</h3>
+            <p className="text-xs text-gray-400 mb-3">
+              This agent has an active terminal session.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => { setShowCloseDialog(false); onClose(false); }}
+                className="flex-1 px-3 py-1.5 text-[11px] rounded bg-[#2a2a4a] text-gray-300 hover:bg-[#3a3a5a] hover:text-white">
+                Suspend
+                <span className="block text-[9px] text-gray-500 mt-0.5">Session keeps running</span>
+              </button>
+              <button onClick={() => {
+                setShowCloseDialog(false);
+                if (wsRef.current?.readyState === WebSocket.OPEN && sessionNameRef.current) {
+                  wsRef.current.send(JSON.stringify({ type: 'kill', sessionName: sessionNameRef.current }));
+                }
+                onClose(true);
+              }}
+                className="flex-1 px-3 py-1.5 text-[11px] rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">
+                Kill Session
+                <span className="block text-[9px] text-red-400/60 mt-0.5">End session, back to auto</span>
+              </button>
+            </div>
+            <button onClick={() => setShowCloseDialog(false)}
+              className="w-full mt-2 px-3 py-1 text-[10px] text-gray-500 hover:text-gray-300">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -724,11 +1044,13 @@ interface AgentNodeData {
   onApprove: () => void;
   onShowLog: () => void;
   onShowMemory: () => void;
+  onShowInbox: () => void;
+  onOpenTerminal: () => void;
   [key: string]: unknown;
 }
 
 function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
-  const { config, state, colorIdx, previewLines, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory } = data;
+  const { config, state, colorIdx, previewLines, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory, onShowInbox, onOpenTerminal } = data;
   const c = COLORS[colorIdx % COLORS.length];
   const status = state?.status || 'idle';
   const statusInfo = STATUS_MAP[status] || STATUS_MAP.idle;
@@ -751,8 +1073,17 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
         </div>
         {/* Status badge */}
         <div className="flex items-center gap-1">
-          <div className="w-2 h-2 rounded-full" style={{ background: statusInfo.color, boxShadow: statusInfo.glow ? `0 0 6px ${statusInfo.color}` : 'none' }} />
-          <span className="text-[7px]" style={{ color: statusInfo.color }}>{statusInfo.label}</span>
+          {state?.runMode === 'manual' ? (
+            <>
+              <div className="w-2 h-2 rounded-full bg-green-400" style={{ boxShadow: '0 0 6px #4ade80' }} />
+              <span className="text-[7px] text-green-400">⌨️ manual</span>
+            </>
+          ) : (
+            <>
+              <div className="w-2 h-2 rounded-full" style={{ background: statusInfo.color, boxShadow: statusInfo.glow ? `0 0 6px ${statusInfo.color}` : 'none' }} />
+              <span className="text-[7px]" style={{ color: statusInfo.color }}>{statusInfo.label}</span>
+            </>
+          )}
         </div>
       </div>
 
@@ -812,6 +1143,10 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
             className="text-[9px] px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30">💬</button>
         )}
         <div className="flex-1" />
+        <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onOpenTerminal(); }}
+          className="text-[9px] text-gray-600 hover:text-green-400 px-1" title="Open terminal (manual mode)">⌨️</button>
+        <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onShowInbox(); }}
+          className="text-[9px] text-gray-600 hover:text-orange-400 px-1" title="Messages (inbox/outbox)">📨</button>
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onShowMemory(); }}
           className="text-[9px] text-gray-600 hover:text-purple-400 px-1" title="Memory">🧠</button>
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onShowLog(); }}
@@ -847,7 +1182,9 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
   const [runPromptTarget, setRunPromptTarget] = useState<{ id: string; label: string } | null>(null);
   const [userInputRequest, setUserInputRequest] = useState<{ agentId: string; fromAgent: string; question: string } | null>(null);
   const [memoryTarget, setMemoryTarget] = useState<{ id: string; label: string } | null>(null);
+  const [inboxTarget, setInboxTarget] = useState<{ id: string; label: string } | null>(null);
   const [showBusPanel, setShowBusPanel] = useState(false);
+  const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; workDir?: string; tmuxSession?: string; sessionName: string }[]>([]);
 
   // Expose focusAgent to parent
   useImperativeHandle(ref, () => ({
@@ -879,6 +1216,28 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
       setUserInputRequest(event);
     }
   });
+
+  // Auto-open floating terminals for manual agents on page load
+  const autoOpenDone = useRef(false);
+  useEffect(() => {
+    if (autoOpenDone.current || agents.length === 0 || Object.keys(states).length === 0) return;
+    autoOpenDone.current = true;
+    const manualAgents = agents.filter(a =>
+      a.type !== 'input' && states[a.id]?.runMode === 'manual' && states[a.id]?.tmuxSession
+    );
+    if (manualAgents.length > 0) {
+      const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
+      setFloatingTerminals(manualAgents.map(a => ({
+        agentId: a.id,
+        label: a.label,
+        icon: a.icon,
+        cliId: a.agentId || 'claude',
+        workDir: a.workDir && a.workDir !== './' && a.workDir !== '.' ? a.workDir : undefined,
+        tmuxSession: states[a.id].tmuxSession,
+        sessionName: `mw-forge-${safeName(projectName)}-${safeName(a.label)}`,
+      })));
+    }
+  }, [agents, states]);
 
   // Rebuild nodes when agents/states/preview change — preserve existing positions + dimensions
   useEffect(() => {
@@ -943,6 +1302,43 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
             onApprove: () => wsApi(workspaceId!, 'approve', { agentId: agent.id }),
             onShowLog: () => setLogTarget({ id: agent.id, label: agent.label }),
             onShowMemory: () => setMemoryTarget({ id: agent.id, label: agent.label }),
+            onShowInbox: () => setInboxTarget({ id: agent.id, label: agent.label }),
+            onOpenTerminal: async () => {
+              if (!workspaceId) return;
+              // Use current state via setState callback to avoid stale closure
+              let alreadyOpen = false;
+              setFloatingTerminals(prev => { alreadyOpen = prev.some(t => t.agentId === agent.id); return prev; });
+              if (alreadyOpen) return;
+
+              const agentState = states[agent.id];
+              const existingTmux = agentState?.tmuxSession;
+
+              // Build fixed session name: mw-forge-{project}-{agentLabel}
+              const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
+              const sessName = `mw-forge-${safeName(projectName)}-${safeName(agent.label)}`;
+              const workDir = agent.workDir && agent.workDir !== './' && agent.workDir !== '.'
+                ? agent.workDir : undefined;
+
+              // If already manual with a tmux session, just reopen (attach)
+              if (agentState?.runMode === 'manual' && existingTmux) {
+                setFloatingTerminals(prev => [...prev, {
+                  agentId: agent.id, label: agent.label, icon: agent.icon,
+                  cliId: agent.agentId || 'claude', workDir,
+                  tmuxSession: existingTmux, sessionName: sessName,
+                }]);
+                return;
+              }
+
+              // Otherwise switch to manual mode + create new session
+              const res = await wsApi(workspaceId, 'open_terminal', { agentId: agent.id });
+              if (res.ok) {
+                setFloatingTerminals(prev => [...prev, {
+                  agentId: agent.id, label: agent.label, icon: agent.icon,
+                  cliId: agent.agentId || 'claude', workDir,
+                  sessionName: sessName,
+                }]);
+              }
+            },
           } satisfies AgentNodeData,
         };
       });
@@ -1212,6 +1608,43 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           onClose={() => setMemoryTarget(null)}
         />
       )}
+
+      {/* Inbox panel */}
+      {inboxTarget && (
+        <InboxPanel
+          agentId={inboxTarget.id}
+          agentLabel={inboxTarget.label}
+          busLog={busLog}
+          agents={agents}
+          onClose={() => setInboxTarget(null)}
+        />
+      )}
+
+      {/* Floating terminals for manual agents */}
+      {floatingTerminals.map(ft => (
+        <FloatingTerminal
+          key={ft.agentId}
+          agentLabel={ft.label}
+          agentIcon={ft.icon}
+          projectPath={projectPath}
+          agentCliId={ft.cliId}
+          workDir={ft.workDir}
+          preferredSessionName={ft.sessionName}
+          existingSession={ft.tmuxSession}
+          onSessionReady={(name) => {
+            if (workspaceId) {
+              wsApi(workspaceId, 'set_tmux_session', { agentId: ft.agentId, sessionName: name });
+            }
+            setFloatingTerminals(prev => prev.map(t => t.agentId === ft.agentId ? { ...t, tmuxSession: name } : t));
+          }}
+          onClose={(killSession) => {
+            setFloatingTerminals(prev => prev.filter(t => t.agentId !== ft.agentId));
+            if (killSession && workspaceId) {
+              wsApi(workspaceId, 'reset', { agentId: ft.agentId });
+            }
+          }}
+        />
+      ))}
 
       {/* User input request from agent (via bus) */}
       {userInputRequest && workspaceId && (

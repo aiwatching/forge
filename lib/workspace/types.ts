@@ -24,8 +24,10 @@ export interface WorkspaceAgentConfig {
   model?: string;                    // e.g. 'claude-sonnet-4-6'
   // Dependencies (replaces inputPaths matching)
   dependsOn: string[];               // upstream agent IDs to wait for
-  // Declared outputs
-  outputs: string[];                 // e.g. ['docs/prd.md']
+  // Working directory (relative to project root, default './' = root)
+  workDir?: string;                  // e.g. 'docs/prd' — where this agent runs
+  // Declared outputs (files or dirs this agent produces)
+  outputs: string[];                 // e.g. ['docs/prd/v1.0.md']
   // Multi-step execution (user-defined, preset templates provide defaults)
   steps: AgentStep[];
   // Approval gate
@@ -58,12 +60,14 @@ export type AgentStatus =
 
 export interface AgentState {
   status: AgentStatus;
-  currentStep?: number;              // index into steps[]
-  history: TaskLogEntry[];           // cross-step accumulated log
+  runMode?: 'auto' | 'manual';      // auto = headless execution, manual = user in terminal
+  currentStep?: number;
+  history: TaskLogEntry[];
   artifacts: Artifact[];
-  logFile?: string;                  // path to JSONL log file
-  lastCheckpoint?: number;           // last successfully completed step index
-  cliSessionId?: string;             // claude session ID for --resume (persisted across re-runs)
+  logFile?: string;
+  lastCheckpoint?: number;
+  cliSessionId?: string;
+  tmuxSession?: string;              // tmux session name for manual terminal reattach
   startedAt?: number;
   completedAt?: number;
   error?: string;
@@ -162,6 +166,6 @@ export type WorkerEvent =
   | { type: 'log'; agentId: string; entry: TaskLogEntry }
   | { type: 'step'; agentId: string; stepIndex: number; stepLabel: string }
   | { type: 'artifact'; agentId: string; artifact: Artifact }
-  | { type: 'agents_changed'; agents: WorkspaceAgentConfig[] }
+  | { type: 'agents_changed'; agents: WorkspaceAgentConfig[]; agentStates?: Record<string, AgentState> }
   | { type: 'done'; agentId: string; summary: string }
   | { type: 'error'; agentId: string; error: string };

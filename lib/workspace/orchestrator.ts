@@ -77,7 +77,49 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
   // ─── Agent Management ──────────────────────────────────
 
+  /** Check if agent outputs or workDir conflict with existing agents */
+  private validateOutputs(config: WorkspaceAgentConfig, excludeId?: string): string | null {
+    if (config.type === 'input') return null;
+
+    const normalize = (p: string) => p.replace(/\/$/, '') || '.';
+    const isRoot = (dir?: string) => !dir || dir === './' || dir === '.' || dir === 'src/' || dir === 'src';
+
+    for (const [id, entry] of this.agents) {
+      if (id === excludeId || entry.config.type === 'input') continue;
+
+      // Check workDir conflict: same working directory
+      const newDir = normalize(config.workDir || './');
+      const existingDir = normalize(entry.config.workDir || './');
+      if (newDir === existingDir) {
+        // Both root → only one allowed
+        if (isRoot(config.workDir) && isRoot(entry.config.workDir)) {
+          return `Work directory conflict: "${config.label}" and "${entry.config.label}" both use project root. Only one agent should use root directory.`;
+        }
+        // Same subdir
+        if (newDir === existingDir && newDir !== '.') {
+          return `Work directory conflict: "${config.label}" and "${entry.config.label}" both use "${newDir}/"`;
+        }
+      }
+
+      // Check output path overlap
+      for (const out of config.outputs) {
+        for (const existing of entry.config.outputs) {
+          if (normalize(out) === normalize(existing)) {
+            return `Output conflict: "${config.label}" and "${entry.config.label}" both output to "${out}"`;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
   addAgent(config: WorkspaceAgentConfig): void {
+    const conflict = this.validateOutputs(config);
+    if (conflict) {
+      throw new Error(conflict);
+      // Still add but warn — don't block
+    }
+
     const state: AgentState = {
       status: 'idle',
       history: [],
@@ -111,6 +153,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
   updateAgentConfig(id: string, config: WorkspaceAgentConfig): void {
     const entry = this.agents.get(id);
     if (!entry) return;
+    const conflict = this.validateOutputs(config, id);
+    if (conflict) throw new Error(conflict);
     if (entry.worker && entry.state.status === 'running') {
       entry.worker.stop();
     }
@@ -183,8 +227,17 @@ export class WorkspaceOrchestrator extends EventEmitter {
     if (!entry) return;
     if (entry.worker) entry.worker.stop();
     entry.worker = null;
+    // Kill orphaned tmux session if manual agent
+    if (entry.state.tmuxSession) {
+      try {
+        const { execSync } = require('node:child_process');
+        execSync(`tmux kill-session -t "${entry.state.tmuxSession}" 2>/dev/null`, { timeout: 3000 });
+        console.log(`[workspace] Killed tmux session ${entry.state.tmuxSession}`);
+      } catch {} // session might already be dead
+    }
     entry.state = { status: 'idle', history: [], artifacts: [] };
     this.emit('event', { type: 'status', agentId, status: 'idle' } satisfies WorkerEvent);
+    this.emitAgentsChanged();
     this.saveNow();
   }
 
@@ -247,6 +300,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       } else {
         entry.state.status = 'idle';
         entry.state.error = undefined;
+        entry.state.runMode = undefined;
       }
     }
 
@@ -364,16 +418,20 @@ export class WorkspaceOrchestrator extends EventEmitter {
       }
     });
 
-    // Inject any pending bus messages addressed to this agent
-    const pendingMsgs = this.bus.getMessagesFor(agentId)
+    // Inject only undelivered (pending) bus messages addressed to this agent
+    const pendingMsgs = this.bus.getPendingMessagesFor(agentId)
       .filter(m => m.from !== agentId); // don't inject own messages
     for (const msg of pendingMsgs) {
+      const fromLabel = this.agents.get(msg.from)?.config.label || msg.from;
       worker.injectMessage({
         type: 'system',
         subtype: 'bus_message',
-        content: `[From ${msg.from}]: ${msg.payload.content || msg.payload.action}`,
+        content: `[From ${fromLabel}]: ${msg.payload.content || msg.payload.action}`,
         timestamp: new Date(msg.timestamp).toISOString(),
       });
+      // Mark as delivered + ACK so sender knows it was received
+      this.bus.markDelivered(msg.id);
+      this.bus.ack(agentId, msg.from, msg.id);
     }
 
     // Start from checkpoint if recovering from failure
@@ -463,6 +521,69 @@ export class WorkspaceOrchestrator extends EventEmitter {
     this.runAgent(agentId).catch(() => {});
   }
 
+  /** Save tmux session name for an agent (for reattach after refresh) */
+  setTmuxSession(agentId: string, sessionName: string): void {
+    const entry = this.agents.get(agentId);
+    if (!entry) return;
+    entry.state.tmuxSession = sessionName;
+    this.saveNow();
+    this.emitAgentsChanged();
+  }
+
+  /** Switch an agent to manual mode (user operates in terminal) */
+  setManualMode(agentId: string): void {
+    const entry = this.agents.get(agentId);
+    if (!entry) return;
+    if (entry.worker) entry.worker.stop();
+    entry.worker = null;
+    entry.state.runMode = 'manual';
+    entry.state.tmuxSession = undefined; // clear stale session — new one will be saved via setTmuxSession
+    entry.state.status = 'running';
+    entry.state.startedAt = Date.now();
+    this.emit('event', { type: 'status', agentId, status: 'running' } satisfies WorkerEvent);
+    this.emitAgentsChanged();
+    this.saveNow();
+    console.log(`[workspace] Agent "${entry.config.label}" switched to manual mode`);
+  }
+
+  /** Complete a manual agent — called by forge-done skill from terminal */
+  completeManualAgent(agentId: string, changedFiles: string[]): void {
+    const entry = this.agents.get(agentId);
+    if (!entry) return;
+
+    entry.state.status = 'done';
+    entry.state.runMode = undefined; // clear manual mode
+    entry.state.completedAt = Date.now();
+    entry.state.artifacts = changedFiles.map(f => ({ type: 'file' as const, path: f }));
+
+    console.log(`[workspace] Manual agent "${entry.config.label}" marked done. ${changedFiles.length} files changed.`);
+
+    this.emit('event', { type: 'status', agentId, status: 'done' } satisfies WorkerEvent);
+    this.emit('event', { type: 'done', agentId, summary: `Manual: ${changedFiles.length} files changed` } satisfies WorkerEvent);
+    this.emitAgentsChanged();
+
+    // Notify ALL agents that depend on this one (not just direct downstream)
+    this.bus.notifyTaskComplete(agentId, changedFiles, `Manual work: ${changedFiles.length} files`);
+
+    // Send individual bus messages to all downstream agents so they know
+    for (const [id, other] of this.agents) {
+      if (id === agentId || other.config.type === 'input') continue;
+      if (other.config.dependsOn.includes(agentId)) {
+        this.bus.send(agentId, id, 'notify', {
+          action: 'update_notify',
+          content: `${entry.config.label} completed manual work: ${changedFiles.length} files changed`,
+          files: changedFiles,
+        });
+      }
+    }
+
+    this.triggerDownstream(agentId);
+    this.notifyDownstreamForRevalidation(agentId, changedFiles);
+    this.emitWorkspaceStatus();
+    this.checkWorkspaceComplete();
+    this.saveNow();
+  }
+
   /** Reject an approval (set agent back to idle) */
   rejectApproval(agentId: string): void {
     this.approvalQueue.delete(agentId);
@@ -532,6 +653,11 @@ export class WorkspaceOrchestrator extends EventEmitter {
     this.bus.loadLog(data.busLog);
     if (data.busOutbox) {
       this.bus.loadOutbox(data.busOutbox);
+    }
+
+    // Initialize liveness for all loaded agents so bus delivery works
+    for (const [agentId] of this.agents) {
+      this.updateAgentLiveness(agentId);
     }
   }
 
@@ -721,9 +847,6 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     console.log(`[bus] ${fromLabel} → ${target.config.label}: ${action} "${content.slice(0, 80)}"`);
 
-    // ACK: tell sender we received it
-    this.bus.ack(targetId, msg.from, msg.id);
-
     const logEntry = {
       type: 'system' as const,
       subtype: 'bus_message',
@@ -731,9 +854,16 @@ export class WorkspaceOrchestrator extends EventEmitter {
       timestamp: new Date(msg.timestamp).toISOString(),
     };
 
+    // Helper: ACK + mark delivered when message is actually consumed
+    const ackAndDeliver = () => {
+      this.bus.markDelivered(msg.id);
+      this.bus.ack(targetId, msg.from, msg.id);
+    };
+
     // ── Input node: request user input ──
     if (target.config.type === 'input') {
       if (action === 'info_request' || action === 'question') {
+        ackAndDeliver();
         this.emit('event', {
           type: 'user_input_request',
           agentId: targetId,
@@ -751,6 +881,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
     if (action === 'fix_request' || action === 'update_request' || action === 'update_notify') {
       // Don't auto-rerun. Set waiting_approval so user decides.
       if (target.state.status !== 'running') {
+        // Don't ACK yet — message stays pending until agent actually runs and processes it
         target.state.status = 'waiting_approval';
         this.approvalQueue.add(targetId);
         this.emit('event', {
@@ -766,6 +897,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
         console.log(`[bus] ${target.config.label} needs approval to re-run (${action} from ${fromLabel})`);
       } else {
         // Running: inject message into current execution for awareness
+        ackAndDeliver();
         if (target.worker) target.worker.injectMessage(logEntry);
       }
       return;
@@ -773,8 +905,10 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     // ── Informational messages → inject if running, store only if not ──
     if (target.worker) {
+      ackAndDeliver();
       target.worker.injectMessage(logEntry);
     }
+    // If not running, message stays pending in history — will be picked up on next runAgent
   }
 
   /** Check if all agents are done and no pending work remains */
@@ -909,7 +1043,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
   /** Emit agents_changed so SSE pushes the updated list to frontend */
   private emitAgentsChanged(): void {
     const agents = Array.from(this.agents.values()).map(e => e.config);
-    this.emit('event', { type: 'agents_changed', agents } satisfies WorkerEvent);
+    const agentStates = this.getAllAgentStates();
+    this.emit('event', { type: 'agents_changed', agents, agentStates } satisfies WorkerEvent);
   }
 
   private emitWorkspaceStatus(): void {

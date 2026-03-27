@@ -29,6 +29,7 @@ Rules:
     backend: 'cli',
     agentId: 'claude',
     dependsOn: [],
+    workDir: './',
     outputs: ['docs/prd/'],
     steps: [
       { id: 'analyze', label: 'Analyze Requirements', prompt: 'Read the new requirements from upstream input. Then list all existing files in docs/prd/ to understand what versions exist. Identify what is NEW vs what was already covered in previous PRD versions.' },
@@ -51,6 +52,7 @@ Rules:
     backend: 'cli',
     agentId: 'claude',
     dependsOn: [],
+    workDir: './',
     outputs: ['src/', 'docs/architecture/'],
     steps: [
       { id: 'design', label: 'Architecture Design', prompt: 'Read all files in docs/prd/ (latest first) and docs/architecture/. Identify what needs to be designed or changed. Create a new architecture doc in docs/architecture/ (e.g., docs/architecture/v1.1-add-history.md) describing the changes. Do NOT overwrite existing architecture files.' },
@@ -80,6 +82,7 @@ Communication rules:
     backend: 'cli',
     agentId: 'claude',
     dependsOn: [],
+    workDir: './',
     outputs: ['tests/', 'docs/qa/'],
     steps: [
       { id: 'plan', label: 'Test Planning', prompt: 'Read the latest PRD in docs/prd/ and existing test plans in docs/qa/. Write a NEW test plan file covering only the NEW/CHANGED features.' },
@@ -108,6 +111,7 @@ Communication rules:
     backend: 'cli',
     agentId: 'claude',
     dependsOn: [],
+    workDir: './',
     outputs: ['docs/review/'],
     steps: [
       { id: 'review-code', label: 'Code Review', prompt: 'Read the latest PRD and architecture docs. Review recent source code changes. Check for: code quality, security issues, performance, naming conventions, and adherence to PRD.' },

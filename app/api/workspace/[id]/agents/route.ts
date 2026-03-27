@@ -18,8 +18,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     switch (action) {
       case 'add': {
         if (!config) return NextResponse.json({ error: 'config required' }, { status: 400 });
-        orch.addAgent(config as WorkspaceAgentConfig);
-        return NextResponse.json({ ok: true });
+        try {
+          orch.addAgent(config as WorkspaceAgentConfig);
+          return NextResponse.json({ ok: true });
+        } catch (err: any) {
+          return NextResponse.json({ error: err.message }, { status: 400 });
+        }
       }
       case 'create_pipeline': {
         const pipeline = createDevPipeline();
@@ -35,8 +39,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
       case 'update': {
         if (!agentId || !config) return NextResponse.json({ error: 'agentId and config required' }, { status: 400 });
-        orch.updateAgentConfig(agentId, config as WorkspaceAgentConfig);
-        return NextResponse.json({ ok: true });
+        try {
+          orch.updateAgentConfig(agentId, config as WorkspaceAgentConfig);
+          return NextResponse.json({ ok: true });
+        } catch (err: any) {
+          return NextResponse.json({ error: err.message }, { status: 400 });
+        }
       }
       case 'run': {
         if (!agentId) return NextResponse.json({ error: 'agentId required' }, { status: 400 });
@@ -81,10 +89,43 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         orch.retryAgent(agentId).catch(err => console.error(`[workspace] retry error:`, err.message));
         return NextResponse.json({ ok: true, status: 'retrying' });
       }
+      case 'set_tmux_session': {
+        if (!agentId) return NextResponse.json({ error: 'agentId required' }, { status: 400 });
+        const { sessionName } = body;
+        orch.setTmuxSession(agentId, sessionName);
+        return NextResponse.json({ ok: true });
+      }
       case 'reset': {
         if (!agentId) return NextResponse.json({ error: 'agentId required' }, { status: 400 });
         orch.resetAgent(agentId);
         return NextResponse.json({ ok: true });
+      }
+      case 'open_terminal': {
+        if (!agentId) return NextResponse.json({ error: 'agentId required' }, { status: 400 });
+        const agentState = orch.getAgentState(agentId);
+        const agentConfig = orch.getSnapshot().agents.find(a => a.id === agentId);
+        if (!agentState || !agentConfig) return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
+
+        // Already manual — skip setManualMode to avoid resetting state
+        if (agentState.runMode === 'manual') {
+          return NextResponse.json({ ok: true, mode: 'manual', alreadyManual: true });
+        }
+
+        // Set manual mode
+        orch.setManualMode(agentId);
+
+        // Install forge skills
+        const { installForgeSkills } = require('@/lib/workspace/skill-installer');
+        const port = parseInt(process.env.PORT || '8403');
+        const result = installForgeSkills(orch.projectPath, id, agentId, port);
+
+        return NextResponse.json({
+          ok: true,
+          mode: 'manual',
+          skillsInstalled: result.installed,
+          agentId,
+          label: agentConfig.label,
+        });
       }
       case 'message': {
         if (!agentId || !content) return NextResponse.json({ error: 'agentId and content required' }, { status: 400 });

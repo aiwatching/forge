@@ -213,6 +213,8 @@ export class AgentBus extends EventEmitter {
     this.outbox.delete(agentId);
 
     for (const msg of queued) {
+      // Remove from seen set so handleBusMessage won't dedup it
+      this.unsee(msg.id);
       this.emit('message', msg);
       this.startAckTimer(msg);
     }
@@ -230,6 +232,24 @@ export class AgentBus extends EventEmitter {
       this.seen = new Set(arr.slice(-500));
     }
     return false;
+  }
+
+  /** Remove a message ID from the seen set (allow re-processing, e.g. after outbox flush) */
+  unsee(messageId: string): void {
+    this.seen.delete(messageId);
+  }
+
+  /** Mark a message as delivered by ID */
+  markDelivered(messageId: string): void {
+    const msg = this.log.find(m => m.id === messageId);
+    if (msg && msg.status === 'pending') {
+      msg.status = 'delivered';
+    }
+  }
+
+  /** Get undelivered messages for an agent (pending status only, excludes ACKs) */
+  getPendingMessagesFor(agentId: string): BusMessage[] {
+    return this.log.filter(m => m.to === agentId && m.status === 'pending' && m.type !== 'ack');
   }
 
   // ─── Query ─────────────────────────────────────────────

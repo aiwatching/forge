@@ -680,38 +680,65 @@ export class WorkspaceOrchestrator extends EventEmitter {
     });
   }
 
-  /** Start all agents in daemon mode */
+  /** Start all agents in daemon mode — orchestrator manages each smith's lifecycle */
   async startDaemon(): Promise<void> {
-    if (this.daemonActive) return; // guard against double-start
+    if (this.daemonActive) return;
     this.daemonActive = true;
     console.log(`[workspace] Starting daemon mode...`);
 
-    // Set all non-input agents to active (smith online)
-    for (const [id, entry] of this.agents) {
-      if (entry.config.type === 'input') continue;
-      entry.state.smithStatus = 'active';
-      entry.state.mode = 'auto';
-      this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'active', mode: 'auto' } satisfies WorkerEvent);
-      this.updateAgentLiveness(id);
-    }
-
-    // Clean up stale running messages from previous crash/restart
+    // Clean up stale state from previous run
     this.bus.markAllRunningAsFailed();
 
-    // Start daemon loop for ALL non-input smiths — they all need to listen for messages
+    // Start each smith one by one, verify each starts correctly
+    let started = 0;
+    let failed = 0;
     for (const [id, entry] of this.agents) {
       if (entry.config.type === 'input') continue;
-      if (entry.worker) continue;
+
+      // Kill any stale worker from previous run
+      if (entry.worker) {
+        entry.worker.stop();
+        entry.worker = null;
+      }
+
+      // Stop any existing message loop
+      this.stopMessageLoop(id);
+
       try {
+        // 1. Start daemon listening loop (creates worker)
         this.enterDaemonListening(id);
+
+        // 2. Verify worker was created
+        if (!entry.worker) {
+          throw new Error('Worker not created');
+        }
+
+        // 3. Set smith status to active
+        entry.state.smithStatus = 'active';
+        entry.state.mode = 'auto';
+        entry.state.error = undefined;
+
+        // 4. Start message consumption loop
         this.startMessageLoop(id);
-        console.log(`[daemon] ${entry.config.label}: started (smith=active)`);
+
+        // 5. Update liveness for bus routing
+        this.updateAgentLiveness(id);
+
+        // 6. Notify frontend
+        this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'active', mode: 'auto' } satisfies WorkerEvent);
+
+        started++;
+        console.log(`[daemon] ✓ ${entry.config.label}: active (task=${entry.state.taskStatus})`);
       } catch (err: any) {
-        console.error(`[daemon] ${entry.config.label}: failed to start — ${err.message}`);
+        entry.state.smithStatus = 'down';
+        entry.state.error = `Failed to start: ${err.message}`;
+        this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'down', mode: 'auto' } satisfies WorkerEvent);
+        failed++;
+        console.error(`[daemon] ✗ ${entry.config.label}: failed — ${err.message}`);
       }
     }
-    console.log(`[workspace] All smiths active and listening`);
 
+    console.log(`[workspace] Daemon started: ${started} smiths active, ${failed} failed`);
     this.emitAgentsChanged();
   }
 
@@ -835,23 +862,36 @@ export class WorkspaceOrchestrator extends EventEmitter {
   }
 
   /** Stop all agents (exit daemon mode) */
+  /** Stop all agents — orchestrator shuts down each smith */
   stopDaemon(): void {
     this.daemonActive = false;
-    this.stopAllMessageLoops();
+    console.log('[workspace] Stopping daemon...');
+
     for (const [id, entry] of this.agents) {
+      if (entry.config.type === 'input') continue;
+
+      // 1. Stop message loop
+      this.stopMessageLoop(id);
+
+      // 2. Stop worker
       if (entry.worker) {
         entry.worker.stop();
         entry.worker = null;
       }
-      if (entry.config.type !== 'input') {
-        entry.state.smithStatus = 'down';
-        this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'down', mode: entry.state.mode } satisfies WorkerEvent);
-      }
+
+      // 3. Set smith down
+      entry.state.smithStatus = 'down';
+      entry.state.error = undefined;
+      this.updateAgentLiveness(id);
+      this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'down', mode: entry.state.mode } satisfies WorkerEvent);
+
+      console.log(`[daemon] ■ ${entry.config.label}: stopped`);
     }
-    // Only mark running messages as failed — pending can be retried on next startDaemon
+
+    // Mark running messages as failed
     this.bus.markAllRunningAsFailed();
     this.emitAgentsChanged();
-    console.log('[workspace] Daemon mode stopped');
+    console.log('[workspace] Daemon stopped');
   }
 
   /** Check if daemon mode is active */

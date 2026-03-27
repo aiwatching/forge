@@ -87,23 +87,31 @@ export class WorkspaceOrchestrator extends EventEmitter {
     if (config.type === 'input') return null;
 
     const normalize = (p: string) => p.replace(/\/$/, '') || '.';
-    const isRoot = (dir?: string) => !dir || dir === './' || dir === '.' || dir === 'src/' || dir === 'src';
+
+    // Validate workDir is within project (no ../ escape)
+    if (config.workDir) {
+      const resolved = require('node:path').resolve(this.projectPath, config.workDir);
+      if (!resolved.startsWith(this.projectPath)) {
+        return `Work directory "${config.workDir}" is outside the project. Must be a subdirectory.`;
+      }
+    }
+
+    // Every non-input smith must have a unique workDir
+    const newDir = normalize(config.workDir || '.');
 
     for (const [id, entry] of this.agents) {
       if (id === excludeId || entry.config.type === 'input') continue;
 
-      // Check workDir conflict: same working directory
-      const newDir = normalize(config.workDir || './');
-      const existingDir = normalize(entry.config.workDir || './');
+      const existingDir = normalize(entry.config.workDir || '.');
+
+      // Same workDir → conflict
       if (newDir === existingDir) {
-        // Both root → only one allowed
-        if (isRoot(config.workDir) && isRoot(entry.config.workDir)) {
-          return `Work directory conflict: "${config.label}" and "${entry.config.label}" both use project root. Only one agent should use root directory.`;
-        }
-        // Same subdir
-        if (newDir === existingDir && newDir !== '.') {
-          return `Work directory conflict: "${config.label}" and "${entry.config.label}" both use "${newDir}/"`;
-        }
+        return `Work directory conflict: "${config.label}" and "${entry.config.label}" both use "${newDir === '.' ? 'project root' : newDir}/". Each smith must have a unique work directory.`;
+      }
+
+      // One is parent of the other → conflict (e.g., "src" and "src/components")
+      if (newDir.startsWith(existingDir + '/') || existingDir.startsWith(newDir + '/')) {
+        return `Work directory conflict: "${config.label}" (${newDir}/) overlaps with "${entry.config.label}" (${existingDir}/). Nested directories not allowed.`;
       }
 
       // Check output path overlap

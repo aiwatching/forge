@@ -946,7 +946,7 @@ function getWsUrl() {
   return `${p}//${h}:${port + 1}`;
 }
 
-function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, onSessionReady, onClose }: {
+function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, onSessionReady, onClose }: {
   agentLabel: string;
   agentIcon: string;
   projectPath: string;
@@ -955,7 +955,8 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, work
   preferredSessionName?: string;
   existingSession?: string;
   resumeMode?: boolean;
-  resumeSessionId?: string;          // specific session ID to resume (--resume <id>)
+  resumeSessionId?: string;
+  profileEnv?: Record<string, string>; // env vars from agent profile
   onSessionReady?: (name: string) => void;
   onClose: (killSession: boolean) => void;
 }) {
@@ -1056,15 +1057,20 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, work
             const rawCli = agentCliId || 'claude';
             const cli = knownClis.includes(rawCli) ? rawCli : 'claude';
 
-            // Launch CLI — send command to tmux shell
             const cdCmd = `mkdir -p "${targetDir}" && cd "${targetDir}"`;
-            const newCmd = `${cdCmd} && ${cli}\n`;
-            const resumeCmd = `${cdCmd} && ${cli} -c\n`;
-
             const resumeFlag = cli === 'claude'
               ? (resumeSessionId ? ` --resume ${resumeSessionId}` : resumeMode ? ' -c' : '')
               : '';
-            const cmd = `${cdCmd} && ${cli}${resumeFlag}\n`;
+            // Extract model from profileEnv if set (use --model flag instead of env var)
+            const modelFlag = profileEnv?.CLAUDE_MODEL ? ` --model ${profileEnv.CLAUDE_MODEL}` : '';
+            // Remove CLAUDE_MODEL from env exports (passed via --model flag instead)
+            const envWithoutModel = profileEnv ? Object.fromEntries(
+              Object.entries(profileEnv).filter(([k]) => k !== 'CLAUDE_MODEL')
+            ) : {};
+            const envExportsClean = Object.keys(envWithoutModel).length > 0
+              ? Object.entries(envWithoutModel).map(([k, v]) => `export ${k}="${v}"`).join(' && ') + ' && '
+              : '';
+            const cmd = `${envExportsClean}${cdCmd} && ${cli}${resumeFlag}${modelFlag}\n`;
             setTimeout(() => {
               if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: cmd }));
             }, 300);
@@ -1404,7 +1410,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
   const [memoryTarget, setMemoryTarget] = useState<{ id: string; label: string } | null>(null);
   const [inboxTarget, setInboxTarget] = useState<{ id: string; label: string } | null>(null);
   const [showBusPanel, setShowBusPanel] = useState(false);
-  const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string }[]>([]);
+  const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string> }[]>([]);
   const [termLaunchDialog, setTermLaunchDialog] = useState<{ agent: AgentConfig; sessName: string; workDir?: string; sessions: string[] } | null>(null);
 
   // Expose focusAgent to parent
@@ -1876,6 +1882,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 agentId: agent.id, label: agent.label, icon: agent.icon,
                 cliId: agent.agentId || 'claude', workDir,
                 sessionName: sessName, resumeMode, resumeSessionId: sessionId,
+                profileEnv: res.profileEnv,
               }]);
             }
           }}
@@ -1896,6 +1903,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           existingSession={ft.tmuxSession}
           resumeMode={ft.resumeMode}
           resumeSessionId={ft.resumeSessionId}
+          profileEnv={ft.profileEnv}
           onSessionReady={(name) => {
             if (workspaceId) {
               wsApi(workspaceId, 'set_tmux_session', { agentId: ft.agentId, sessionName: name });

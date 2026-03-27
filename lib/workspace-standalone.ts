@@ -283,18 +283,16 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
         // Skills call Next.js API (/api/workspace/.../smith), so use FORGE_PORT not daemon PORT
         const result = installForgeSkills(orch.projectPath, id, agentId, FORGE_PORT);
 
-        // Apply agent profile config (env vars, model) to smith's workDir .claude/settings.json
+        // Build profile env vars (injected via export in terminal, not settings.json)
+        let profileEnv: Record<string, string> | undefined;
         if (agentConfig.agentId) {
           try {
-            const { join } = require('node:path');
-            const { loadSettings } = require('../settings');
+            const { loadSettings } = await import('./settings.js');
             const settings = loadSettings();
             const profileCfg = settings.agents?.[agentConfig.agentId];
-            if (profileCfg && (profileCfg.env || profileCfg.model)) {
-              const smithDir = agentConfig.workDir
-                ? join(orch.projectPath, agentConfig.workDir)
-                : orch.projectPath;
-              applyProfileToProject(smithDir, { env: profileCfg.env, model: profileCfg.model });
+            if (profileCfg) {
+              profileEnv = { ...(profileCfg.env || {}) };
+              if (profileCfg.model) profileEnv.CLAUDE_MODEL = profileCfg.model;
             }
           } catch {}
         }
@@ -305,6 +303,7 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
           skillsInstalled: result.installed,
           agentId,
           label: agentConfig.label,
+          profileEnv,
         });
       }
       case 'message': {

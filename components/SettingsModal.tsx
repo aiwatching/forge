@@ -1272,9 +1272,22 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
               {/* Agent detail */}
               {expandedAgent === a.id && (
                 <div className="px-3 py-2 border-t border-[var(--border)] space-y-2 bg-[var(--bg-secondary)]">
-                  <div>
-                    <label className="text-[9px] text-[var(--text-secondary)]">Name</label>
-                    <input value={a.name} onChange={e => updateAgent(a.id, 'name', e.target.value)} className={inputClass} />
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <label className="text-[9px] text-[var(--text-secondary)]">Name</label>
+                      <input value={a.name} onChange={e => updateAgent(a.id, 'name', e.target.value)} className={inputClass} />
+                    </div>
+                    <div className="w-36">
+                      <label className="text-[9px] text-[var(--text-secondary)]">CLI Type</label>
+                      <select value={(settings.agents?.[a.id] as any)?.cliType || (a.id === 'claude' ? 'claude-code' : a.id === 'codex' ? 'codex' : a.id === 'aider' ? 'aider' : 'generic')}
+                        onChange={e => setSettings({ ...settings, agents: { ...settings.agents, [a.id]: { ...(settings.agents?.[a.id] || {}), cliType: e.target.value } } })}
+                        className={inputClass}>
+                        <option value="claude-code">Claude Code</option>
+                        <option value="codex">Codex</option>
+                        <option value="aider">Aider</option>
+                        <option value="generic">Generic</option>
+                      </select>
+                    </div>
                   </div>
                   <div>
                     <label className="text-[9px] text-[var(--text-secondary)]">Binary Path</label>

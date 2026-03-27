@@ -801,6 +801,85 @@ interface AgentEntry {
   backendType?: string;
 }
 
+function ProfileRow({ id, cfg, inputClass, onUpdate, onDelete }: {
+  id: string; cfg: any; inputClass: string;
+  onUpdate: (cfg: any) => void; onDelete: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isApi = cfg.type === 'api';
+  const summary = isApi
+    ? `API: ${cfg.provider || '?'} / ${cfg.model || '?'}`
+    : `CLI: ${cfg.base || '?'} / ${cfg.model || cfg.models?.task || 'default'}`;
+  const envStr = cfg.env ? Object.entries(cfg.env).map(([k, v]) => `${k}=${v}`).join('\n') : '';
+
+  return (
+    <div className="mb-1 rounded" style={{ background: 'var(--bg-tertiary)' }}>
+      <div className="flex items-center gap-2 px-2 py-1.5 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        <span className="text-[8px] text-[var(--text-secondary)]">{expanded ? '▼' : '▶'}</span>
+        <span className="text-[9px] text-[var(--accent)] font-mono w-28 truncate">{id}</span>
+        <span className="text-[9px] text-[var(--text-secondary)]">{summary}</span>
+        <span className="text-[8px] text-[var(--text-secondary)]">{cfg.name || ''}</span>
+        <button onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="text-[9px] text-gray-500 hover:text-red-400 ml-auto">✕</button>
+      </div>
+      {expanded && (
+        <div className="px-3 pb-2 space-y-1.5 border-t border-[var(--border)]">
+          <div className="flex gap-2 mt-1.5">
+            <div className="flex-1">
+              <label className="text-[8px] text-[var(--text-secondary)]">Name</label>
+              <input value={cfg.name || ''} onChange={e => onUpdate({ ...cfg, name: e.target.value })} className={inputClass} />
+            </div>
+            <div className="flex-1">
+              <label className="text-[8px] text-[var(--text-secondary)]">Model</label>
+              <input value={cfg.model || ''} onChange={e => onUpdate({ ...cfg, model: e.target.value })} className={inputClass} />
+            </div>
+          </div>
+          {isApi ? (
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <label className="text-[8px] text-[var(--text-secondary)]">Provider</label>
+                <select value={cfg.provider || 'anthropic'} onChange={e => onUpdate({ ...cfg, provider: e.target.value })} className={inputClass}>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="google">Google</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="grok">Grok</option>
+                </select>
+              </div>
+              <div className="flex-1">
+                <label className="text-[8px] text-[var(--text-secondary)]">API Key (optional)</label>
+                <input type="password" value={cfg.apiKey || ''} onChange={e => onUpdate({ ...cfg, apiKey: e.target.value })} className={inputClass} />
+              </div>
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="text-[8px] text-[var(--text-secondary)]">Base Agent</label>
+                <input value={cfg.base || ''} onChange={e => onUpdate({ ...cfg, base: e.target.value })} className={inputClass} />
+              </div>
+              <div>
+                <label className="text-[8px] text-[var(--text-secondary)]">Environment Variables (KEY=VALUE per line)</label>
+                <textarea
+                  value={envStr}
+                  onChange={e => {
+                    const env: Record<string, string> = {};
+                    for (const line of e.target.value.split('\n')) {
+                      const eq = line.indexOf('=');
+                      if (eq > 0) env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+                    }
+                    onUpdate({ ...cfg, env: Object.keys(env).length > 0 ? env : undefined });
+                  }}
+                  rows={3}
+                  placeholder="ANTHROPIC_AUTH_TOKEN=sk-...\nANTHROPIC_BASE_URL=http://..."
+                  className={inputClass + ' resize-none font-mono'} />
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AddProfileForm({ type, baseAgents, onAdd }: {
   type: 'cli' | 'api';
   baseAgents: AgentEntry[];
@@ -1265,20 +1344,16 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
           <span className="text-[8px] text-[var(--text-secondary)]">CLI profiles with model override or API profiles</span>
         </div>
 
-        {/* Existing profiles */}
+        {/* Existing profiles — click to expand/edit */}
         {Object.entries(settings.agents || {}).filter(([, cfg]: [string, any]) => cfg.base || cfg.type === 'api').map(([id, cfg]: [string, any]) => (
-          <div key={id} className="flex items-center gap-2 px-2 py-1.5 rounded mb-1" style={{ background: 'var(--bg-tertiary)' }}>
-            <span className="text-[9px] text-[var(--accent)] font-mono w-28 truncate">{id}</span>
-            <span className="text-[9px] text-[var(--text-secondary)]">
-              {cfg.type === 'api' ? `API: ${cfg.provider || '?'}/${cfg.model || '?'}` : `CLI: ${cfg.base}/${cfg.model || cfg.models?.task || 'default'}`}
-            </span>
-            <span className="text-[8px] text-[var(--text-secondary)]">{cfg.name || ''}</span>
-            <button onClick={() => {
+          <ProfileRow key={id} id={id} cfg={cfg} inputClass={inputClass}
+            onUpdate={(updated) => setSettings({ ...settings, agents: { ...settings.agents, [id]: updated } })}
+            onDelete={() => {
               const updated = { ...settings.agents };
               delete updated[id];
               setSettings({ ...settings, agents: updated });
-            }} className="text-[9px] text-gray-500 hover:text-red-400 ml-auto">✕</button>
-          </div>
+            }}
+          />
         ))}
 
         <AddProfileForm type="cli" baseAgents={agents.filter(a => !a.isProfile && a.detected)} onAdd={(id, cfg) => {

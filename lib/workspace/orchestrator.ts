@@ -702,9 +702,13 @@ export class WorkspaceOrchestrator extends EventEmitter {
     for (const [id, entry] of this.agents) {
       if (entry.config.type === 'input') continue;
       if (entry.worker) continue;
-      this.enterDaemonListening(id);
-      // Start independent message consumption loop
-      this.startMessageLoop(id);
+      try {
+        this.enterDaemonListening(id);
+        this.startMessageLoop(id);
+        console.log(`[daemon] ${entry.config.label}: started (smith=active)`);
+      } catch (err: any) {
+        console.error(`[daemon] ${entry.config.label}: failed to start — ${err.message}`);
+      }
     }
     console.log(`[workspace] All smiths active and listening`);
 
@@ -835,7 +839,10 @@ export class WorkspaceOrchestrator extends EventEmitter {
     this.daemonActive = false;
     this.stopAllMessageLoops();
     for (const [id, entry] of this.agents) {
-      if (entry.worker) entry.worker.stop();
+      if (entry.worker) {
+        entry.worker.stop();
+        entry.worker = null;
+      }
       if (entry.config.type !== 'input') {
         entry.state.smithStatus = 'down';
         this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'down', mode: entry.state.mode } satisfies WorkerEvent);

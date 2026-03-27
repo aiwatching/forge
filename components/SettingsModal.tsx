@@ -796,6 +796,110 @@ interface AgentEntry {
   skipPermissionsFlag: string;
   requiresTTY: boolean;
   detected: boolean;
+  isProfile?: boolean;
+  base?: string;
+  backendType?: string;
+}
+
+function AddProfileForm({ type, baseAgents, onAdd }: {
+  type: 'cli' | 'api';
+  baseAgents: AgentEntry[];
+  onAdd: (id: string, cfg: any) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [id, setId] = useState('');
+  const [name, setName] = useState('');
+  const [base, setBase] = useState(baseAgents[0]?.id || 'claude');
+  const [model, setModel] = useState('');
+  const [provider, setProvider] = useState('anthropic');
+  const [apiKey, setApiKey] = useState('');
+
+  const inputClass = "w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]";
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)}
+        className="text-[9px] px-2 py-0.5 border border-dashed border-[var(--border)] text-[var(--text-secondary)] rounded hover:text-[var(--text-primary)] mt-1">
+        + {type === 'cli' ? 'CLI Profile' : 'API Profile'}
+      </button>
+    );
+  }
+
+  const handleAdd = () => {
+    if (!id) return;
+    if (type === 'cli') {
+      onAdd(id, { base, name: name || id, model: model || undefined });
+    } else {
+      onAdd(id, { type: 'api', name: name || id, provider, model: model || undefined, apiKey: apiKey || undefined });
+    }
+    setOpen(false);
+    setId(''); setName(''); setModel(''); setApiKey('');
+  };
+
+  return (
+    <div className="mt-2 p-2 rounded border border-[var(--border)] space-y-1.5" style={{ background: 'var(--bg-secondary)' }}>
+      <div className="text-[9px] text-[var(--text-secondary)] font-semibold">New {type === 'cli' ? 'CLI' : 'API'} Profile</div>
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <label className="text-[8px] text-[var(--text-secondary)]">Profile ID</label>
+          <input value={id} onChange={e => setId(e.target.value.replace(/\s+/g, '-').toLowerCase())} placeholder={type === 'cli' ? 'claude-opus' : 'api-sonnet'} className={inputClass} />
+        </div>
+        <div className="flex-1">
+          <label className="text-[8px] text-[var(--text-secondary)]">Display Name</label>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="Claude Opus" className={inputClass} />
+        </div>
+      </div>
+      {type === 'cli' ? (
+        <div className="flex gap-2">
+          <div className="flex-1">
+            <label className="text-[8px] text-[var(--text-secondary)]">Base Agent</label>
+            <select value={base} onChange={e => setBase(e.target.value)}
+              className={inputClass}>
+              {baseAgents.length > 0 ? baseAgents.map(a => (
+                <option key={a.id} value={a.id}>{a.name || a.id}</option>
+              )) : (
+                <>
+                  <option value="claude">claude</option>
+                  <option value="codex">codex</option>
+                  <option value="aider">aider</option>
+                </>
+              )}
+            </select>
+          </div>
+          <div className="flex-1">
+            <label className="text-[8px] text-[var(--text-secondary)]">Model</label>
+            <input value={model} onChange={e => setModel(e.target.value)} placeholder="claude-opus-4-6" className={inputClass} />
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <label className="text-[8px] text-[var(--text-secondary)]">Provider</label>
+              <select value={provider} onChange={e => setProvider(e.target.value)} className={inputClass}>
+                <option value="anthropic">Anthropic</option>
+                <option value="google">Google</option>
+                <option value="openai">OpenAI</option>
+                <option value="grok">Grok</option>
+              </select>
+            </div>
+            <div className="flex-1">
+              <label className="text-[8px] text-[var(--text-secondary)]">Model</label>
+              <input value={model} onChange={e => setModel(e.target.value)} placeholder="claude-sonnet-4-6" className={inputClass} />
+            </div>
+          </div>
+          <div>
+            <label className="text-[8px] text-[var(--text-secondary)]">API Key (optional, uses provider key if empty)</label>
+            <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-..." className={inputClass} />
+          </div>
+        </>
+      )}
+      <div className="flex gap-2">
+        <button onClick={handleAdd} disabled={!id} className="text-[10px] px-3 py-1 bg-[var(--accent)] text-white rounded disabled:opacity-50">Add</button>
+        <button onClick={() => setOpen(false)} className="text-[10px] px-3 py-1 border border-[var(--border)] text-[var(--text-secondary)] rounded">Cancel</button>
+      </div>
+    </div>
+  );
 }
 
 function AgentsSection({ settings, setSettings }: { settings: any; setSettings: (s: any) => void }) {
@@ -1134,6 +1238,65 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
           </div>
         </div>
       )}
+
+      {/* ── Profiles Section ── */}
+      <div className="mt-4 pt-3 border-t border-[var(--border)]">
+        <div className="flex items-center gap-2 mb-2">
+          <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">Agent Profiles</label>
+          <span className="text-[8px] text-[var(--text-secondary)]">CLI profiles with model override or API profiles</span>
+        </div>
+
+        {/* Existing profiles */}
+        {Object.entries(settings.agents || {}).filter(([, cfg]: [string, any]) => cfg.base || cfg.type === 'api').map(([id, cfg]: [string, any]) => (
+          <div key={id} className="flex items-center gap-2 px-2 py-1.5 rounded mb-1" style={{ background: 'var(--bg-tertiary)' }}>
+            <span className="text-[9px] text-[var(--accent)] font-mono w-28 truncate">{id}</span>
+            <span className="text-[9px] text-[var(--text-secondary)]">
+              {cfg.type === 'api' ? `API: ${cfg.provider || '?'}/${cfg.model || '?'}` : `CLI: ${cfg.base}/${cfg.model || cfg.models?.task || 'default'}`}
+            </span>
+            <span className="text-[8px] text-[var(--text-secondary)]">{cfg.name || ''}</span>
+            <button onClick={() => {
+              const updated = { ...settings.agents };
+              delete updated[id];
+              setSettings({ ...settings, agents: updated });
+            }} className="text-[9px] text-gray-500 hover:text-red-400 ml-auto">✕</button>
+          </div>
+        ))}
+
+        <AddProfileForm type="cli" baseAgents={agents.filter(a => !a.isProfile && a.detected)} onAdd={(id, cfg) => {
+          setSettings({ ...settings, agents: { ...settings.agents, [id]: cfg } });
+        }} />
+        <AddProfileForm type="api" baseAgents={[]} onAdd={(id, cfg) => {
+          setSettings({ ...settings, agents: { ...settings.agents, [id]: cfg } });
+        }} />
+      </div>
+
+      {/* ── Providers Section ── */}
+      <div className="mt-4 pt-3 border-t border-[var(--border)]">
+        <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase mb-2 block">API Providers</label>
+        {['anthropic', 'google', 'openai', 'grok'].map(name => {
+          const provider = settings.providers?.[name] || {};
+          const secretKey = `providers.${name}.apiKey`;
+          const hasKey = (provider.apiKey && provider.apiKey !== '••••••••') || settings._secretStatus?.[secretKey];
+          return (
+            <div key={name} className="flex items-center gap-2 px-2 py-1.5 mb-1 rounded" style={{ background: 'var(--bg-tertiary)' }}>
+              <span className="text-[10px] text-[var(--text-primary)] w-20 font-semibold capitalize">{name}</span>
+              <input
+                type="password"
+                placeholder="API Key"
+                value={provider.apiKey || ''}
+                onChange={e => setSettings({
+                  ...settings,
+                  providers: { ...settings.providers, [name]: { ...provider, apiKey: e.target.value } }
+                })}
+                className="flex-1 text-[9px] px-2 py-0.5 bg-[var(--bg-secondary)] border border-[var(--border)] rounded text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]"
+              />
+              <span className={`text-[8px] ${hasKey ? 'text-green-400' : 'text-gray-600'}`}>
+                {hasKey ? '● set' : '○'}
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

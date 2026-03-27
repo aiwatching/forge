@@ -247,6 +247,18 @@ function AgentConfigModal({ initial, mode, existingAgents, onConfirm, onCancel }
   const [role, setRole] = useState(initial.role || '');
   const [backend, setBackend] = useState<'api' | 'cli'>(initial.backend === 'api' ? 'api' : 'cli');
   const [agentId, setAgentId] = useState(initial.agentId || 'claude');
+  const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string; isProfile?: boolean; backendType?: string }[]>([]);
+
+  useEffect(() => {
+    fetch('/api/agents').then(r => r.json()).then(data => {
+      const list = (data.agents || data || []).map((a: any) => ({
+        id: a.id, name: a.name || a.id,
+        isProfile: a.isProfile || a.base,
+        backendType: a.backendType || 'cli',
+      }));
+      setAvailableAgents(list);
+    }).catch(() => {});
+  }, []);
   const [workDirVal, setWorkDirVal] = useState(initial.workDir || './');
   const [outputs, setOutputs] = useState((initial.outputs || []).join(', '));
   const [selectedDeps, setSelectedDeps] = useState<Set<string>>(new Set(initial.dependsOn || []));
@@ -332,17 +344,36 @@ function AgentConfigModal({ initial, mode, existingAgents, onConfirm, onCancel }
             </div>
           </div>
 
-          {/* Agent CLI */}
+          {/* Agent selection — dynamic from /api/agents */}
           {backend === 'cli' && (
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] text-gray-500 uppercase">Agent CLI</label>
-              <div className="flex gap-1">
-                {['claude', 'codex', 'aider'].map(cmd => (
-                  <button key={cmd} onClick={() => setAgentId(cmd)}
-                    className={`text-[9px] px-2 py-1 rounded border ${agentId === cmd ? 'border-[#58a6ff] text-[#58a6ff] bg-[#58a6ff]/10' : 'border-[#30363d] text-gray-400 hover:text-white'}`}>
-                    {cmd}
+              <label className="text-[9px] text-gray-500 uppercase">Agent / Profile</label>
+              <div className="flex gap-1 flex-wrap">
+                {(availableAgents.length > 0
+                  ? availableAgents.filter(a => a.backendType !== 'api')
+                  : [{ id: 'claude', name: 'claude' }, { id: 'codex', name: 'codex' }, { id: 'aider', name: 'aider' }]
+                ).map(a => (
+                  <button key={a.id} onClick={() => setAgentId(a.id)}
+                    className={`text-[9px] px-2 py-1 rounded border ${agentId === a.id ? 'border-[#58a6ff] text-[#58a6ff] bg-[#58a6ff]/10' : 'border-[#30363d] text-gray-400 hover:text-white'}`}>
+                    {a.name}{a.isProfile ? ' ●' : ''}
                   </button>
                 ))}
+              </div>
+            </div>
+          )}
+          {backend === 'api' && (
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] text-gray-500 uppercase">API Profile</label>
+              <div className="flex gap-1 flex-wrap">
+                {availableAgents.filter(a => a.backendType === 'api').map(a => (
+                  <button key={a.id} onClick={() => setAgentId(a.id)}
+                    className={`text-[9px] px-2 py-1 rounded border ${agentId === a.id ? 'border-[#58a6ff] text-[#58a6ff] bg-[#58a6ff]/10' : 'border-[#30363d] text-gray-400 hover:text-white'}`}>
+                    {a.name}
+                  </button>
+                ))}
+                {availableAgents.filter(a => a.backendType === 'api').length === 0 && (
+                  <span className="text-[9px] text-gray-600">No API profiles configured. Add in Settings.</span>
+                )}
               </div>
             </div>
           )}

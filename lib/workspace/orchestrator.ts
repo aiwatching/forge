@@ -939,17 +939,13 @@ export class WorkspaceOrchestrator extends EventEmitter {
     if (!entry || entry.config.type === 'input') return;
     if (entry.worker) return; // already has a worker
 
-    // Reset to idle so runAgentDaemon can pick it up
+    // Back to auto mode, enter listening (don't execute steps — wait for messages)
     entry.state.mode = 'auto';
-    entry.state.smithStatus = 'down';
-    entry.state.taskStatus = 'idle';
     entry.state.error = undefined;
-    this.emit('event', { type: 'task_status', agentId, taskStatus: 'idle' } satisfies WorkerEvent);
-    this.emit('event', { type: 'smith_status', agentId, smithStatus: 'down', mode: 'auto' } satisfies WorkerEvent);
+    this.emit('event', { type: 'smith_status', agentId, smithStatus: 'active', mode: 'auto' } satisfies WorkerEvent);
 
-    this.runAgentDaemon(agentId).catch(err => {
-      console.error(`[workspace] Failed to restart daemon for ${entry.config.label}:`, err.message);
-    });
+    this.enterDaemonListening(agentId);
+    this.startMessageLoop(agentId);
   }
 
   /** Complete a manual agent — called by forge-done skill from terminal */

@@ -4,40 +4,26 @@ description: Automatically sync your work progress with Forge Workspace when you
 
 # Forge Workspace Sync
 
-When you detect that the user has completed a meaningful unit of work (implemented a feature, fixed a bug, finished a task), automatically sync with Forge Workspace.
+When you detect that the user has completed a meaningful unit of work, automatically sync with Forge Workspace.
 
 ## When to trigger
-- User says they're done with a task ("done", "完成了", "finished", "that should work")
+- User says they're done ("done", "完成了", "finished", "that should work")
 - You've made multiple file changes and the conversation reaches a natural stopping point
 - User asks to move on to the next task or agent
 
-## Setup (if env vars not set)
-```bash
-FORGE_PORT=${FORGE_PORT:-8403}
-if [ -z "$FORGE_WORKSPACE_ID" ]; then
-  FORGE_WORKSPACE_ID=$(curl -s http://localhost:$FORGE_PORT/api/workspace?projectPath=$(pwd) | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
-fi
-```
-
 ## How to sync
 
-First, collect your recent output that contains any [SEND:...] markers. Then run:
-
 ```bash
-curl -s -X POST http://localhost:${FORGE_PORT:-8403}/api/workspace/$FORGE_WORKSPACE_ID/smith \
-  -H "Content-Type: application/json" \
-  -d '{"action":"done","agentId":"'${FORGE_AGENT_ID:-unknown}'","output":"PASTE_YOUR_RECENT_OUTPUT_WITH_SEND_MARKERS_HERE"}'
+_FP=${FORGE_PORT:-8403}; _FW=${FORGE_WORKSPACE_ID:-$(curl -s "http://localhost:$_FP/api/workspace?projectPath=$(pwd)" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)}; _FA=${FORGE_AGENT_ID:-unknown}; curl -s -X POST "http://localhost:$_FP/api/workspace/$_FW/smith" -H "Content-Type: application/json" -d '{"action":"done","agentId":"'"$_FA"'","output":"PASTE_YOUR_RECENT_OUTPUT_WITH_SEND_MARKERS_HERE"}'
 ```
 
-IMPORTANT: Include any `[SEND:AgentLabel:action] message` markers you wrote in the `output` field. The server will parse them and deliver the messages to other agents.
-
-For example, if you wrote `[SEND:QA:info_request] Feature X is ready for testing`, include that text in the output field so QA receives the message.
+Include any `[SEND:AgentLabel:action] message` markers in the `output` field so messages get delivered.
 
 This will:
 1. Detect git changes since last sync
 2. Record what you did in agent memory
-3. Parse [SEND:...] markers and deliver messages to other agents
-4. Mark this agent as "done" in the workspace
-5. Trigger downstream agents (QA, Reviewer, etc.)
+3. Parse [SEND:...] markers and deliver messages
+4. Mark this agent as "done"
+5. Notify downstream agents
 
-After running, tell the user what files were changed, how many messages were sent, and that downstream agents have been notified.
+Tell the user what files changed, messages sent, and that downstream agents were notified.

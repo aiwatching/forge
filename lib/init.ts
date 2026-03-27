@@ -89,6 +89,13 @@ export function ensureInitialized() {
   // Auto-detect claude path if not configured
   autoDetectAgents();
 
+  // Install/update forge skills to ~/.claude/skills/ on every startup
+  try {
+    const { installForgeSkills } = require('./workspace/skill-installer');
+    installForgeSkills('', '', '', Number(process.env.PORT) || 8403);
+    console.log('[init] Forge skills installed/updated');
+  } catch {}
+
   // Sync help docs + CLAUDE.md to data dir on startup
   try {
     const { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');

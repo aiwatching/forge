@@ -39,9 +39,20 @@ export function installForgeSkills(
 
   for (const file of files) {
     const content = readFileSync(join(sourceDir, file), 'utf-8');
-    const targetFile = join(skillsDir, file);
-    writeFileSync(targetFile, content, 'utf-8');
-    installed.push(file);
+    // Claude Code expects skills as directories with SKILL.md inside
+    const skillName = file.replace('.md', '');
+    const skillDir = join(skillsDir, skillName);
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), content, 'utf-8');
+    installed.push(skillName);
+  }
+
+  // Clean up old flat .md files (from previous install format)
+  for (const file of files) {
+    const flatFile = join(skillsDir, file);
+    if (existsSync(flatFile)) {
+      try { require('node:fs').unlinkSync(flatFile); } catch {}
+    }
   }
 
   // Ensure settings allow forge curl commands (check both global and project)
@@ -156,7 +167,7 @@ export function applyProfileToProject(
  */
 export function hasForgeSkills(projectPath: string): boolean {
   const globalDir = join(homedir(), '.claude', 'skills');
-  return existsSync(join(globalDir, 'forge-workspace-sync.md'));
+  return existsSync(join(globalDir, 'forge-workspace-sync', 'SKILL.md'));
 }
 
 /**
@@ -166,11 +177,12 @@ export function removeForgeSkills(projectPath: string): void {
   const skillsDir = join(homedir(), '.claude', 'skills');
   if (!existsSync(skillsDir)) return;
 
-  const forgeFiles = readdirSync(skillsDir).filter(f => f.startsWith('forge-'));
-  for (const file of forgeFiles) {
+  const forgeSkills = readdirSync(skillsDir).filter(f => f.startsWith('forge-'));
+  for (const name of forgeSkills) {
+    const p = join(skillsDir, name);
     try {
-      const { unlinkSync } = require('node:fs');
-      unlinkSync(join(skillsDir, file));
+      const { rmSync } = require('node:fs');
+      rmSync(p, { recursive: true, force: true });
     } catch {}
   }
 }

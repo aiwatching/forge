@@ -23,6 +23,7 @@ export interface AgentEntry {
   apiKey?: string;               // per-profile API key (encrypted)
   env?: Record<string, string>;  // environment variables injected when spawning CLI
   cliType?: 'claude-code' | 'codex' | 'aider' | 'generic'; // CLI tool type — determines session support, resume flags, etc.
+  profile?: string;              // linked profile ID — overrides model, env, etc. when launching
 }
 
 export interface ProviderEntry {

@@ -1378,13 +1378,20 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
                     <button onClick={() => removeAgent(a.id)} className="text-[9px] text-red-400 hover:underline">Remove Agent</button>
                   )}
 
-                  {/* Show linked profiles count */}
-                  {(() => {
-                    const count = Object.values(settings.agents || {}).filter((cfg: any) => cfg.base === a.id).length;
-                    return count > 0 ? (
-                      <div className="text-[8px] text-[var(--accent)] mt-1">{count} profile(s) use this agent — see Profiles section below</div>
-                    ) : null;
-                  })()}
+                  {/* Profile selector */}
+                  <div>
+                    <label className="text-[9px] text-[var(--text-secondary)]">Profile <span className="text-[8px]">— select to override model, env vars, API endpoint</span></label>
+                    <select
+                      value={(settings.agents?.[a.id] as any)?.profile || ''}
+                      onChange={e => setSettings({ ...settings, agents: { ...settings.agents, [a.id]: { ...(settings.agents?.[a.id] || {}), profile: e.target.value || undefined } } })}
+                      className={inputClass}
+                    >
+                      <option value="">Default (no profile)</option>
+                      {Object.entries(settings.agents || {}).filter(([, cfg]: [string, any]) => cfg.base || cfg.type === 'profile').map(([pid, cfg]: [string, any]) => (
+                        <option key={pid} value={pid}>{cfg.name || pid}{cfg.model ? ` (${cfg.model})` : ''}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               )}
             </div>

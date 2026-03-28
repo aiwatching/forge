@@ -124,6 +124,7 @@ export async function syncSkills(): Promise<{ synced: number; error?: string }> 
             return {
               ...s,
               version: info.version || s.version,
+              tags: (info.tags?.length ? info.tags : null) || s.tags,
               score: info.score ?? s.score ?? 0,
               rating: info.rating ?? s.rating ?? 0,
               description: info.description || s.description,

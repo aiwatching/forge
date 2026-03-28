@@ -1378,23 +1378,13 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
                     <button onClick={() => removeAgent(a.id)} className="text-[9px] text-red-400 hover:underline">Remove Agent</button>
                   )}
 
-                  {/* ── Profiles linked to this agent ── */}
-                  <div className="mt-3 pt-2 border-t border-[var(--border)]">
-                    <div className="text-[9px] text-[var(--text-secondary)] font-semibold mb-1">Profiles (model/env overrides)</div>
-                    {Object.entries(settings.agents || {}).filter(([, cfg]: [string, any]) => cfg.base === a.id).map(([pid, cfg]: [string, any]) => (
-                      <ProfileRow key={pid} id={pid} cfg={cfg} inputClass={inputClass}
-                        onUpdate={(updated) => setSettings({ ...settings, agents: { ...settings.agents, [pid]: updated } })}
-                        onDelete={() => {
-                          const updated = { ...settings.agents };
-                          delete updated[pid];
-                          setSettings({ ...settings, agents: updated });
-                        }}
-                      />
-                    ))}
-                    <AddProfileForm type="cli" baseAgents={[a]} onAdd={(pid, cfg) => {
-                      setSettings({ ...settings, agents: { ...settings.agents, [pid]: { ...cfg, base: a.id } } });
-                    }} />
-                  </div>
+                  {/* Show linked profiles count */}
+                  {(() => {
+                    const count = Object.values(settings.agents || {}).filter((cfg: any) => cfg.base === a.id).length;
+                    return count > 0 ? (
+                      <div className="text-[8px] text-[var(--accent)] mt-1">{count} profile(s) use this agent — see Profiles section below</div>
+                    ) : null;
+                  })()}
                 </div>
               )}
             </div>
@@ -1431,13 +1421,15 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
         </div>
       )}
 
-      {/* ── API Profiles Section ── */}
+      {/* ── Profiles Section ── */}
       <div className="mt-4 pt-3 border-t border-[var(--border)]">
         <div className="flex items-center gap-2 mb-2">
-          <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">API Profiles</label>
-          <span className="text-[8px] text-[var(--text-secondary)]">Direct API access (no CLI needed)</span>
+          <label className="text-xs text-[var(--text-secondary)] font-semibold uppercase">Profiles</label>
+          <span className="text-[8px] text-[var(--text-secondary)]">Shared across workspace and terminal — override model, env vars, API endpoint</span>
         </div>
-        {Object.entries(settings.agents || {}).filter(([, cfg]: [string, any]) => cfg.type === 'api').map(([id, cfg]: [string, any]) => (
+
+        {/* All profiles (CLI + API) */}
+        {Object.entries(settings.agents || {}).filter(([, cfg]: [string, any]) => cfg.base || cfg.type === 'api').map(([id, cfg]: [string, any]) => (
           <ProfileRow key={id} id={id} cfg={cfg} inputClass={inputClass}
             onUpdate={(updated) => setSettings({ ...settings, agents: { ...settings.agents, [id]: updated } })}
             onDelete={() => {
@@ -1447,9 +1439,15 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
             }}
           />
         ))}
-        <AddProfileForm type="api" baseAgents={[]} onAdd={(id, cfg) => {
-          setSettings({ ...settings, agents: { ...settings.agents, [id]: cfg } });
-        }} />
+
+        <div className="flex gap-2 mt-1">
+          <AddProfileForm type="cli" baseAgents={agents.filter(a => !a.isProfile && a.detected)} onAdd={(id, cfg) => {
+            setSettings({ ...settings, agents: { ...settings.agents, [id]: cfg } });
+          }} />
+          <AddProfileForm type="api" baseAgents={[]} onAdd={(id, cfg) => {
+            setSettings({ ...settings, agents: { ...settings.agents, [id]: cfg } });
+          }} />
+        </div>
       </div>
 
       {/* ── Providers Section ── */}

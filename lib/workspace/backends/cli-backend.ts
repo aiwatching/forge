@@ -8,7 +8,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { getAgent } from '@/lib/agents';
+import { getAgent } from '../../agents';
 import type { AgentBackend, AgentStep, StepExecutionParams, StepExecutionResult, Artifact } from '../types';
 import type { TaskLogEntry } from '../../../src/types';
 

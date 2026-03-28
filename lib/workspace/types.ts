@@ -45,10 +45,14 @@ export interface WatchTarget {
   cmd?: string;            // shell command (type='command' only)
 }
 
+export type WatchAction = 'log' | 'analyze' | 'approve';
+
 export interface WatchConfig {
   enabled: boolean;
   interval: number;        // check interval in seconds (default 60)
   targets: WatchTarget[];
+  action: WatchAction;     // log=report only, analyze=auto-execute, approve=pending user approval
+  prompt?: string;         // custom prompt for analyze action (default: "Analyze the following changes...")
 }
 
 export type AgentBackendType = 'api' | 'cli';

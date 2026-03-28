@@ -22,7 +22,7 @@ interface AgentConfig {
   outputs: string[];
   steps: { id: string; label: string; prompt: string }[];
   requiresApproval?: boolean;
-  watch?: { enabled: boolean; interval: number; targets: any[] };
+  watch?: { enabled: boolean; interval: number; targets: any[]; action?: 'log' | 'analyze' | 'approve'; prompt?: string };
 }
 
 interface AgentState {
@@ -278,6 +278,13 @@ function AgentConfigModal({ initial, mode, existingAgents, onConfirm, onCancel }
   const [stepsText, setStepsText] = useState(
     (initial.steps || []).map(s => `${s.label}: ${s.prompt}`).join('\n') || ''
   );
+  const [watchEnabled, setWatchEnabled] = useState(initial.watch?.enabled || false);
+  const [watchInterval, setWatchInterval] = useState(String(initial.watch?.interval || 60));
+  const [watchAction, setWatchAction] = useState<'log' | 'analyze' | 'approve'>(initial.watch?.action || 'log');
+  const [watchPrompt, setWatchPrompt] = useState(initial.watch?.prompt || '');
+  const [watchTargets, setWatchTargets] = useState(
+    (initial.watch?.targets || []).map((t: any) => `${t.type}:${t.path || t.cmd || ''}`).join('\n') || ''
+  );
 
   const applyPreset = (p: Omit<AgentConfig, 'id'>) => {
     setLabel(p.label); setIcon(p.icon); setRole(p.role);
@@ -441,18 +448,75 @@ function AgentConfigModal({ initial, mode, existingAgents, onConfirm, onCancel }
               placeholder="Analyze: Read docs and identify requirements&#10;Write: Write PRD to docs/prd.md&#10;Review: Review and improve"
               className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff] resize-none font-mono" />
           </div>
+
+          {/* Watch */}
+          <div className="flex flex-col gap-1.5 border-t border-[#21262d] pt-2 mt-1">
+            <div className="flex items-center gap-2">
+              <label className="text-[9px] text-gray-500 uppercase">Watch</label>
+              <input type="checkbox" checked={watchEnabled} onChange={e => setWatchEnabled(e.target.checked)}
+                className="accent-[#58a6ff]" />
+              <span className="text-[8px] text-gray-600">Autonomous periodic monitoring</span>
+            </div>
+            {watchEnabled && (<>
+              <div className="flex gap-2">
+                <div className="flex flex-col gap-0.5 flex-1">
+                  <label className="text-[8px] text-gray-600">Interval (seconds)</label>
+                  <input value={watchInterval} onChange={e => setWatchInterval(e.target.value)} type="number" min="10"
+                    className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff] w-20" />
+                </div>
+                <div className="flex flex-col gap-0.5 flex-1">
+                  <label className="text-[8px] text-gray-600">On Change</label>
+                  <select value={watchAction} onChange={e => setWatchAction(e.target.value as any)}
+                    className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff]">
+                    <option value="log">Log only</option>
+                    <option value="analyze">Auto analyze</option>
+                    <option value="approve">Require approval</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[8px] text-gray-600">Targets (one per line — type:path, e.g. directory:src/, git, command:npm test)</label>
+                <textarea value={watchTargets} onChange={e => setWatchTargets(e.target.value)} rows={2}
+                  placeholder="directory:src/&#10;git&#10;command:npm test"
+                  className="text-[10px] bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff] resize-none font-mono" />
+              </div>
+              {watchAction === 'analyze' && (
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[8px] text-gray-600">Analysis prompt (optional)</label>
+                  <input value={watchPrompt} onChange={e => setWatchPrompt(e.target.value)}
+                    placeholder="Analyze these changes and check for issues..."
+                    className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff]" />
+                </div>
+              )}
+            </>)}
+          </div>
         </div>
 
         <div className="flex justify-end gap-2 mt-4">
           <button onClick={onCancel} className="text-xs px-3 py-1.5 rounded border border-[#30363d] text-gray-400 hover:text-white">Cancel</button>
           <button disabled={!label.trim()} onClick={() => {
+            const parseWatchTargets = () => watchTargets.split('\n').filter(Boolean).map(line => {
+              const [type, ...rest] = line.split(':');
+              const value = rest.join(':').trim();
+              const t = type.trim() as any;
+              if (t === 'command') return { type: t, cmd: value };
+              if (t === 'git') return { type: t };
+              return { type: t || 'directory', path: value || '.' };
+            });
             onConfirm({
               label: label.trim(), icon: icon.trim() || '🤖', role: role.trim(),
               backend, agentId, dependsOn: Array.from(selectedDeps),
               workDir: workDirVal.trim() || label.trim().toLowerCase().replace(/\s+/g, '-') + '/',
               outputs: outputs.split(',').map(s => s.trim()).filter(Boolean),
               steps: parseSteps(),
-            });
+              watch: watchEnabled ? {
+                enabled: true,
+                interval: Math.max(10, parseInt(watchInterval) || 60),
+                targets: parseWatchTargets(),
+                action: watchAction,
+                prompt: watchPrompt || undefined,
+              } : undefined,
+            } as any);
           }} className="text-xs px-3 py-1.5 rounded bg-[#238636] text-white hover:bg-[#2ea043] disabled:opacity-40">
             {mode === 'add' ? 'Add' : 'Save'}
           </button>

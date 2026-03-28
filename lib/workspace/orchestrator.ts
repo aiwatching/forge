@@ -69,8 +69,11 @@ export class WorkspaceOrchestrator extends EventEmitter {
     this.projectName = projectName;
     this.bus = new AgentBus();
     this.watchManager = new WatchManager(workspaceId, projectPath, () => this.agents as any);
-    // Forward watch alerts as orchestrator events
-    this.watchManager.on('watch_alert', (event) => this.emit('event', event));
+    // Handle watch alerts based on configured action
+    this.watchManager.on('watch_alert', (event) => {
+      this.emit('event', event); // always notify frontend
+      this.handleWatchAlert(event.agentId, event.summary);
+    });
 
     // Forward bus messages as orchestrator events (after dedup, skip ACKs)
     this.bus.on('message', (msg: BusMessage) => {
@@ -947,6 +950,46 @@ export class WorkspaceOrchestrator extends EventEmitter {
     this.emitAgentsChanged();
     this.watchManager.stop();
     console.log('[workspace] Daemon stopped');
+  }
+
+  /** Handle watch alert based on agent's configured action */
+  private handleWatchAlert(agentId: string, summary: string): void {
+    const entry = this.agents.get(agentId);
+    if (!entry) return;
+    const action = entry.config.watch?.action || 'log';
+
+    if (action === 'log') {
+      // Already logged by watch-manager, nothing more to do
+      return;
+    }
+
+    if (action === 'analyze') {
+      // Auto-wake agent to analyze changes (skip if busy/manual)
+      if (entry.state.mode === 'manual' || entry.state.taskStatus === 'running') return;
+      if (!entry.worker?.isListening()) return;
+
+      const prompt = entry.config.watch?.prompt || 'Analyze the following changes and produce a report:';
+      const logEntry = {
+        type: 'system' as const,
+        subtype: 'watch_trigger',
+        content: `[Watch] ${prompt}\n\n${summary}`,
+        timestamp: new Date().toISOString(),
+      };
+      entry.worker.wake({ type: 'bus_message', messages: [logEntry] });
+      console.log(`[watch] ${entry.config.label}: auto-analyzing detected changes`);
+      return;
+    }
+
+    if (action === 'approve') {
+      // Create pending approval — user must click to trigger analysis
+      this.bus.send('_watch', agentId, 'notify', {
+        action: 'watch_changes',
+        content: `Watch detected changes (awaiting approval):\n${summary}`,
+      });
+      this.approvalQueue.add(agentId);
+      this.emit('event', { type: 'approval_required', agentId, upstreamId: '_watch' } satisfies OrchestratorEvent);
+      console.log(`[watch] ${entry.config.label}: changes detected, awaiting approval`);
+    }
   }
 
   /** Check if daemon mode is active */

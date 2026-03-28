@@ -22,7 +22,7 @@ curl -s "http://localhost:8403/api/workspace?projectPath=$(pwd)" | python3 -c "i
 
 Step 2 — Sync (replace WORKSPACE_ID):
 ```bash
-curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"done","agentId":"unknown","output":"PASTE_YOUR_RECENT_OUTPUT_HERE"}'
+curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"done","agentId":"'"$FORGE_AGENT_ID"'","output":"PASTE_YOUR_RECENT_OUTPUT_HERE"}'
 ```
 
 Include any `[SEND:AgentLabel:action] message` markers in the `output` field.

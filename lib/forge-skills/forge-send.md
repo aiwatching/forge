@@ -23,13 +23,15 @@ curl -s "http://localhost:8403/api/workspace?projectPath=$(pwd)" | python3 -c "i
 
 Step 2 — Send message (replace WORKSPACE_ID with result from step 1):
 ```bash
-curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"send","agentId":"unknown","to":"TARGET_LABEL","msgAction":"ACTION","content":"YOUR MESSAGE"}'
+curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"send","agentId":"'"$FORGE_AGENT_ID"'","to":"TARGET_LABEL","msgAction":"ACTION","content":"YOUR MESSAGE"}'
 ```
 
 Replace:
 - `WORKSPACE_ID` = the ID from step 1
 - `TARGET_LABEL` = target agent label (e.g., "QA", "PM", "Engineer", "Reviewer")
-- `ACTION` = one of: `fix_request`, `update_notify`, `question`, `info_request`
+- `ACTION` = one of: `fix_request`, `update_notify`, `question`, `info_request`, `review`
 - `YOUR MESSAGE` = your actual message
+
+Note: `$FORGE_AGENT_ID` is automatically set by Forge when launching the terminal. Do NOT replace it manually.
 
 Tell the user the result.

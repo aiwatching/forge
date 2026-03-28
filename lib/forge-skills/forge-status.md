@@ -21,7 +21,7 @@ curl -s "http://localhost:8403/api/workspace?projectPath=$(pwd)" | python3 -c "i
 
 Step 2 — Check status (replace WORKSPACE_ID):
 ```bash
-curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"status","agentId":"unknown"}'
+curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"status","agentId":"'"$FORGE_AGENT_ID"'"}'
 ```
 
 Present the results as a clear status overview:

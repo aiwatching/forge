@@ -21,17 +21,17 @@ curl -s "http://localhost:8403/api/workspace?projectPath=$(pwd)" | python3 -c "i
 
 Step 2 — Check inbox (replace WORKSPACE_ID):
 ```bash
-curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"inbox","agentId":"unknown"}'
+curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"inbox","agentId":"'"$FORGE_AGENT_ID"'"}'
 ```
 
 ## Mark message as done
 ```bash
-curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"message_done","agentId":"unknown","messageId":"MESSAGE_ID"}'
+curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"message_done","agentId":"'"$FORGE_AGENT_ID"'","messageId":"MESSAGE_ID"}'
 ```
 
 ## Mark message as failed
 ```bash
-curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"message_failed","agentId":"unknown","messageId":"MESSAGE_ID"}'
+curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"message_failed","agentId":"'"$FORGE_AGENT_ID"'","messageId":"MESSAGE_ID"}'
 ```
 
 After handling a message, always mark it as done or failed.

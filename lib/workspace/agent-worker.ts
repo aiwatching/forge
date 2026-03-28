@@ -68,6 +68,7 @@ export class AgentWorker extends EventEmitter {
 
   // Daemon mode
   private wakeResolve: ((reason: DaemonWakeReason) => void) | null = null;
+  private pendingWake: DaemonWakeReason | null = null;
   private daemonRetryCount = 0;
   private currentMessageId: string | null = null; // ID of the bus message being processed
   private onMessageDone?: (messageId: string) => void;
@@ -360,6 +361,9 @@ export class AgentWorker extends EventEmitter {
     if (this.wakeResolve) {
       this.wakeResolve(reason);
       this.wakeResolve = null;
+    } else {
+      // Worker hasn't entered waitForWake yet — buffer the wake
+      this.pendingWake = reason;
     }
   }
 
@@ -390,6 +394,12 @@ export class AgentWorker extends EventEmitter {
   }
 
   private waitForWake(): Promise<DaemonWakeReason> {
+    // Check if a wake was buffered while we were busy
+    if (this.pendingWake) {
+      const reason = this.pendingWake;
+      this.pendingWake = null;
+      return Promise.resolve(reason);
+    }
     return new Promise<DaemonWakeReason>((resolve) => {
       this.wakeResolve = resolve;
       // Also resolve on abort

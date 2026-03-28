@@ -361,9 +361,9 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
         const approveMsg = orch.getBus().getLog().find(m => m.id === messageId);
         if (!approveMsg) return jsonError(res, 'Message not found');
         if (approveMsg.status !== 'pending_approval') return jsonError(res, 'Message is not pending approval');
-        // Update content if user edited it
         if (body.content) approveMsg.payload.content = body.content;
         approveMsg.status = 'pending';
+        orch.emit('event', { type: 'bus_message_status', messageId, status: 'pending' });
         return json(res, { ok: true });
       }
       case 'reject_message': {
@@ -371,7 +371,8 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
         if (!messageId) return jsonError(res, 'messageId required');
         const rejectMsg = orch.getBus().getLog().find(m => m.id === messageId);
         if (!rejectMsg) return jsonError(res, 'Message not found');
-        rejectMsg.status = 'done';
+        rejectMsg.status = 'failed';
+        orch.emit('event', { type: 'bus_message_status', messageId, status: 'failed' });
         return json(res, { ok: true });
       }
       case 'delete_message': {

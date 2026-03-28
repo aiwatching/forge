@@ -61,6 +61,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
   private approvalQueue = new Set<string>();
   private daemonActive = false;
   private createdAt = Date.now();
+  private healthCheckTimer: NodeJS.Timeout | null = null;
 
   constructor(workspaceId: string, projectPath: string, projectName: string) {
     super();
@@ -816,6 +817,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
     // Start watch loops for agents with watch config
     this.watchManager.start();
 
+    // Start health check — monitor all agents every 10s, auto-heal
+    this.startHealthCheck();
+
     console.log(`[workspace] Daemon started: ${started} smiths active, ${failed} failed`);
     this.emitAgentsChanged();
   }
@@ -960,7 +964,66 @@ export class WorkspaceOrchestrator extends EventEmitter {
     this.bus.markAllRunningAsFailed();
     this.emitAgentsChanged();
     this.watchManager.stop();
+    this.stopHealthCheck();
     console.log('[workspace] Daemon stopped');
+  }
+
+  // ─── Health Check — auto-heal agents ─────────────────
+
+  private startHealthCheck(): void {
+    if (this.healthCheckTimer) return;
+    this.healthCheckTimer = setInterval(() => this.runHealthCheck(), 10_000);
+    this.healthCheckTimer.unref();
+  }
+
+  private stopHealthCheck(): void {
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer);
+      this.healthCheckTimer = null;
+    }
+  }
+
+  private runHealthCheck(): void {
+    if (!this.daemonActive) return;
+
+    for (const [id, entry] of this.agents) {
+      if (entry.config.type === 'input') continue;
+      if (entry.state.mode === 'manual') continue;
+
+      // Check 1: Worker should exist for all active agents
+      if (!entry.worker) {
+        console.log(`[health] ${entry.config.label}: no worker — recreating`);
+        this.enterDaemonListening(id);
+        entry.state.smithStatus = 'active';
+        this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'active', mode: entry.state.mode } as any);
+        continue;
+      }
+
+      // Check 2: SmithStatus should be active
+      if (entry.state.smithStatus !== 'active') {
+        console.log(`[health] ${entry.config.label}: smith=${entry.state.smithStatus} — setting active`);
+        entry.state.smithStatus = 'active';
+        this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'active', mode: entry.state.mode } as any);
+      }
+
+      // Check 3: Message loop should be running
+      if (!this.messageLoopTimers.has(id)) {
+        console.log(`[health] ${entry.config.label}: message loop stopped — restarting`);
+        this.startMessageLoop(id);
+      }
+
+      // Check 4: Pending messages but agent idle — try wake
+      if (entry.state.taskStatus !== 'running' && entry.state.mode === 'auto') {
+        const pending = this.bus.getPendingMessagesFor(id).filter(m => m.from !== id && m.type !== 'ack');
+        if (pending.length > 0 && entry.worker.isListening()) {
+          // Message loop should handle this, but if it didn't, log it
+          const age = Date.now() - pending[0].timestamp;
+          if (age > 30_000) { // stuck for 30+ seconds
+            console.log(`[health] ${entry.config.label}: ${pending.length} pending msg(s) stuck for ${Math.round(age/1000)}s — message loop should pick up`);
+          }
+        }
+      }
+    }
   }
 
   /** Handle watch alert based on agent's configured action */

@@ -347,12 +347,16 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
         if (!orch.isDaemonActive()) return jsonError(res, 'Start daemon first before retrying messages');
         const msg = orch.getBus().retryMessage(messageId);
         if (!msg) return jsonError(res, 'Message not found or already pending');
+        orch.emit('event', { type: 'bus_message_status', messageId: msg.id, status: 'pending' });
         return json(res, { ok: true, messageId: msg.id, action: msg.payload.action });
       }
       case 'abort_message': {
         const { messageId } = body;
         if (!messageId) return jsonError(res, 'messageId required');
         const abortMsg = orch.getBus().abortMessage(messageId);
+        if (abortMsg) {
+          orch.emit('event', { type: 'bus_message_status', messageId, status: 'failed' });
+        }
         return json(res, { ok: true, messageId, aborted: !!abortMsg });
       }
       case 'approve_message': {

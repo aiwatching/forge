@@ -254,16 +254,23 @@ export class AgentBus extends EventEmitter {
   /** Retry a failed message by ID — mark as pending and re-emit for delivery */
   /** Retry/re-run a message — set back to pending and re-deliver */
   retryMessage(messageId: string): BusMessage | null {
-    const msg = this.log.find(m => m.id === messageId);
-    if (!msg || msg.status === 'pending' || msg.status === 'running') return null;
-    const prevStatus = msg.status;
-    msg.status = 'pending';
-    msg.retries = 0;
-    // Remove from seen set so handleBusMessage won't dedup
-    this.unsee(messageId);
-    // Don't emit — the message loop will pick up the pending message on next tick
-    console.log(`[bus] ${prevStatus === 'done' ? 'Re-running' : 'Retrying'} message ${msg.payload.action} from ${msg.from} to ${msg.to}`);
-    return msg;
+    const original = this.log.find(m => m.id === messageId);
+    if (!original || original.status === 'pending' || original.status === 'running') return null;
+    // Create a new message from the original, keep original status unchanged for history
+    const newMsg: BusMessage = {
+      id: randomUUID(),
+      from: original.from,
+      to: original.to,
+      type: original.type,
+      payload: { ...original.payload },
+      timestamp: Date.now(),
+      status: 'pending',
+      retries: 0,
+    };
+    this.log.push(newMsg);
+    // Message loop will pick up the new pending message on next tick
+    console.log(`[bus] Retry → new message ${newMsg.id.slice(0, 8)} from original ${messageId.slice(0, 8)} (${original.payload.action})`);
+    return newMsg;
   }
 
   /** Delete a message from the log (only done/failed) */

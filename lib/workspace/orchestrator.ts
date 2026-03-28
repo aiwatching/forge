@@ -976,20 +976,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
   setManualMode(agentId: string): void {
     const entry = this.agents.get(agentId);
     if (!entry) return;
-    if (entry.worker) {
-      entry.worker.removeAllListeners(); // detach before stop to prevent async 'down' override
-      entry.worker.stop();
-    }
-    entry.worker = null;
-    this.stopMessageLoop(agentId);
     entry.state.mode = 'manual';
-    entry.state.tmuxSession = undefined;
-    entry.state.smithStatus = 'active';
-    entry.state.taskStatus = 'idle'; // manual mode starts idle, user drives execution
-    entry.state.error = undefined;
-
-    this.emit('event', { type: 'smith_status', agentId, smithStatus: 'active', mode: 'manual' } satisfies WorkerEvent);
-    this.emit('event', { type: 'task_status', agentId, taskStatus: 'idle' } satisfies WorkerEvent);
+    this.emit('event', { type: 'smith_status', agentId, smithStatus: entry.state.smithStatus, mode: 'manual' } satisfies WorkerEvent);
     this.emitAgentsChanged();
     this.saveNow();
     console.log(`[workspace] Agent "${entry.config.label}" switched to manual mode`);
@@ -1393,13 +1381,13 @@ export class WorkspaceOrchestrator extends EventEmitter {
         return;
       }
 
-      // Skip if task is running — check again next tick
+      // Skip if manual (user is driving) or running (already busy)
+      if (entry.state.mode === 'manual') return;
       if (entry.state.taskStatus === 'running') return;
 
-      // Skip if no worker or worker not listening
+      // Skip if no worker ready
       if (!entry.worker?.isListening()) {
-        // Log periodically to diagnose stuck agents
-        if (++debugTick % 15 === 0) { // every 30s
+        if (++debugTick % 15 === 0) {
           console.log(`[inbox] ${entry.config.label}: not listening (worker=${!!entry.worker} smith=${entry.state.smithStatus} task=${entry.state.taskStatus})`);
         }
         return;

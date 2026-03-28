@@ -10,87 +10,134 @@ Workspace is a multi-agent orchestration system. You define a team of **Smiths**
 |------|-------------|
 | **Smith** | A long-running agent instance in the workspace |
 | **Agent Profile** | A reusable configuration (CLI type + env vars + model) that can be assigned to any smith |
-| **Message Bus** | Inter-agent communication system (notify, request, response) |
+| **Message Bus** | Inter-agent communication system with two message categories |
 | **Input Node** | User-provided requirements node (append-only history) |
 | **Daemon** | Background execution loop that keeps smiths alive and consuming messages |
 
-## Two-Layer State Model
+## Three-Layer State Model
 
-Each smith has two independent status layers:
+Each smith has three independent status layers displayed on the node:
 
 | Layer | Values | Description |
 |-------|--------|-------------|
 | **Smith Status** | `down` / `active` | Whether the daemon process is running |
+| **Mode** | `auto` / `manual` | `auto` = daemon-driven, `manual` = user in terminal (purple) |
 | **Task Status** | `idle` / `running` / `done` / `failed` | Current work status |
-| **Mode** | `auto` / `manual` | `auto` = daemon-driven, `manual` = user opens terminal |
 
-## Creating a Workspace
+- **Mode controls message consumption**: `manual` pauses inbox processing (same as `running`)
+- **Smith Status controls the daemon loop**: `down` stops the message loop entirely
+- **Task Status tracks work**: unaffected by mode changes
 
-1. Go to **Projects → select project → Workspace tab**
-2. Click **+ Add Agent** to create smiths
-3. Configure each smith:
-   - **Label**: Display name (e.g., "Engineer", "Reviewer", "QA")
-   - **Agent/Profile**: Which CLI agent or profile to use
-   - **Role**: System prompt describing the smith's responsibilities
-   - **Steps**: Task prompts the smith will execute
-   - **Depends On**: Other smiths that must complete first
-   - **Work Dir**: Subdirectory to work in (optional, relative to project root)
-   - **Outputs**: Output directories this smith produces
+## Dependencies (DAG)
 
-## Agent Configuration
+Dependencies must form a **directed acyclic graph** (DAG). Circular dependencies are rejected when adding or editing agents.
 
-### Using Base Agents
-Select a detected CLI agent directly: `claude`, `codex`, `aider`.
+```
+Input → PM → Engineer → QA → Reviewer
+```
 
-### Using Profiles
-Select a profile (e.g., `forti-k2`, `claude-opus`) to use customized env vars, model, and CLI type. Profiles are configured in Settings.
+- Upstream agents complete first, then broadcast to downstream
+- Each agent knows its upstream (dependsOn) and the system prevents cycles
 
-## Running the Workspace
+## Message System
 
-### Start Daemon
-Click **▶ Start** to launch the daemon. All smiths become `active` and begin executing their steps based on dependency order.
+### Two Message Categories
 
-### Execution Flow
-1. Input nodes are completed first (user provides requirements)
-2. Smiths with no unmet dependencies start executing
-3. On completion, a smith broadcasts to downstream smiths via the message bus
-4. Downstream smiths wake up and begin their steps
-5. The cycle continues until all smiths are `done` or `failed`
+| Category | Direction | Behavior | Use Case |
+|----------|-----------|----------|----------|
+| **Notification** | Follows DAG (upstream → downstream) | Auto-broadcast on completion, downstream discards reverse notifications | "I'm done, here's what I did" |
+| **Ticket** | Any direction (ignores DAG) | 1-to-1, independent lifecycle, retry limits | Bug reports, fix requests |
 
-### Manual Mode (Open Terminal)
-Click the **⌨️** button on any smith to open a terminal:
-- Smith switches to `manual` mode
-- A tmux session opens with the configured CLI + profile env/model
-- Forge Skills are auto-installed for inter-agent communication
-- You can work interactively, then close to return to daemon control
+### Notification Messages (Default)
 
-## Message Bus
+When a smith completes:
+- If it was processing an **upstream** message → broadcast to all downstream agents
+- If it was processing a **downstream** message → no broadcast, just mark the message done (sender checks outbox status)
+- Each message carries a `causedBy` field tracing which inbox message triggered it
 
-Smiths communicate through the message bus. Messages have types and statuses:
+### Ticket Messages
 
-### Message Types
-| Type | Description |
-|------|-------------|
-| `notify` | One-way notification (e.g., "I'm done with feature X") |
-| `request` | Asks another smith to do something (e.g., fix_request, review_request) |
-| `response` | Reply to a request |
-| `artifact` | Shares file outputs |
+- Created via `create_ticket` API or forge skills
+- Have their own lifecycle: `open → in_progress → fixed → verified → closed`
+- Retry limit (default 3), exceeding marks ticket as failed
+- Not affected by DAG direction — any agent can ticket any agent
+
+### CausedBy Chain
+
+Every outgoing message carries `causedBy` linking to the inbox message that triggered it:
+
+```json
+{
+  "from": "qa-123",
+  "to": "reviewer-456",
+  "action": "upstream_complete",
+  "causedBy": {
+    "messageId": "msg-789",
+    "from": "engineer-111",
+    "to": "qa-123"
+  }
+}
+```
+
+This enables:
+- **Loop prevention**: Notifications from downstream are silently discarded
+- **Outbox tracking**: Sender can verify their message was processed
+- **Audit trail**: Every message traces back to its trigger
+
+### Message Receive Rules
+
+When a message arrives at an agent's inbox:
+
+1. **Tickets** → always accepted (with retry limit check)
+2. **Notification with causedBy matching own outbox** → accepted (response to my request)
+3. **Notification from downstream agent** → silently discarded (prevents reverse flow)
+4. **Notification from upstream or no causedBy** → accepted (normal DAG flow)
 
 ### Message Status Flow
+
 `pending` → `running` → `done` / `failed`
 
-### Sending Messages from Terminal
-When in manual mode, smiths can use Forge Skills to communicate:
-- `/forge-send` — Send a message to another smith
-- `/forge-inbox` — Check incoming messages
-- `/forge-status` — Check all smiths' status
-- `/forge-workspace-sync` — Sync progress back to workspace
+- Only one message processed at a time per agent
+- `currentMessageId` persisted in agent state for crash recovery
 
-### Inline Bus Markers
-In automated (daemon) mode, smiths can send messages by writing in their output:
-```
-[SEND:ReviewerLabel:fix_request] Please fix the auth bug in login.ts
-```
+## Manual Mode
+
+Click the **⌨️** button on any smith to open a terminal:
+- Mode switches to `manual` (purple indicator on node)
+- Inbox message processing pauses (messages stay pending)
+- A tmux session opens with CLI + profile env + forge env vars (`FORGE_AGENT_ID`, `FORGE_WORKSPACE_ID`, `FORGE_PORT`)
+- Forge Skills auto-installed for inter-agent communication
+- Close terminal → mode returns to `auto`, pending messages resume processing
+
+### Forge Skills in Terminal
+
+| Skill | Description |
+|-------|-------------|
+| `/forge-send` | Send a message to another smith (blocked if replying to current sender — use for NEW issues only) |
+| `/forge-inbox` | Check incoming messages |
+| `/forge-status` | Check all smiths' status |
+| `/forge-workspace-sync` | Sync progress back to workspace |
+
+**Note**: When processing a message from another agent, do NOT use `/forge-send` to reply — the system auto-delivers results via `markMessageDone`. Only use `/forge-send` for new issues to other agents.
+
+## Inbox Management
+
+Each smith has an inbox panel with two tabs:
+
+### Inbox Tab
+- Messages received from other smiths
+- Status badges: pending (yellow), running (blue), done (green), failed (red)
+- Ticket messages have purple border + TICKET badge + lifecycle status
+- CausedBy trace shows which agent triggered the message
+
+### Outbox Tab
+- Messages sent by this smith
+- Track delivery status and responses
+
+### Batch Operations
+- **Select all completed** → batch delete done/failed messages
+- **Abort all pending (N)** → cancel all pending messages at once
+- Checkbox selection on individual done/failed messages
 
 ## Controls
 
@@ -102,28 +149,10 @@ In automated (daemon) mode, smiths can send messages by writing in their output:
 | **Resume** | Resume a paused smith |
 | **Retry** | Retry a failed smith |
 | **Reset** | Reset smith to idle, clear history |
-| **Reset Downstream** | Reset a smith and all its dependents |
-
-## Inbox Management
-
-Each smith has an inbox showing messages from other smiths:
-- **Pending**: Waiting to be processed
-- **Running**: Currently being handled
-- **Done**: Successfully processed
-- **Failed**: Processing failed (can retry or delete)
-
-## UI Layout
-
-The workspace shows a **node graph** with:
-- Color-coded smith nodes (status-based colors)
-- Dependency edges between nodes
-- Real-time status updates via SSE (Server-Sent Events)
-- Click a node to see: log, memory, inbox
-- Floating terminals for manual mode
+| **Open Terminal** | Switch to manual mode, open floating terminal |
+| **Close Terminal** | Return to auto mode, resume message processing |
 
 ## Workspace API
-
-All workspace operations go through the daemon HTTP API (port 8405):
 
 ```bash
 # List workspaces
@@ -135,15 +164,21 @@ curl http://localhost:8403/api/workspace/<id>
 # Agent operations
 curl -X POST http://localhost:8403/api/workspace/<id>/agents \
   -H 'Content-Type: application/json' \
-  -d '{"action":"start"}'     # start daemon
-  -d '{"action":"stop"}'      # stop daemon
-  -d '{"action":"run", "agentId":"engineer-123"}'        # run one smith
-  -d '{"action":"pause", "agentId":"engineer-123"}'      # pause
-  -d '{"action":"resume", "agentId":"engineer-123"}'     # resume
-  -d '{"action":"retry", "agentId":"engineer-123"}'      # retry failed
-  -d '{"action":"reset", "agentId":"engineer-123"}'      # reset to idle
-  -d '{"action":"open_terminal", "agentId":"engineer-123"}'  # manual mode
-  -d '{"action":"message", "agentId":"engineer-123", "content":"fix the bug"}'
+  -d '{"action":"start"}'                                        # start daemon
+  -d '{"action":"stop"}'                                         # stop daemon
+  -d '{"action":"run", "agentId":"engineer-123"}'                # run one smith
+  -d '{"action":"open_terminal", "agentId":"engineer-123"}'      # manual mode
+  -d '{"action":"close_terminal", "agentId":"engineer-123"}'     # back to auto
+  -d '{"action":"reset", "agentId":"engineer-123"}'              # reset to idle
+
+# Smith API (via workspace daemon)
+curl -X POST http://localhost:8403/api/workspace/<id>/smith \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"send","agentId":"$ID","to":"QA","msgAction":"review","content":"Please check"}'
+  -d '{"action":"inbox","agentId":"$ID"}'
+  -d '{"action":"status","agentId":"$ID"}'
+  -d '{"action":"create_ticket","agentId":"$FROM","targetId":"$TO","content":"Bug found"}'
+  -d '{"action":"update_ticket","messageId":"$ID","ticketStatus":"fixed"}'
 
 # Stream real-time events (SSE)
 curl http://localhost:8403/api/workspace/<id>/stream
@@ -155,13 +190,15 @@ curl http://localhost:8403/api/workspace/<id>/stream
 - Auto-saved every 10 seconds
 - Atomic writes (temp file → rename) for crash safety
 - Synchronous save on daemon shutdown
+- `currentMessageId` persisted per agent for crash recovery
 
 ## Tips
 
-1. **Start with Input nodes** — define requirements before adding agent smiths
-2. **Use profiles** for agents that need custom API endpoints or models
-3. **Set dependencies** so downstream agents wait for upstream completion
-4. **Use Work Dir** to isolate each smith's changes to a subdirectory
-5. **Open Terminal** when you need to intervene manually or debug
-6. **Check Inbox** when a smith is stuck — it may have unprocessed messages
-7. **Retry failed smiths** after fixing the underlying issue
+1. **Dependencies must be a DAG** — no circular dependencies allowed
+2. **Start with Input nodes** — define requirements before adding agent smiths
+3. **Use profiles** for agents that need custom API endpoints or models
+4. **Notifications flow downstream** — upstream agents won't receive downstream broadcasts
+5. **Use tickets for bugs** — tickets ignore DAG direction, have retry limits
+6. **Open Terminal** for manual intervention — mode switches to manual, inbox pauses
+7. **Check Inbox** when a smith is stuck — it may have unprocessed messages
+8. **Batch delete** completed messages to keep inbox clean

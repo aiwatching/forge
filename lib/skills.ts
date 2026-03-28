@@ -93,9 +93,10 @@ export async function syncSkills(): Promise<{ synced: number; error?: string }> 
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(`${baseUrl}/registry.json`, {
+    const cacheBust = `_t=${Date.now()}`;
+    const res = await fetch(`${baseUrl}/registry.json?${cacheBust}`, {
       signal: controller.signal,
-      headers: { 'Accept': 'application/json' },
+      headers: { 'Accept': 'application/json', 'Cache-Control': 'no-cache' },
     });
     clearTimeout(timeout);
 
@@ -114,10 +115,10 @@ export async function syncSkills(): Promise<{ synced: number; error?: string }> 
       items = await Promise.all(rawItems.map(async (s: any) => {
         try {
           const repoDir = s.type === 'skill' ? 'skills' : 'commands';
-          let infoRes = await fetch(`${baseUrl}/${repoDir}/${s.name}/info.json`, { signal: AbortSignal.timeout(5000) });
+          let infoRes = await fetch(`${baseUrl}/${repoDir}/${s.name}/info.json?${cacheBust}`, { signal: AbortSignal.timeout(5000) });
           if (!infoRes.ok) {
             const altDir = s.type === 'skill' ? 'commands' : 'skills';
-            infoRes = await fetch(`${baseUrl}/${altDir}/${s.name}/info.json`, { signal: AbortSignal.timeout(5000) });
+            infoRes = await fetch(`${baseUrl}/${altDir}/${s.name}/info.json?${cacheBust}`, { signal: AbortSignal.timeout(5000) });
           }
           if (infoRes.ok) {
             const info = await infoRes.json();
@@ -139,9 +140,9 @@ export async function syncSkills(): Promise<{ synced: number; error?: string }> 
       const enriched = await Promise.all(rawItems.map(async (s: any) => {
         // Fetch info.json for metadata and type
         try {
-          let infoRes = await fetch(`${baseUrl}/skills/${s.name}/info.json`, { signal: AbortSignal.timeout(5000) });
+          let infoRes = await fetch(`${baseUrl}/skills/${s.name}/info.json?${cacheBust}`, { signal: AbortSignal.timeout(5000) });
           if (!infoRes.ok) {
-            infoRes = await fetch(`${baseUrl}/commands/${s.name}/info.json`, { signal: AbortSignal.timeout(5000) });
+            infoRes = await fetch(`${baseUrl}/commands/${s.name}/info.json?${cacheBust}`, { signal: AbortSignal.timeout(5000) });
           }
           if (infoRes.ok) {
             const info = await infoRes.json();

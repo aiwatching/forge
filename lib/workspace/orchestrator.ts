@@ -69,10 +69,25 @@ export class WorkspaceOrchestrator extends EventEmitter {
     this.projectName = projectName;
     this.bus = new AgentBus();
     this.watchManager = new WatchManager(workspaceId, projectPath, () => this.agents as any);
-    // Handle watch alerts based on configured action
+    // Handle watch events
     this.watchManager.on('watch_alert', (event) => {
-      this.emit('event', event); // always notify frontend
+      this.emit('event', event);
+      // Push alert to agent history so Log panel shows it
+      const alertEntry = this.agents.get(event.agentId);
+      if (alertEntry && event.entry) {
+        alertEntry.state.history.push(event.entry);
+        this.emit('event', { type: 'log', agentId: event.agentId, entry: event.entry } as any);
+      }
       this.handleWatchAlert(event.agentId, event.summary);
+    });
+    this.watchManager.on('watch_heartbeat', (event: { agentId: string; entry: any }) => {
+      const entry = this.agents.get(event.agentId);
+      if (entry) {
+        entry.state.history.push(event.entry);
+        // Keep history bounded
+        if (entry.state.history.length > 500) entry.state.history = entry.state.history.slice(-300);
+        this.emit('event', { type: 'log', agentId: event.agentId, entry: event.entry } as any);
+      }
     });
 
     // Forward bus messages as orchestrator events (after dedup, skip ACKs)

@@ -279,6 +279,9 @@ export class WatchManager extends EventEmitter {
 
     if (allChanges.length === 0) {
       console.log(`[watch] ${config.label}: checked — no changes`);
+      const entry = { type: 'system' as const, subtype: 'watch_heartbeat', content: '👁 Watch checked — no changes detected', timestamp: new Date().toISOString() };
+      appendAgentLog(this.workspaceId, agentId, entry).catch(() => {});
+      this.emit('watch_heartbeat', { type: 'watch_heartbeat', agentId, entry });
       return;
     }
 
@@ -289,18 +292,14 @@ export class WatchManager extends EventEmitter {
 
     console.log(`[watch] ${config.label}: detected ${allChanges.length} change(s)`);
 
-    // Write to agent log
-    appendAgentLog(this.workspaceId, agentId, {
-      type: 'system',
-      subtype: 'watch_detected',
-      content: `🔍 Watch detected changes:\n${summary}`,
-      timestamp: new Date().toISOString(),
-    }).catch(() => {});
+    const entry = { type: 'system' as const, subtype: 'watch_detected', content: `🔍 Watch detected changes:\n${summary}`, timestamp: new Date().toISOString() };
+    appendAgentLog(this.workspaceId, agentId, entry).catch(() => {});
 
     // Emit SSE event for UI
     this.emit('watch_alert', {
       type: 'watch_alert',
       agentId,
+      entry,
       changes: allChanges,
       summary,
       timestamp: Date.now(),

@@ -184,9 +184,58 @@ curl -X POST http://localhost:8403/api/workspace/<id>/smith \
 curl http://localhost:8403/api/workspace/<id>/stream
 ```
 
+## Watch (Autonomous Monitoring)
+
+Agents can autonomously monitor file changes, git commits, or custom commands without relying on messages.
+
+### Configuration
+
+In the agent config modal, enable Watch and configure:
+- **Interval**: Check frequency in seconds (min 10, default 60)
+- **Targets**: What to monitor
+  - `Directory` — select from project folders, detect file mtime changes
+  - `Git` — detect new commits via HEAD hash comparison
+  - `Agent Output` — monitor another agent's declared output paths
+  - `Command` — run a shell command, detect output changes
+- **On Change**: Action when changes detected
+  - `Log` — write to agent log only (default, no token cost)
+  - `Analyze` — auto-wake agent to analyze changes (costs tokens)
+  - `Approve` — create pending approval, user decides whether to trigger
+
+### Watch Behavior
+
+- First check builds a baseline (no alert)
+- Subsequent checks compare timestamps — only files modified since last check are reported
+- No-change heartbeats log to console only (not to files)
+- Change alerts write to `logs.jsonl` and appear in Log panel
+- Watch never sends bus messages — report only, no auto-triggering other agents
+
+## Agent Logs
+
+Each agent has a persistent log file (`logs.jsonl`) that survives daemon restarts and agent re-execution.
+
+- **Log panel**: Click the log button on any agent node to view
+- **Persistent**: Logs are append-only, not cleared on reset or re-run
+- **Clear**: Use the "Clear" button in the Log panel header to manually wipe logs
+- **Content**: Execution output, watch alerts, bus message receipts, system events
+
+## Forge Skills (Terminal Communication)
+
+When in manual mode, agents have forge env vars injected (`FORGE_AGENT_ID`, `FORGE_WORKSPACE_ID`, `FORGE_PORT`) and can use:
+
+| Skill | Description |
+|-------|-------------|
+| `/forge-send` | Send a message to another smith |
+| `/forge-inbox` | Check incoming messages |
+| `/forge-status` | Check all smiths' status |
+| `/forge-workspace-sync` | Sync progress back to workspace |
+
+**Send protection**: If an agent is currently processing a message from another agent, `/forge-send` to that agent is blocked (returns `skipped: true`). Results are delivered automatically via the message system. Only use `/forge-send` for new issues to other agents.
+
 ## Persistence
 
 - Workspace state: `~/.forge/workspaces/<id>/state.json`
+- Agent logs: `~/.forge/workspaces/<id>/agents/<agentId>/logs.jsonl`
 - Auto-saved every 10 seconds
 - Atomic writes (temp file → rename) for crash safety
 - Synchronous save on daemon shutdown
@@ -200,5 +249,6 @@ curl http://localhost:8403/api/workspace/<id>/stream
 4. **Notifications flow downstream** — upstream agents won't receive downstream broadcasts
 5. **Use tickets for bugs** — tickets ignore DAG direction, have retry limits
 6. **Open Terminal** for manual intervention — mode switches to manual, inbox pauses
-7. **Check Inbox** when a smith is stuck — it may have unprocessed messages
-8. **Batch delete** completed messages to keep inbox clean
+7. **Use Watch for monitoring** — detect file changes without message overhead (set action to `log` to avoid token costs)
+8. **Check Log panel** for execution history and watch alerts — logs persist across restarts
+9. **Batch operations** — select all completed messages for bulk delete, or abort all pending at once

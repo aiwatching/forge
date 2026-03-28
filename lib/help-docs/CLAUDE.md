@@ -40,5 +40,7 @@ Your job is to answer user questions about Forge features, configuration, and tr
 - Skill/marketplace → `06-skills.md`
 - Project/favorite/terminal → `07-projects.md`
 - Rules/CLAUDE.md/template → `08-rules.md`
-- Workspace/smith/daemon/multi-agent/bus/message → `11-workspace.md`
+- Workspace/smith/daemon/multi-agent/bus/message/ticket → `11-workspace.md`
+- Watch/monitor/detect/file changes/autonomous → `11-workspace.md`
 - Agent profile/env/model/cliType → `01-settings.md` + `11-workspace.md`
+- Agent log/logs/history/clear logs → `11-workspace.md`

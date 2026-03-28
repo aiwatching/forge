@@ -534,12 +534,12 @@ async function handleSmith(id: string, body: any, res: ServerResponse): Promise<
         ? agentId
         : 'user';
 
-      orch.getBus().send(senderId, target.id, 'notify', {
+      const sentMsg = orch.getBus().send(senderId, target.id, 'notify', {
         action: msgAction || 'agent_message',
         content,
       });
 
-      return json(res, { ok: true, sentTo: target.label });
+      return json(res, { ok: true, sentTo: target.label, messageId: sentMsg.id });
     }
 
     case 'inbox': {

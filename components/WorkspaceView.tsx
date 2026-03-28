@@ -1304,21 +1304,19 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
           <div className="text-xs font-semibold text-white truncate">{config.label}</div>
           <div className="text-[8px]" style={{ color: c.accent }}>{config.backend === 'api' ? config.provider || 'api' : config.agentId || 'cli'}</div>
         </div>
-        {/* Dual status badge: smith + task */}
+        {/* Status: smith + mode + task */}
         <div className="flex flex-col items-end gap-0.5">
           <div className="flex items-center gap-1">
             <div className="w-1.5 h-1.5 rounded-full" style={{ background: smithInfo.color, boxShadow: smithInfo.glow ? `0 0 4px ${smithInfo.color}` : 'none' }} />
             <span className="text-[7px]" style={{ color: smithInfo.color }}>{smithInfo.label}</span>
-            {mode === 'manual' && <span className="text-[7px] text-green-400">⌨️</span>}
           </div>
           <div className="flex items-center gap-1">
-            {mode === 'manual' ? (<>
-              <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#d2a8ff' }} />
-              <span className="text-[7px]" style={{ color: '#d2a8ff' }}>manual</span>
-            </>) : (<>
-              <div className="w-1.5 h-1.5 rounded-full" style={{ background: taskInfo.color, boxShadow: taskInfo.glow ? `0 0 4px ${taskInfo.color}` : 'none' }} />
-              <span className="text-[7px]" style={{ color: taskInfo.color }}>{taskInfo.label}</span>
-            </>)}
+            <div className="w-1.5 h-1.5 rounded-full" style={{ background: mode === 'manual' ? '#d2a8ff' : '#30363d' }} />
+            <span className="text-[7px]" style={{ color: mode === 'manual' ? '#d2a8ff' : '#6e7681' }}>{mode}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-1.5 h-1.5 rounded-full" style={{ background: taskInfo.color, boxShadow: taskInfo.glow ? `0 0 4px ${taskInfo.color}` : 'none' }} />
+            <span className="text-[7px]" style={{ color: taskInfo.color }}>{taskInfo.label}</span>
           </div>
         </div>
       </div>

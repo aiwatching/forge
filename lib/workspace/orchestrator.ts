@@ -1322,7 +1322,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
     } else {
       // Normal upstream completion or initial execution → broadcast to all downstream
       this.broadcastCompletion(agentId, causedBy);
-      this.notifyDownstreamForRevalidation(agentId, files);
+      // notifyDownstreamForRevalidation removed — causes duplicate messages and re-execution loops
+      // Downstream agents that already completed will be handled in future iteration mode
     }
 
     this.emitWorkspaceStatus();
@@ -1467,6 +1468,10 @@ export class WorkspaceOrchestrator extends EventEmitter {
         }
         return;
       }
+
+      // Skip if already processing a message (running status in bus)
+      const hasRunning = this.bus.getLog().some(m => m.to === agentId && m.status === 'running' && m.type !== 'ack');
+      if (hasRunning) return;
 
       // Find next pending message, applying causedBy rules
       const allPending = this.bus.getPendingMessagesFor(agentId).filter(m => m.from !== agentId && m.type !== 'ack');

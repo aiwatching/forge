@@ -1919,10 +1919,10 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
             }
             setFloatingTerminals(prev => prev.map(t => t.agentId === ft.agentId ? { ...t, tmuxSession: name } : t));
           }}
-          onClose={(killSession) => {
+          onClose={() => {
             setFloatingTerminals(prev => prev.filter(t => t.agentId !== ft.agentId));
-            if (killSession && workspaceId) {
-              wsApi(workspaceId, 'reset', { agentId: ft.agentId });
+            if (workspaceId) {
+              wsApi(workspaceId, 'close_terminal', { agentId: ft.agentId });
             }
           }}
         />

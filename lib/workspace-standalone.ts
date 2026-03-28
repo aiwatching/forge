@@ -306,6 +306,11 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
           ...launchInfo,
         });
       }
+      case 'close_terminal': {
+        if (!agentId) return jsonError(res, 'agentId required');
+        orch.restartAgentDaemon(agentId);
+        return json(res, { ok: true });
+      }
       case 'message': {
         if (!agentId || !content) return jsonError(res, 'agentId and content required');
         orch.sendMessageToAgent(agentId, content);

@@ -274,6 +274,12 @@ export function readAgentLogTail(workspaceId: string, agentId: string, n = 20): 
   return log.slice(-n);
 }
 
+/** Clear agent log file */
+export function clearAgentLog(workspaceId: string, agentId: string): void {
+  const file = agentLogFile(workspaceId, agentId);
+  if (existsSync(file)) writeFileSync(file, '');
+}
+
 // ─── Auto-save timer ─────────────────────────────────────
 
 const saveTimers = new Map<string, NodeJS.Timeout>();

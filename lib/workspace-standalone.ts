@@ -557,6 +557,23 @@ async function handleSmith(id: string, body: any, res: ServerResponse): Promise<
       return json(res, { ok: true, sentTo: target.label, messageId: sentMsg.id });
     }
 
+    case 'logs': {
+      if (!agentId) return jsonError(res, 'agentId required');
+      const { readAgentLog } = await import('./workspace/persistence.js');
+      const logs = readAgentLog(id, agentId);
+      return json(res, { logs });
+    }
+
+    case 'clear_logs': {
+      if (!agentId) return jsonError(res, 'agentId required');
+      const { clearAgentLog } = await import('./workspace/persistence.js');
+      clearAgentLog(id, agentId);
+      // Also clear in-memory history
+      const agentState = orch.getAgentState(agentId);
+      if (agentState) (agentState as any).history = [];
+      return json(res, { ok: true });
+    }
+
     case 'inbox': {
       if (!agentId) return jsonError(res, 'agentId required');
 

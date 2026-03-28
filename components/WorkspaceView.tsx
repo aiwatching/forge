@@ -689,9 +689,12 @@ function LogPanel({ agentId, agentLabel, workspaceId, onClose }: {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch(`/api/workspace/${workspaceId}/agents`).then(r => r.json()).then(data => {
-      const state = data.states?.[agentId];
-      if (state?.history) setLogs(state.history);
+    // Read persistent logs from logs.jsonl (not in-memory state history)
+    fetch(`/api/workspace/${workspaceId}/smith`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'logs', agentId }),
+    }).then(r => r.json()).then(data => {
+      if (data.logs?.length) setLogs(data.logs);
     }).catch(() => {});
   }, [workspaceId, agentId]);
 
@@ -721,7 +724,14 @@ function LogPanel({ agentId, agentLabel, workspaceId, onClose }: {
               </button>
             ))}
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-sm ml-auto">✕</button>
+          <button onClick={async () => {
+            await fetch(`/api/workspace/${workspaceId}/smith`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'clear_logs', agentId }),
+            });
+            setLogs([]);
+          }} className="text-[8px] text-gray-500 hover:text-red-400 ml-auto mr-2">Clear</button>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-sm">✕</button>
         </div>
         <div ref={scrollRef} className="flex-1 overflow-auto p-3 font-mono text-[11px] space-y-0.5">
           {filteredLogs.length === 0 && <div className="text-gray-600 text-center mt-8">{filter === 'all' ? 'No logs yet' : 'No matching entries'}</div>}

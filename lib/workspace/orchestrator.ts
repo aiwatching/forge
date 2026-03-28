@@ -346,7 +346,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
         console.log(`[workspace] Killed tmux session ${entry.state.tmuxSession}`);
       } catch {} // session might already be dead
     }
-    entry.state = { smithStatus: 'down', mode: 'auto', taskStatus: 'idle', history: [], artifacts: [] };
+    entry.state = { smithStatus: 'down', mode: 'auto', taskStatus: 'idle', history: entry.state.history, artifacts: [] };
     this.emit('event', { type: 'task_status', agentId, taskStatus: 'idle' } satisfies WorkerEvent);
     this.emitAgentsChanged();
     this.saveNow();
@@ -364,7 +364,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       console.log(`[workspace] Resetting ${entry.config.label} (${id}) to idle (upstream ${agentId} changed)`);
       if (entry.worker) entry.worker.stop();
       entry.worker = null;
-      entry.state = { smithStatus: entry.state.smithStatus, mode: entry.state.mode, taskStatus: 'idle', history: [], artifacts: [], cliSessionId: entry.state.cliSessionId };
+      entry.state = { smithStatus: entry.state.smithStatus, mode: entry.state.mode, taskStatus: 'idle', history: entry.state.history, artifacts: [], cliSessionId: entry.state.cliSessionId };
       this.emit('event', { type: 'task_status', agentId: id, taskStatus: 'idle' } satisfies WorkerEvent);
       this.resetDownstream(id, visited);
     }
@@ -423,7 +423,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       if (entry.worker) entry.worker.stop();
       entry.worker = null;
       if (!resumeFromCheckpoint) {
-        entry.state = { smithStatus: entry.state.smithStatus, mode: entry.state.mode, taskStatus: 'idle', history: [], artifacts: [], cliSessionId: entry.state.cliSessionId };
+        entry.state = { smithStatus: entry.state.smithStatus, mode: entry.state.mode, taskStatus: 'idle', history: entry.state.history, artifacts: [], cliSessionId: entry.state.cliSessionId };
       } else {
         entry.state.taskStatus = 'idle';
         entry.state.error = undefined;

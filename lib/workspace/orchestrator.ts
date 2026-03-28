@@ -1381,6 +1381,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
   private startMessageLoop(agentId: string): void {
     if (this.messageLoopTimers.has(agentId)) return; // already running
 
+    let debugTick = 0;
     const tick = () => {
       const entry = this.agents.get(agentId);
       if (!entry || entry.state.smithStatus !== 'active') {
@@ -1392,7 +1393,13 @@ export class WorkspaceOrchestrator extends EventEmitter {
       if (entry.state.taskStatus === 'running') return;
 
       // Skip if no worker or worker not listening
-      if (!entry.worker?.isListening()) return;
+      if (!entry.worker?.isListening()) {
+        // Log periodically to diagnose stuck agents
+        if (++debugTick % 15 === 0) { // every 30s
+          console.log(`[inbox] ${entry.config.label}: not listening (worker=${!!entry.worker} smith=${entry.state.smithStatus} task=${entry.state.taskStatus})`);
+        }
+        return;
+      }
 
       // Find next pending message
       const pending = this.bus.getPendingMessagesFor(agentId).filter(m => m.from !== agentId && m.type !== 'ack');

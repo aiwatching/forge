@@ -196,7 +196,7 @@ function useWorkspaceStream(workspaceId: string | null, onEvent?: (event: any) =
         }
 
         if (event.type === 'bus_message') {
-          setBusLog(prev => [...prev, event.message]);
+          setBusLog(prev => prev.some(m => m.id === event.message.id) ? prev : [...prev, event.message]);
         }
 
         if (event.type === 'bus_message_status') {

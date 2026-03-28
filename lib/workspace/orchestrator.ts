@@ -1012,7 +1012,20 @@ export class WorkspaceOrchestrator extends EventEmitter {
         this.startMessageLoop(id);
       }
 
-      // Check 4: Pending messages but agent idle — try wake
+      // Check 4: Stale running messages (agent not actually running) → mark failed
+      if (entry.state.taskStatus !== 'running') {
+        const staleRunning = this.bus.getLog().filter(m => m.to === id && m.status === 'running' && m.type !== 'ack');
+        for (const m of staleRunning) {
+          const age = Date.now() - m.timestamp;
+          if (age > 60_000) { // running for 60s+ but agent is idle = stale
+            console.log(`[health] ${entry.config.label}: stale running message ${m.id.slice(0, 8)} (${Math.round(age/1000)}s) — marking failed`);
+            m.status = 'failed';
+            this.emit('event', { type: 'bus_message_status', messageId: m.id, status: 'failed' } as any);
+          }
+        }
+      }
+
+      // Check 5: Pending messages but agent idle — try wake
       if (entry.state.taskStatus !== 'running' && entry.state.mode === 'auto') {
         const pending = this.bus.getPendingMessagesFor(id).filter(m => m.from !== id && m.type !== 'ack');
         if (pending.length > 0 && entry.worker.isListening()) {
@@ -1621,11 +1634,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
         return;
       }
 
-      // Skip if worker is currently processing a message
-      if (entry.worker?.getCurrentMessageId()) {
-        const currentMsg = this.bus.getLog().find(m => m.id === entry.worker!.getCurrentMessageId());
-        if (currentMsg && currentMsg.status === 'running') return;
-      }
+      // Skip if any message is already running for this agent
+      const hasRunning = this.bus.getLog().some(m => m.to === agentId && m.status === 'running' && m.type !== 'ack');
+      if (hasRunning) return;
 
       // requiresApproval is handled at message arrival time (routeMessageToAgent),
       // not in the message loop. Approved messages come through as normal 'pending'.

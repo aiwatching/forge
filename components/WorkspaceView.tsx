@@ -248,10 +248,11 @@ function useWorkspaceStream(workspaceId: string | null, onEvent?: (event: any) =
 
 // ─── Agent Config Modal ──────────────────────────────────
 
-function AgentConfigModal({ initial, mode, existingAgents, onConfirm, onCancel }: {
+function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfirm, onCancel }: {
   initial: Partial<AgentConfig>;
   mode: 'add' | 'edit';
   existingAgents: AgentConfig[];
+  projectPath?: string;
   onConfirm: (cfg: Omit<AgentConfig, 'id'>) => void;
   onCancel: () => void;
 }) {
@@ -282,9 +283,23 @@ function AgentConfigModal({ initial, mode, existingAgents, onConfirm, onCancel }
   const [watchInterval, setWatchInterval] = useState(String(initial.watch?.interval || 60));
   const [watchAction, setWatchAction] = useState<'log' | 'analyze' | 'approve'>(initial.watch?.action || 'log');
   const [watchPrompt, setWatchPrompt] = useState(initial.watch?.prompt || '');
-  const [watchTargets, setWatchTargets] = useState(
-    (initial.watch?.targets || []).map((t: any) => `${t.type}:${t.path || t.cmd || ''}`).join('\n') || ''
+  const [watchTargets, setWatchTargets] = useState<{ type: string; path?: string; cmd?: string }[]>(
+    initial.watch?.targets || []
   );
+  const [projectDirs, setProjectDirs] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!watchEnabled || !projectPath) return;
+    fetch(`/api/code?dir=${encodeURIComponent(projectPath)}`)
+      .then(r => r.json())
+      .then(data => {
+        const dirs = (data.tree || [])
+          .filter((f: any) => f.type === 'directory')
+          .map((f: any) => f.name);
+        setProjectDirs(dirs);
+      })
+      .catch(() => {});
+  }, [watchEnabled, projectPath]);
 
   const applyPreset = (p: Omit<AgentConfig, 'id'>) => {
     setLabel(p.label); setIcon(p.icon); setRole(p.role);
@@ -474,11 +489,56 @@ function AgentConfigModal({ initial, mode, existingAgents, onConfirm, onCancel }
                   </select>
                 </div>
               </div>
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[8px] text-gray-600">Targets (one per line — type:path, e.g. directory:src/, git, command:npm test)</label>
-                <textarea value={watchTargets} onChange={e => setWatchTargets(e.target.value)} rows={2}
-                  placeholder="directory:src/&#10;git&#10;command:npm test"
-                  className="text-[10px] bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff] resize-none font-mono" />
+              <div className="flex flex-col gap-1">
+                <label className="text-[8px] text-gray-600">Targets</label>
+                {watchTargets.map((t, i) => (
+                  <div key={i} className="flex items-center gap-1">
+                    <select value={t.type} onChange={e => {
+                      const next = [...watchTargets];
+                      next[i] = { type: e.target.value };
+                      setWatchTargets(next);
+                    }} className="text-[10px] bg-[#161b22] border border-[#30363d] rounded px-1 py-0.5 text-white w-24">
+                      <option value="directory">Directory</option>
+                      <option value="git">Git</option>
+                      <option value="agent_output">Agent Output</option>
+                      <option value="command">Command</option>
+                    </select>
+                    {t.type === 'directory' && (
+                      <select value={t.path || ''} onChange={e => {
+                        const next = [...watchTargets];
+                        next[i] = { ...t, path: e.target.value };
+                        setWatchTargets(next);
+                      }} className="text-[10px] bg-[#161b22] border border-[#30363d] rounded px-1 py-0.5 text-white flex-1">
+                        <option value="">Project root</option>
+                        {projectDirs.map(d => <option key={d} value={d + '/'}>{d}/</option>)}
+                      </select>
+                    )}
+                    {t.type === 'agent_output' && (
+                      <select value={t.path || ''} onChange={e => {
+                        const next = [...watchTargets];
+                        next[i] = { ...t, path: e.target.value };
+                        setWatchTargets(next);
+                      }} className="text-[10px] bg-[#161b22] border border-[#30363d] rounded px-1 py-0.5 text-white flex-1">
+                        <option value="">Select agent...</option>
+                        {existingAgents.filter(a => a.id !== initial.id).map(a =>
+                          <option key={a.id} value={a.id}>{a.icon} {a.label}</option>
+                        )}
+                      </select>
+                    )}
+                    {t.type === 'command' && (
+                      <input value={t.cmd || ''} onChange={e => {
+                        const next = [...watchTargets];
+                        next[i] = { ...t, cmd: e.target.value };
+                        setWatchTargets(next);
+                      }} placeholder="npm test"
+                        className="text-[10px] bg-[#161b22] border border-[#30363d] rounded px-1 py-0.5 text-white flex-1" />
+                    )}
+                    <button onClick={() => setWatchTargets(watchTargets.filter((_, j) => j !== i))}
+                      className="text-[9px] text-gray-500 hover:text-red-400">✕</button>
+                  </div>
+                ))}
+                <button onClick={() => setWatchTargets([...watchTargets, { type: 'directory' }])}
+                  className="text-[8px] text-gray-500 hover:text-[#58a6ff] self-start">+ Add target</button>
               </div>
               {watchAction === 'analyze' && (
                 <div className="flex flex-col gap-0.5">
@@ -495,24 +555,16 @@ function AgentConfigModal({ initial, mode, existingAgents, onConfirm, onCancel }
         <div className="flex justify-end gap-2 mt-4">
           <button onClick={onCancel} className="text-xs px-3 py-1.5 rounded border border-[#30363d] text-gray-400 hover:text-white">Cancel</button>
           <button disabled={!label.trim()} onClick={() => {
-            const parseWatchTargets = () => watchTargets.split('\n').filter(Boolean).map(line => {
-              const [type, ...rest] = line.split(':');
-              const value = rest.join(':').trim();
-              const t = type.trim() as any;
-              if (t === 'command') return { type: t, cmd: value };
-              if (t === 'git') return { type: t };
-              return { type: t || 'directory', path: value || '.' };
-            });
             onConfirm({
               label: label.trim(), icon: icon.trim() || '🤖', role: role.trim(),
               backend, agentId, dependsOn: Array.from(selectedDeps),
               workDir: workDirVal.trim() || label.trim().toLowerCase().replace(/\s+/g, '-') + '/',
               outputs: outputs.split(',').map(s => s.trim()).filter(Boolean),
               steps: parseSteps(),
-              watch: watchEnabled ? {
+              watch: watchEnabled && watchTargets.length > 0 ? {
                 enabled: true,
                 interval: Math.max(10, parseInt(watchInterval) || 60),
-                targets: parseWatchTargets(),
+                targets: watchTargets,
                 action: watchAction,
                 prompt: watchPrompt || undefined,
               } : undefined,
@@ -1987,6 +2039,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           initial={modal.initial}
           mode={modal.mode}
           existingAgents={agents}
+          projectPath={projectPath}
           onConfirm={modal.mode === 'add' ? handleAddAgent : handleEditAgent}
           onCancel={() => setModal(null)}
         />

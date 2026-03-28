@@ -1005,7 +1005,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
         content: `Watch detected changes (awaiting approval):\n${summary}`,
       });
       msg.status = 'pending_approval';
-      this.emit('event', { type: 'approval_required', agentId, upstreamId: '_watch' } satisfies OrchestratorEvent);
+      this.emit('event', { type: 'bus_message_status', messageId: msg.id, status: 'pending_approval' } as any);
       console.log(`[watch] ${entry.config.label}: changes detected, awaiting approval`);
     }
   }

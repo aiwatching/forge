@@ -5,6 +5,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { SearchAddon } from '@xterm/addon-search';
 import '@xterm/xterm/css/xterm.css';
 
 // ─── Imperative API for parent components ────────────────────
@@ -1246,6 +1247,10 @@ const MemoTerminalPane = memo(function TerminalPane({
   onSessionConnected: (paneId: number, sessionName: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const sessionNameRef = useRef(sessionName);
   sessionNameRef.current = sessionName;
   const projectPathRef = useRef(projectPath);
@@ -1345,6 +1350,12 @@ const MemoTerminalPane = memo(function TerminalPane({
         const unicode11 = new Unicode11Addon();
         term.loadAddon(unicode11);
         term.unicode.activeVersion = '11';
+      } catch {}
+      // Search: Ctrl/Cmd+F to find text in terminal buffer
+      try {
+        const search = new SearchAddon();
+        term.loadAddon(search);
+        searchAddonRef.current = search;
       } catch {}
       try { fit.fit(); } catch {}
       connect();
@@ -1516,6 +1527,19 @@ const MemoTerminalPane = memo(function TerminalPane({
     // Calling it both here and in initTerminal() causes duplicate WebSocket
     // connections to the same tmux session, resulting in doubled output.
 
+    term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'f' && event.type === 'keydown') {
+        setShowSearch(true);
+        setTimeout(() => searchInputRef.current?.focus(), 0);
+        return false;
+      }
+      if (event.key === 'Escape' && event.type === 'keydown') {
+        setShowSearch(false);
+        searchAddonRef.current?.clearDecorations();
+      }
+      return true;
+    });
+
     term.onData((data) => {
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
       // Arm bell on Enter (user submitted a new prompt)
@@ -1600,5 +1624,44 @@ const MemoTerminalPane = memo(function TerminalPane({
     };
   }, [id, onSessionConnected]);
 
-  return <div ref={containerRef} className="h-full w-full" />;
+  return (
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="h-full w-full" />
+      {showSearch && (
+        <div className="absolute top-1 right-2 flex items-center gap-1 px-2 py-1 rounded border border-[var(--term-border)] shadow-lg z-10"
+          style={{ background: 'var(--term-bg, #1a1b26)' }}
+          onClick={e => e.stopPropagation()}>
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={e => {
+              setSearchQuery(e.target.value);
+              if (e.target.value) searchAddonRef.current?.findNext(e.target.value, { regex: false, caseSensitive: false, decorations: { matchOverviewRuler: '#888', activeMatchColorOverviewRuler: '#ff0' } });
+              else searchAddonRef.current?.clearDecorations();
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                if (e.shiftKey) searchAddonRef.current?.findPrevious(searchQuery, { regex: false, caseSensitive: false, decorations: { matchOverviewRuler: '#888', activeMatchColorOverviewRuler: '#ff0' } });
+                else searchAddonRef.current?.findNext(searchQuery, { regex: false, caseSensitive: false, decorations: { matchOverviewRuler: '#888', activeMatchColorOverviewRuler: '#ff0' } });
+              }
+              if (e.key === 'Escape') {
+                setShowSearch(false);
+                searchAddonRef.current?.clearDecorations();
+              }
+            }}
+            placeholder="Search..."
+            className="bg-transparent text-[11px] text-[var(--term-fg,#c0caf5)] outline-none w-32 placeholder-gray-600"
+            autoFocus
+          />
+          <button onClick={() => searchAddonRef.current?.findPrevious(searchQuery, { regex: false, caseSensitive: false, decorations: { matchOverviewRuler: '#888', activeMatchColorOverviewRuler: '#ff0' } })}
+            className="text-[10px] text-gray-500 hover:text-gray-300 px-1" title="Previous (Shift+Enter)">▲</button>
+          <button onClick={() => searchAddonRef.current?.findNext(searchQuery, { regex: false, caseSensitive: false, decorations: { matchOverviewRuler: '#888', activeMatchColorOverviewRuler: '#ff0' } })}
+            className="text-[10px] text-gray-500 hover:text-gray-300 px-1" title="Next (Enter)">▼</button>
+          <button onClick={() => { setShowSearch(false); searchAddonRef.current?.clearDecorations(); }}
+            className="text-[10px] text-gray-500 hover:text-gray-300 px-1" title="Close (Esc)">✕</button>
+        </div>
+      )}
+    </div>
+  );
 });

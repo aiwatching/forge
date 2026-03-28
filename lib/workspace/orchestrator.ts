@@ -80,15 +80,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       }
       this.handleWatchAlert(event.agentId, event.summary);
     });
-    this.watchManager.on('watch_heartbeat', (event: { agentId: string; entry: any }) => {
-      const entry = this.agents.get(event.agentId);
-      if (entry) {
-        entry.state.history.push(event.entry);
-        // Keep history bounded
-        if (entry.state.history.length > 500) entry.state.history = entry.state.history.slice(-300);
-        this.emit('event', { type: 'log', agentId: event.agentId, entry: event.entry } as any);
-      }
-    });
+    // Note: watch_heartbeat (no changes) only logs to console, not to agent history/logs.jsonl
 
     // Forward bus messages as orchestrator events (after dedup, skip ACKs)
     this.bus.on('message', (msg: BusMessage) => {

@@ -247,9 +247,8 @@ export class WatchManager extends EventEmitter {
 
     if (allChanges.length === 0) {
       console.log(`[watch] ${config.label}: checked — no changes`);
-      const entry = { type: 'system' as const, subtype: 'watch_heartbeat', content: '👁 Watch checked — no changes detected', timestamp: new Date().toISOString() };
-      appendAgentLog(this.workspaceId, agentId, entry).catch(() => {});
-      this.emit('watch_heartbeat', { type: 'watch_heartbeat', agentId, entry });
+      // Heartbeat: only log to console, don't write to logs.jsonl or agent history
+      // (prevents disk/memory bloat from frequent no-change checks)
       return;
     }
 

@@ -750,6 +750,13 @@ function InboxPanel({ agentId, agentLabel, busLog, agents, workspaceId, onClose 
     setSelected(new Set());
   };
 
+  const handleAbortAllPending = async () => {
+    const pendingMsgs = messages.filter(m => m.status === 'pending');
+    for (const m of pendingMsgs) {
+      await wsApi(workspaceId, 'abort_message', { messageId: m.id });
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.85)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -780,11 +787,21 @@ function InboxPanel({ agentId, agentLabel, busLog, agents, workspaceId, onClose 
               </button>
             </div>
           )}
-          {selected.size === 0 && messages.some(m => m.status === 'done' || m.status === 'failed') && (
-            <button onClick={selectAll}
-              className="text-[8px] px-2 py-0.5 rounded text-gray-500 hover:text-gray-300 ml-3">
-              Select all completed
-            </button>
+          {selected.size === 0 && (
+            <div className="flex items-center gap-2 ml-3">
+              {messages.some(m => m.status === 'done' || m.status === 'failed') && (
+                <button onClick={selectAll}
+                  className="text-[8px] px-2 py-0.5 rounded text-gray-500 hover:text-gray-300">
+                  Select all completed
+                </button>
+              )}
+              {messages.some(m => m.status === 'pending') && (
+                <button onClick={handleAbortAllPending}
+                  className="text-[8px] px-2 py-0.5 rounded bg-red-600/20 text-red-400 hover:bg-red-600/30">
+                  Abort all pending ({messages.filter(m => m.status === 'pending').length})
+                </button>
+              )}
+            </div>
           )}
           <button onClick={onClose} className="text-gray-500 hover:text-white text-sm ml-auto">✕</button>
         </div>

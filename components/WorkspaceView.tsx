@@ -1990,7 +1990,13 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 cliType: res.cliType || 'claude-code',
                 workDir,
                 sessionName: sessName, resumeMode, resumeSessionId: sessionId,
-                profileEnv: { ...(res.env || {}), ...(res.model ? { CLAUDE_MODEL: res.model } : {}) },
+                profileEnv: {
+                  ...(res.env || {}),
+                  ...(res.model ? { CLAUDE_MODEL: res.model } : {}),
+                  FORGE_AGENT_ID: agent.id,
+                  FORGE_WORKSPACE_ID: workspaceId,
+                  FORGE_PORT: String(window.location.port || 8403),
+                },
               }]);
             }
           }}

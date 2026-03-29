@@ -58,16 +58,28 @@ export async function GET(req: Request) {
       const items = await res.json();
       const files: { name: string; path: string; type: string }[] = [];
 
-      const flatten = (list: any[], prefix = '') => {
+      const recurse = async (list: any[], prefix = '') => {
         for (const item of list) {
           if (item.type === 'file') {
             files.push({ name: item.name, path: prefix + item.name, type: 'file' });
           } else if (item.type === 'dir') {
-            files.push({ name: item.name, path: prefix + item.name, type: 'dir' });
+            files.push({ name: item.name + '/', path: prefix + item.name, type: 'dir' });
+            // Fetch subdirectory contents
+            try {
+              const subRes = await fetch(item.url, {
+                headers: { 'Accept': 'application/vnd.github.v3+json' },
+              });
+              if (subRes.ok) {
+                const subItems = await subRes.json();
+                if (Array.isArray(subItems)) {
+                  await recurse(subItems, prefix + item.name + '/');
+                }
+              }
+            } catch {}
           }
         }
       };
-      flatten(Array.isArray(items) ? items : []);
+      await recurse(Array.isArray(items) ? items : []);
 
       // Sort: dirs first, then files
       files.sort((a, b) => {

@@ -28,6 +28,102 @@ interface ProjectInfo {
   name: string;
 }
 
+// ─── Skill File Tree (collapsible directories) ──────────
+
+interface TreeNode {
+  name: string;
+  path: string;
+  type: 'file' | 'dir';
+  children: TreeNode[];
+}
+
+function buildTree(files: { name: string; path: string; type: string }[]): TreeNode[] {
+  const root: TreeNode[] = [];
+  const dirMap = new Map<string, TreeNode>();
+
+  for (const f of files) {
+    const parts = f.path.split('/');
+    if (f.type === 'dir') {
+      const node: TreeNode = { name: f.name.replace(/\/$/, ''), path: f.path, type: 'dir', children: [] };
+      dirMap.set(f.path, node);
+      // Find parent
+      const parentPath = parts.slice(0, -1).join('/');
+      const parent = parentPath ? dirMap.get(parentPath) : null;
+      if (parent) parent.children.push(node);
+      else root.push(node);
+    } else {
+      const node: TreeNode = { name: f.name, path: f.path, type: 'file', children: [] };
+      const parentPath = parts.slice(0, -1).join('/');
+      const parent = parentPath ? dirMap.get(parentPath) : null;
+      if (parent) parent.children.push(node);
+      else root.push(node);
+    }
+  }
+  return root;
+}
+
+function SkillFileTree({ files, activeFile, onSelect }: {
+  files: { name: string; path: string; type: string }[];
+  activeFile: string | null;
+  onSelect: (path: string) => void;
+}) {
+  const tree = buildTree(files);
+  return <TreeNodeList nodes={tree} depth={0} activeFile={activeFile} onSelect={onSelect} />;
+}
+
+function TreeNodeList({ nodes, depth, activeFile, onSelect }: {
+  nodes: TreeNode[]; depth: number; activeFile: string | null; onSelect: (path: string) => void;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set(
+    // Auto-expand first level
+    nodes.filter(n => n.type === 'dir').map(n => n.path)
+  ));
+
+  const toggle = (path: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      next.has(path) ? next.delete(path) : next.add(path);
+      return next;
+    });
+  };
+
+  return (
+    <>
+      {nodes.map(node => (
+        node.type === 'dir' ? (
+          <div key={node.path}>
+            <button
+              onClick={() => toggle(node.path)}
+              className="w-full text-left px-1 py-0.5 text-[9px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] flex items-center gap-0.5"
+              style={{ paddingLeft: `${depth * 10 + 4}px` }}
+            >
+              <span className="text-[8px]">{expanded.has(node.path) ? '▼' : '▶'}</span>
+              <span>📁 {node.name}</span>
+            </button>
+            {expanded.has(node.path) && (
+              <TreeNodeList nodes={node.children} depth={depth + 1} activeFile={activeFile} onSelect={onSelect} />
+            )}
+          </div>
+        ) : (
+          <button
+            key={node.path}
+            onClick={() => onSelect(node.path)}
+            className={`w-full text-left py-0.5 text-[10px] truncate ${
+              activeFile === node.path
+                ? 'bg-[var(--accent)]/15 text-[var(--accent)]'
+                : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
+            }`}
+            style={{ paddingLeft: `${depth * 10 + 14}px` }}
+            title={node.path}
+          >
+            {node.name}
+          </button>
+        )
+      ))}
+    </>
+  );
+}
+
 export default function SkillsPanel({ projectFilter }: { projectFilter?: string }) {
   const { sidebarWidth, onSidebarDragStart } = useSidebarResize({ defaultWidth: 224, minWidth: 140, maxWidth: 400 });
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -223,14 +319,17 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
 
   // Filter by project, type, and search
   const q = searchQuery.toLowerCase();
-  const filtered = typeFilter === 'local' ? [] : skills
+  const filtered = (typeFilter === 'local' ? [] : skills
     .filter(s => projectFilter ? (s.installedGlobal || s.installedProjects.includes(projectFilter)) : true)
     .filter(s => typeFilter === 'all' ? true : s.type === typeFilter)
-    .filter(s => !q || s.name.toLowerCase().includes(q) || s.displayName.toLowerCase().includes(q) || s.description.toLowerCase().includes(q));
+    .filter(s => !q || s.name.toLowerCase().includes(q) || s.displayName.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
+      || s.author.toLowerCase().includes(q) || s.tags.some(t => t.toLowerCase().includes(q)))
+  ).sort((a, b) => a.displayName.localeCompare(b.displayName));
 
   const filteredLocal = localItems
     .filter(item => typeFilter === 'local' || typeFilter === 'all' || item.type === typeFilter)
-    .filter(item => !q || item.name.toLowerCase().includes(q));
+    .filter(item => !q || item.name.toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   // Group local items by scope
   const localGroups = new Map<string, typeof localItems>();
@@ -339,7 +438,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                       skill.type === 'skill' ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'
                     }`}>{skill.type === 'skill' ? 'SKILL' : 'CMD'}</span>
                     <span className="text-[8px] text-[var(--text-secondary)]">{skill.author}</span>
-                    {skill.tags.slice(0, 2).map(t => (
+                    {skill.tags.slice(0, 3).map(t => (
                       <span key={t} className="text-[7px] px-1 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">{t}</span>
                     ))}
                     {skill.deletedRemotely && <span className="text-[8px] text-[var(--red)] ml-auto">deleted remotely</span>}
@@ -608,6 +707,13 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                     {skill?.author && (
                       <div className="text-[9px] text-[var(--text-secondary)] mt-1">By {skill.author}</div>
                     )}
+                    {skill?.tags && skill.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {skill.tags.map(t => (
+                          <span key={t} className="text-[8px] px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">{t}</span>
+                        ))}
+                      </div>
+                    )}
                     {skill?.sourceUrl && (
                       <a href={skill.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-[9px] text-[var(--accent)] hover:underline mt-0.5 block truncate">{skill.sourceUrl.replace(/^https?:\/\//, '').slice(0, 60)}</a>
                     )}
@@ -632,31 +738,16 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
 
                   {/* File browser */}
                   <div className="flex-1 flex min-h-0 overflow-hidden">
-                    {/* File list */}
-                    <div className="w-32 border-r border-[var(--border)] overflow-y-auto shrink-0">
+                    {/* File tree */}
+                    <div className="w-36 border-r border-[var(--border)] overflow-y-auto shrink-0">
                       {skillFiles.length === 0 ? (
                         <div className="p-2 text-[9px] text-[var(--text-secondary)]">Loading...</div>
                       ) : (
-                        skillFiles.map(f => (
-                          f.type === 'file' ? (
-                            <button
-                              key={f.path}
-                              onClick={() => loadFile(itemName, f.path, isLocal, localItem?.type, localItem?.projectPath)}
-                              className={`w-full text-left px-2 py-1 text-[10px] truncate ${
-                                activeFile === f.path
-                                  ? 'bg-[var(--accent)]/15 text-[var(--accent)]'
-                                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
-                              }`}
-                              title={f.path}
-                            >
-                              {f.name}
-                            </button>
-                          ) : (
-                            <div key={f.path} className="px-2 py-1 text-[9px] text-[var(--text-secondary)] font-semibold">
-                              {f.name}/
-                            </div>
-                          )
-                        ))
+                        <SkillFileTree
+                          files={skillFiles}
+                          activeFile={activeFile}
+                          onSelect={(path) => loadFile(itemName, path, isLocal, localItem?.type, localItem?.projectPath)}
+                        />
                       )}
                       {skill?.sourceUrl && (
                         <div className="border-t border-[var(--border)] p-2">

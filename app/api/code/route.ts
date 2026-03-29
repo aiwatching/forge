@@ -43,7 +43,7 @@ function scanDir(dir: string, base: string, depth: number = 0): FileNode[] {
     const nodes: FileNode[] = [];
 
     const sorted = entries
-      .filter(e => !IGNORE.has(e.name) && !e.name.startsWith('.'))
+      .filter(e => !IGNORE.has(e.name))
       .sort((a, b) => {
         if (a.isDirectory() && !b.isDirectory()) return -1;
         if (!a.isDirectory() && b.isDirectory()) return 1;
@@ -56,10 +56,8 @@ function scanDir(dir: string, base: string, depth: number = 0): FileNode[] {
 
       if (entry.isDirectory()) {
         const children = scanDir(fullPath, base, depth + 1);
-        if (children.length > 0) {
-          nodes.push({ name: entry.name, path: relPath, type: 'dir', children });
-        }
-      } else if (isCodeFile(entry.name)) {
+        nodes.push({ name: entry.name, path: relPath, type: 'dir', children });
+      } else {
         nodes.push({ name: entry.name, path: relPath, type: 'file' });
       }
     }

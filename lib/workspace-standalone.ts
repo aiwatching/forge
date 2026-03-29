@@ -75,7 +75,7 @@ function loadOrchestrator(id: string): WorkspaceOrchestrator {
   });
 
   orchestrators.set(id, orch);
-  console.log(`[workspace] Loaded orchestrator: ${state.projectName} (${id})`);
+  // Loaded silently — debug only if needed
   return orch;
 }
 
@@ -92,7 +92,7 @@ function unloadOrchestrator(id: string): void {
     }
     sseClients.delete(id);
   }
-  console.log(`[workspace] Unloaded orchestrator: ${id}`);
+  // Unloaded silently
 }
 
 function evictIdleWorkspace(): boolean {

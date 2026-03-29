@@ -730,21 +730,47 @@ function RunPromptDialog({ agentLabel, onRun, onCancel }: {
 
 // ─── Log Panel (overlay) ─────────────────────────────────
 
-/** Format log content: handle \n, truncate long text, detect JSON */
-function LogContent({ content }: { content: string }) {
+/** Format log content: extract readable text from JSON, format nicely */
+function LogContent({ content, subtype }: { content: string; subtype?: string }) {
   if (!content) return null;
-  const MAX_LINES = 30;
-  const MAX_CHARS = 3000;
+  const MAX_LINES = 40;
+  const MAX_CHARS = 4000;
 
   let text = content;
 
-  // Try to parse JSON and extract readable content
+  // Try to parse JSON and extract human-readable content
   if (text.startsWith('{') || text.startsWith('[')) {
     try {
       const parsed = JSON.parse(text);
-      // Tool result with content field
-      if (parsed.content) text = String(parsed.content);
-      else text = JSON.stringify(parsed, null, 2);
+      if (typeof parsed === 'string') {
+        text = parsed;
+      } else if (parsed.content) {
+        text = String(parsed.content);
+      } else if (parsed.text) {
+        text = String(parsed.text);
+      } else if (parsed.result) {
+        text = typeof parsed.result === 'string' ? parsed.result : JSON.stringify(parsed.result, null, 2);
+      } else if (parsed.message?.content) {
+        // Claude stream-json format
+        const blocks = Array.isArray(parsed.message.content) ? parsed.message.content : [parsed.message.content];
+        text = blocks.map((b: any) => {
+          if (typeof b === 'string') return b;
+          if (b.type === 'text') return b.text;
+          if (b.type === 'tool_use') return `🔧 ${b.name}(${typeof b.input === 'string' ? b.input : JSON.stringify(b.input).slice(0, 100)})`;
+          if (b.type === 'tool_result') return `→ ${typeof b.content === 'string' ? b.content.slice(0, 200) : JSON.stringify(b.content).slice(0, 200)}`;
+          return JSON.stringify(b).slice(0, 100);
+        }).join('\n');
+      } else if (Array.isArray(parsed)) {
+        text = parsed.map((item: any) => typeof item === 'string' ? item : JSON.stringify(item)).join('\n');
+      } else {
+        // Generic object — show key fields only
+        const keys = Object.keys(parsed);
+        if (keys.length <= 5) {
+          text = keys.map(k => `${k}: ${typeof parsed[k] === 'string' ? parsed[k] : JSON.stringify(parsed[k]).slice(0, 80)}`).join('\n');
+        } else {
+          text = JSON.stringify(parsed, null, 2);
+        }
+      }
     } catch {
       // Not valid JSON, keep as-is
     }
@@ -843,8 +869,14 @@ function LogPanel({ agentId, agentLabel, workspaceId, onClose }: {
                 ) : (
                   <>
                     <span className="text-[8px] text-gray-600 shrink-0 w-16">{entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : ''}</span>
-                    {entry.tool && <span className="text-yellow-500 shrink-0">[{entry.tool}]</span>}
-                    <LogContent content={entry.content} />
+                    {entry.subtype === 'tool_use' && <span className="text-yellow-500 shrink-0">🔧 {entry.tool || 'tool'}</span>}
+                    {entry.subtype === 'tool_result' && <span className="text-cyan-500 shrink-0">→</span>}
+                    {entry.subtype === 'init' && <span className="text-blue-400 shrink-0">⚡</span>}
+                    {entry.subtype === 'daemon' && <span className="text-purple-400 shrink-0">👁</span>}
+                    {entry.subtype === 'watch_detected' && <span className="text-orange-400 shrink-0">🔍</span>}
+                    {entry.subtype === 'error' && <span className="text-red-400 shrink-0">❌</span>}
+                    {!entry.tool && entry.subtype === 'text' && <span className="text-gray-500 shrink-0">💬</span>}
+                    <LogContent content={entry.content} subtype={entry.subtype} />
                   </>
                 )}
               </div>

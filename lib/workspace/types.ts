@@ -39,20 +39,23 @@ export interface WorkspaceAgentConfig {
 // ─── Watch Config ─────────────────────────────────────────
 
 export interface WatchTarget {
-  type: 'directory' | 'git' | 'agent_output' | 'command';
-  path?: string;           // directory: relative path; agent_output: agent ID
-  pattern?: string;        // glob for directory, stdout pattern for command
+  type: 'directory' | 'git' | 'agent_output' | 'agent_log' | 'session' | 'command';
+  path?: string;           // directory: relative path; agent_output/agent_log: agent ID
+  pattern?: string;        // glob for directory, regex/keyword for agent_log, stdout pattern for command
   cmd?: string;            // shell command (type='command' only)
+  contextChars?: number;   // agent_log/session: chars to capture around match (default 500)
+  debounce?: number;       // seconds to wait after match before triggering (default 10)
 }
 
-export type WatchAction = 'log' | 'analyze' | 'approve';
+export type WatchAction = 'log' | 'analyze' | 'approve' | 'send_message';
 
 export interface WatchConfig {
   enabled: boolean;
   interval: number;        // check interval in seconds (default 60)
   targets: WatchTarget[];
-  action: WatchAction;     // log=report only, analyze=auto-execute, approve=pending user approval
+  action: WatchAction;     // log=report only, analyze=auto-execute, approve=pending user approval, send_message=send to target agent
   prompt?: string;         // custom prompt for analyze action (default: "Analyze the following changes...")
+  sendTo?: string;         // send_message: target agent ID
 }
 
 export type AgentBackendType = 'api' | 'cli';

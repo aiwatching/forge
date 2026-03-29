@@ -378,6 +378,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
             ))}
           </div>
         </div>
+        <span className="text-[8px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400">Claude Code</span>
         <button
           onClick={sync}
           disabled={syncing}

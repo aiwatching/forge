@@ -1,6 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
 export function middleware(req: NextRequest) {
+  // Skip auth entirely in dev mode
+  const isDev = process.env.NODE_ENV !== 'production';
+  if (isDev) {
+    return NextResponse.next();
+  }
+
   const { pathname } = req.nextUrl;
 
   // Allow auth endpoints and static assets without login

@@ -22,7 +22,7 @@ interface AgentConfig {
   outputs: string[];
   steps: { id: string; label: string; prompt: string }[];
   requiresApproval?: boolean;
-  watch?: { enabled: boolean; interval: number; targets: any[]; action?: 'log' | 'analyze' | 'approve'; prompt?: string };
+  watch?: { enabled: boolean; interval: number; targets: any[]; action?: 'log' | 'analyze' | 'approve' | 'send_message'; prompt?: string; sendTo?: string };
 }
 
 interface AgentState {
@@ -322,6 +322,55 @@ function useWorkspaceStream(workspaceId: string | null, onEvent?: (event: any) =
   return { agents, states, logPreview, busLog, setAgents, daemonActive, setDaemonActive };
 }
 
+// ─── Session Target Selector (for Watch) ─────────────────
+
+function SessionTargetSelector({ target, agents, projectPath, onChange }: {
+  target: { type: string; path?: string; pattern?: string; cmd?: string };
+  agents: AgentConfig[];
+  projectPath?: string;
+  onChange: (updated: typeof target) => void;
+}) {
+  const [sessions, setSessions] = useState<{ id: string; modified: string; label: string }[]>([]);
+
+  // Load sessions when agent changes
+  useEffect(() => {
+    if (!projectPath) return;
+    const pName = (projectPath || '').replace(/\/+$/, '').split('/').pop() || '';
+    fetch(`/api/claude-sessions/${encodeURIComponent(pName)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setSessions(data.map((s: any, i: number) => ({
+            id: s.sessionId || s.id || '',
+            modified: s.modified || '',
+            label: i === 0 ? `${(s.sessionId || '').slice(0, 8)} (latest)` : (s.sessionId || '').slice(0, 8),
+          })));
+        }
+      })
+      .catch(() => {});
+  }, [projectPath]);
+
+  return (
+    <>
+      <select value={target.path || ''} onChange={e => onChange({ ...target, path: e.target.value, cmd: '' })}
+        className="text-[10px] bg-[#161b22] border border-[#30363d] rounded px-1 py-0.5 text-white w-24">
+        <option value="">Any agent</option>
+        {agents.map(a => <option key={a.id} value={a.id}>{a.icon} {a.label}</option>)}
+      </select>
+      <select value={target.cmd || ''} onChange={e => onChange({ ...target, cmd: e.target.value })}
+        className="text-[10px] bg-[#161b22] border border-[#30363d] rounded px-1 py-0.5 text-white w-28">
+        <option value="">Latest session</option>
+        {sessions.map(s => (
+          <option key={s.id} value={s.id}>{s.label}{s.modified ? ` · ${new Date(s.modified).toLocaleDateString()}` : ''}</option>
+        ))}
+      </select>
+      <input value={target.pattern || ''} onChange={e => onChange({ ...target, pattern: e.target.value })}
+        placeholder="regex (optional)"
+        className="text-[10px] bg-[#161b22] border border-[#30363d] rounded px-1 py-0.5 text-white w-24" />
+    </>
+  );
+}
+
 // ─── Agent Config Modal ──────────────────────────────────
 
 function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfirm, onCancel }: {
@@ -358,9 +407,11 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
   const [requiresApproval, setRequiresApproval] = useState(initial.requiresApproval || false);
   const [watchEnabled, setWatchEnabled] = useState(initial.watch?.enabled || false);
   const [watchInterval, setWatchInterval] = useState(String(initial.watch?.interval || 60));
-  const [watchAction, setWatchAction] = useState<'log' | 'analyze' | 'approve'>(initial.watch?.action || 'log');
+  const [watchAction, setWatchAction] = useState<'log' | 'analyze' | 'approve' | 'send_message'>(initial.watch?.action || 'log');
   const [watchPrompt, setWatchPrompt] = useState(initial.watch?.prompt || '');
-  const [watchTargets, setWatchTargets] = useState<{ type: string; path?: string; cmd?: string }[]>(
+  const [watchSendTo, setWatchSendTo] = useState(initial.watch?.sendTo || '');
+  const [watchDebounce, setWatchDebounce] = useState(String(initial.watch?.targets?.[0]?.debounce ?? 10));
+  const [watchTargets, setWatchTargets] = useState<{ type: string; path?: string; cmd?: string; pattern?: string }[]>(
     initial.watch?.targets || []
   );
   const [projectDirs, setProjectDirs] = useState<string[]>([]);
@@ -567,10 +618,15 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
             </div>
             {watchEnabled && (<>
               <div className="flex gap-2">
-                <div className="flex flex-col gap-0.5 flex-1">
-                  <label className="text-[8px] text-gray-600">Interval (seconds)</label>
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[8px] text-gray-600">Interval (s)</label>
                   <input value={watchInterval} onChange={e => setWatchInterval(e.target.value)} type="number" min="10"
-                    className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff] w-20" />
+                    className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff] w-16" />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[8px] text-gray-600">Debounce (s)</label>
+                  <input value={watchDebounce} onChange={e => setWatchDebounce(e.target.value)} type="number" min="0"
+                    className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff] w-16" />
                 </div>
                 <div className="flex flex-col gap-0.5 flex-1">
                   <label className="text-[8px] text-gray-600">On Change</label>
@@ -579,8 +635,21 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
                     <option value="log">Log only</option>
                     <option value="analyze">Auto analyze</option>
                     <option value="approve">Require approval</option>
+                    <option value="send_message">Send to agent</option>
                   </select>
                 </div>
+                {watchAction === 'send_message' && (
+                  <div className="flex flex-col gap-0.5 flex-1">
+                    <label className="text-[8px] text-gray-600">Send to</label>
+                    <select value={watchSendTo} onChange={e => setWatchSendTo(e.target.value)}
+                      className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff]">
+                      <option value="">Select agent...</option>
+                      {existingAgents.filter(a => a.id !== initial.id).map(a =>
+                        <option key={a.id} value={a.id}>{a.icon} {a.label}</option>
+                      )}
+                    </select>
+                  </div>
+                )}
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[8px] text-gray-600">Targets</label>
@@ -594,6 +663,8 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
                       <option value="directory">Directory</option>
                       <option value="git">Git</option>
                       <option value="agent_output">Agent Output</option>
+                      <option value="agent_log">Agent Log</option>
+                      <option value="session">Session Output</option>
                       <option value="command">Command</option>
                     </select>
                     {t.type === 'directory' && (
@@ -618,6 +689,36 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
                         )}
                       </select>
                     )}
+                    {t.type === 'agent_log' && (<>
+                      <select value={t.path || ''} onChange={e => {
+                        const next = [...watchTargets];
+                        next[i] = { ...t, path: e.target.value };
+                        setWatchTargets(next);
+                      }} className="text-[10px] bg-[#161b22] border border-[#30363d] rounded px-1 py-0.5 text-white flex-1">
+                        <option value="">Select agent...</option>
+                        {existingAgents.filter(a => a.id !== initial.id).map(a =>
+                          <option key={a.id} value={a.id}>{a.icon} {a.label}</option>
+                        )}
+                      </select>
+                      <input value={t.pattern || ''} onChange={e => {
+                        const next = [...watchTargets];
+                        next[i] = { ...t, pattern: e.target.value };
+                        setWatchTargets(next);
+                      }} placeholder="keyword (optional)"
+                        className="text-[10px] bg-[#161b22] border border-[#30363d] rounded px-1 py-0.5 text-white w-24" />
+                    </>)}
+                    {t.type === 'session' && (
+                      <SessionTargetSelector
+                        target={t}
+                        agents={existingAgents.filter(a => a.id !== initial.id && (!a.agentId || a.agentId === 'claude'))}
+                        projectPath={projectPath}
+                        onChange={(updated) => {
+                          const next = [...watchTargets];
+                          next[i] = updated;
+                          setWatchTargets(next);
+                        }}
+                      />
+                    )}
                     {t.type === 'command' && (
                       <input value={t.cmd || ''} onChange={e => {
                         const next = [...watchTargets];
@@ -641,6 +742,14 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
                     className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff]" />
                 </div>
               )}
+              {watchAction === 'send_message' && (
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[8px] text-gray-600">Message context (sent with detected changes)</label>
+                  <input value={watchPrompt} onChange={e => setWatchPrompt(e.target.value)}
+                    placeholder="Review the following changes and report issues..."
+                    className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff]" />
+                </div>
+              )}
             </>)}
           </div>
         </div>
@@ -658,9 +767,10 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
               watch: watchEnabled && watchTargets.length > 0 ? {
                 enabled: true,
                 interval: Math.max(10, parseInt(watchInterval) || 60),
-                targets: watchTargets,
+                targets: watchTargets.map(t => ({ ...t, debounce: parseInt(watchDebounce) || 10 })),
                 action: watchAction,
                 prompt: watchPrompt || undefined,
+                sendTo: watchSendTo || undefined,
               } : undefined,
             } as any);
           }} className="text-xs px-3 py-1.5 rounded bg-[#238636] text-white hover:bg-[#2ea043] disabled:opacity-40">

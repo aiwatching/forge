@@ -1090,6 +1090,37 @@ export class WorkspaceOrchestrator extends EventEmitter {
       this.emit('event', { type: 'bus_message_status', messageId: msg.id, status: 'pending_approval' } as any);
       console.log(`[watch] ${entry.config.label}: changes detected, awaiting approval`);
     }
+
+    if (action === 'send_message') {
+      const targetId = entry.config.watch?.sendTo;
+      if (!targetId) {
+        console.log(`[watch] ${entry.config.label}: send_message but no sendTo configured`);
+        return;
+      }
+      const targetEntry = this.agents.get(targetId);
+      if (!targetEntry) {
+        console.log(`[watch] ${entry.config.label}: sendTo agent ${targetId} not found`);
+        return;
+      }
+
+      // Skip if target already has a pending/running message from this watch
+      const hasPendingFromWatch = this.bus.getLog().some(m =>
+        m.from === agentId && m.to === targetId &&
+        (m.status === 'pending' || m.status === 'running' || m.status === 'pending_approval') &&
+        m.type !== 'ack'
+      );
+      if (hasPendingFromWatch) {
+        console.log(`[watch] ${entry.config.label}: skipping send — target ${targetEntry.config.label} still processing previous message`);
+        return;
+      }
+
+      const prompt = entry.config.watch?.prompt || 'Watch detected changes, please review:';
+      this.bus.send(agentId, targetId, 'notify', {
+        action: 'watch_alert',
+        content: `${prompt}\n\n${summary}`,
+      });
+      console.log(`[watch] ${entry.config.label} → ${targetEntry.config.label}: sent watch alert`);
+    }
   }
 
   /** Check if daemon mode is active */

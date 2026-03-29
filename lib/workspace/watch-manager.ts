@@ -7,8 +7,9 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync, readFileSync, openSync, readSync, fstatSync, closeSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import type { WorkspaceAgentConfig, WatchTarget, WatchConfig } from './types';
 import { appendAgentLog } from './persistence';
@@ -19,6 +20,8 @@ interface WatchSnapshot {
   lastCheckTime: number;   // timestamp ms — only files modified after this are "changed"
   gitHash?: string;
   commandOutput?: string;
+  logLineCount?: number;   // last known line count in agent's logs.jsonl
+  sessionFileSize?: number; // last known file size of session JSONL (bytes)
 }
 
 interface WatchChange {
@@ -132,11 +135,186 @@ function detectCommandChanges(projectPath: string, target: WatchTarget, prevOutp
   }
 }
 
+function detectAgentLogChanges(workspaceId: string, targetAgentId: string, pattern: string | undefined, prevLineCount: number, contextChars = 500): { changes: WatchChange | null; lineCount: number } {
+  const logFile = join(homedir(), '.forge', 'workspaces', workspaceId, 'agents', targetAgentId, 'logs.jsonl');
+  if (!existsSync(logFile)) return { changes: null, lineCount: 0 };
+
+  try {
+    const lines = readFileSync(logFile, 'utf-8').split('\n').filter(Boolean);
+    const currentCount = lines.length;
+    if (currentCount <= prevLineCount) return { changes: null, lineCount: currentCount };
+
+    // Get new lines since last check
+    const newLines = lines.slice(prevLineCount);
+    const newEntries: string[] = [];
+
+    // Build matcher: try regex first, fallback to case-insensitive includes
+    let matcher: ((text: string) => boolean) | null = null;
+    if (pattern) {
+      try {
+        const re = new RegExp(pattern, 'i');
+        matcher = (text: string) => re.test(text);
+      } catch {
+        const lower = pattern.toLowerCase();
+        matcher = (text: string) => text.toLowerCase().includes(lower);
+      }
+    }
+
+    // Extract content around match (contextChars before + after match point)
+    const extractContext = (text: string): string => {
+      if (!pattern || text.length <= contextChars) return text.slice(0, contextChars);
+      // Find match position for context window
+      let matchIdx = 0;
+      try {
+        const re = new RegExp(pattern, 'i');
+        const m = re.exec(text);
+        if (m) matchIdx = m.index;
+      } catch {
+        matchIdx = text.toLowerCase().indexOf(pattern.toLowerCase());
+        if (matchIdx === -1) matchIdx = 0;
+      }
+      const half = Math.floor(contextChars / 2);
+      const start = Math.max(0, matchIdx - half);
+      const end = Math.min(text.length, start + contextChars);
+      return (start > 0 ? '...' : '') + text.slice(start, end) + (end < text.length ? '...' : '');
+    };
+
+    for (const line of newLines) {
+      try {
+        const entry = JSON.parse(line);
+        const content = entry.content || '';
+        if (matcher && !matcher(content)) continue;
+        newEntries.push(extractContext(content));
+      } catch {
+        if (matcher && !matcher(line)) continue;
+        newEntries.push(extractContext(line));
+      }
+    }
+
+    if (newEntries.length === 0) return { changes: null, lineCount: currentCount };
+
+    return {
+      changes: {
+        targetType: 'agent_log',
+        description: `${newEntries.length} new log entries${pattern ? ` matching "${pattern}"` : ''}`,
+        files: newEntries.slice(0, 10),
+      },
+      lineCount: currentCount,
+    };
+  } catch {
+    return { changes: null, lineCount: prevLineCount };
+  }
+}
+
+function detectSessionChanges(projectPath: string, pattern: string | undefined, prevLineCount: number, contextChars = 500, sessionId?: string): { changes: WatchChange | null; lineCount: number } {
+  // Find session file for this project
+  const claudeHome = join(homedir(), '.claude', 'projects');
+  const encoded = projectPath.replace(/\//g, '-');
+  const sessionDir = join(claudeHome, encoded);
+  if (!existsSync(sessionDir)) return { changes: null, lineCount: prevLineCount };
+
+  try {
+    let latestFile: string;
+
+    if (sessionId) {
+      // Use specific session ID
+      latestFile = join(sessionDir, `${sessionId}.jsonl`);
+      if (!existsSync(latestFile)) return { changes: null, lineCount: prevLineCount };
+    } else {
+      // Find most recently modified .jsonl file
+      const files = readdirSync(sessionDir)
+        .filter(f => f.endsWith('.jsonl'))
+        .map(f => ({ name: f, mtime: statSync(join(sessionDir, f)).mtimeMs }))
+        .sort((a, b) => b.mtime - a.mtime);
+      if (files.length === 0) return { changes: null, lineCount: prevLineCount };
+      latestFile = join(sessionDir, files[0].name);
+    }
+    // Only read new bytes since last check (efficient for large 70MB+ files)
+    const fd = openSync(latestFile, 'r');
+    const fileSize = fstatSync(fd).size;
+    if (fileSize <= prevLineCount) { closeSync(fd); return { changes: null, lineCount: fileSize }; }
+
+    const readFrom = Math.max(0, prevLineCount > 0 ? prevLineCount - 1 : 0);
+    const readSize = Math.min(fileSize - readFrom, 500_000); // max 500KB per check
+    const buf = Buffer.alloc(readSize);
+    readSync(fd, buf, 0, readSize, readFrom);
+    closeSync(fd);
+
+    const tail = buf.toString('utf-8');
+    const newLines = tail.split('\n').filter(Boolean);
+    if (prevLineCount > 0 && newLines.length > 0) newLines.shift(); // skip partial first line
+
+    // Build matcher
+    let matcher: ((text: string) => boolean) | null = null;
+    if (pattern) {
+      try {
+        const re = new RegExp(pattern, 'i');
+        matcher = (text: string) => re.test(text);
+      } catch {
+        const lower = pattern.toLowerCase();
+        matcher = (text: string) => text.toLowerCase().includes(lower);
+      }
+    }
+
+    const entries: string[] = [];
+    for (const line of newLines) {
+      try {
+        const parsed = JSON.parse(line);
+        // Extract text content from various session JSONL formats
+        let text = '';
+        if (parsed.type === 'assistant' && parsed.message?.content) {
+          for (const block of (Array.isArray(parsed.message.content) ? parsed.message.content : [parsed.message.content])) {
+            if (typeof block === 'string') text += block;
+            else if (block.type === 'text' && block.text) text += block.text;
+            else if (block.type === 'tool_use') text += `[tool: ${block.name}] `;
+          }
+        } else if (parsed.type === 'result' && parsed.result) {
+          text = typeof parsed.result === 'string' ? parsed.result : JSON.stringify(parsed.result);
+        } else if (parsed.type === 'human' || parsed.type === 'user') {
+          const content = parsed.content || parsed.message?.content;
+          text = typeof content === 'string' ? content : '';
+        }
+
+        if (!text) continue;
+        if (matcher && !matcher(text)) continue;
+
+        // Context extraction around match
+        if (text.length > contextChars && pattern) {
+          let matchIdx = 0;
+          try { matchIdx = new RegExp(pattern, 'i').exec(text)?.index || 0; } catch {}
+          const half = Math.floor(contextChars / 2);
+          const start = Math.max(0, matchIdx - half);
+          const end = Math.min(text.length, start + contextChars);
+          text = (start > 0 ? '...' : '') + text.slice(start, end) + (end < text.length ? '...' : '');
+        } else {
+          text = text.slice(0, contextChars);
+        }
+        entries.push(text);
+      } catch {}
+    }
+
+    if (entries.length === 0) return { changes: null, lineCount: fileSize };
+
+    return {
+      changes: {
+        targetType: 'session',
+        description: `${entries.length} new session entries${pattern ? ` matching "${pattern}"` : ''}`,
+        files: entries.slice(0, 10),
+      },
+      lineCount: fileSize, // actually bytes, reusing field name
+    };
+  } catch {
+    return { changes: null, lineCount: prevLineCount };
+  }
+}
+
 // ─── WatchManager class ──────────────────────────────────
 
 export class WatchManager extends EventEmitter {
   private timers = new Map<string, NodeJS.Timeout>();
   private snapshots = new Map<string, WatchSnapshot>();
+  private pendingAlert = new Map<string, { changes: WatchChange[]; summary: string; timestamp: number }>();
+  private debounceTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private workspaceId: string,
@@ -229,6 +407,37 @@ export class WatchManager extends EventEmitter {
           }
           break;
         }
+        case 'agent_log': {
+          if (target.path) {
+            const agentLabel = this.getAgents().get(target.path)?.config.label || target.path;
+            const { changes, lineCount } = detectAgentLogChanges(this.workspaceId, target.path, target.pattern, prev.logLineCount || 0, target.contextChars || 500);
+            newSnapshot.logLineCount = lineCount;
+            if (changes) allChanges.push({ ...changes, description: `${agentLabel} log: ${changes.description}` });
+          }
+          break;
+        }
+        case 'session': {
+          // Resolve session ID: explicit (cmd field) > agent's cliSessionId > latest file
+          let sessionId: string | undefined;
+          if (target.cmd) {
+            // Explicit session ID selected by user
+            sessionId = target.cmd;
+          } else if (target.path) {
+            // Agent selected — use its current cliSessionId
+            const agents = this.getAgents();
+            const targetAgent = agents.get(target.path);
+            if (targetAgent) {
+              sessionId = (targetAgent.state as any).cliSessionId;
+              if (!sessionId) {
+                console.log(`[watch] Agent ${targetAgent.config.label} has no cliSessionId — falling back to latest session file`);
+              }
+            }
+          }
+          const { changes, lineCount: newFileSize } = detectSessionChanges(this.projectPath, target.pattern, prev.sessionFileSize || 0, target.contextChars || 500, sessionId);
+          newSnapshot.sessionFileSize = newFileSize;
+          if (changes) allChanges.push(changes);
+          break;
+        }
         case 'command': {
           const { changes, commandOutput } = detectCommandChanges(this.projectPath, target, prev.commandOutput);
           newSnapshot.commandOutput = commandOutput;
@@ -259,10 +468,40 @@ export class WatchManager extends EventEmitter {
 
     console.log(`[watch] ${config.label}: detected ${allChanges.length} change(s)`);
 
+    // Get debounce from first target that has it, or default 10s
+    const debounceMs = (config.watch!.targets.find(t => t.debounce !== undefined)?.debounce ?? 10) * 1000;
+
+    if (debounceMs > 0) {
+      // Accumulate changes, reset timer each time
+      const existing = this.pendingAlert.get(agentId);
+      const merged = existing ? [...existing.changes, ...allChanges] : allChanges;
+      const mergedSummary = merged.map(c =>
+        `[${c.targetType}] ${c.description}${c.files.length ? '\n  ' + c.files.join('\n  ') : ''}`
+      ).join('\n');
+      this.pendingAlert.set(agentId, { changes: merged, summary: mergedSummary, timestamp: Date.now() });
+
+      // Clear previous debounce timer, set new one
+      const prevTimer = this.debounceTimers.get(agentId);
+      if (prevTimer) clearTimeout(prevTimer);
+
+      this.debounceTimers.set(agentId, setTimeout(() => {
+        const pending = this.pendingAlert.get(agentId);
+        if (!pending) return;
+        this.pendingAlert.delete(agentId);
+        this.debounceTimers.delete(agentId);
+        this.emitAlert(agentId, config, pending.changes, pending.summary);
+      }, debounceMs));
+
+      console.log(`[watch] ${config.label}: debouncing ${debounceMs / 1000}s...`);
+    } else {
+      this.emitAlert(agentId, config, allChanges, summary);
+    }
+  }
+
+  private emitAlert(agentId: string, config: WorkspaceAgentConfig, allChanges: WatchChange[], summary: string): void {
     const entry = { type: 'system' as const, subtype: 'watch_detected', content: `🔍 Watch detected changes:\n${summary}`, timestamp: new Date().toISOString() };
     appendAgentLog(this.workspaceId, agentId, entry).catch(() => {});
 
-    // Emit SSE event for UI
     this.emit('watch_alert', {
       type: 'watch_alert',
       agentId,

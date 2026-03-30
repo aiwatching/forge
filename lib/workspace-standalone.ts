@@ -826,6 +826,12 @@ process.on('unhandledRejection', (err) => {
 
 // ─── Start ───────────────────────────────────────────────
 
+// Start MCP Server alongside workspace daemon
+import { startMcpServer, setOrchestratorResolver, getMcpPort } from './forge-mcp-server.js';
+setOrchestratorResolver((id: string) => loadOrchestrator(id));
+const MCP_PORT = getMcpPort();
+startMcpServer(MCP_PORT).catch(err => console.error('[forge-mcp] Failed to start:', err));
+
 server.listen(PORT, () => {
-  console.log(`[workspace] Daemon started on http://0.0.0.0:${PORT} (max ${MAX_ACTIVE} workspaces)`);
+  console.log(`[workspace] Daemon started on http://0.0.0.0:${PORT} (max ${MAX_ACTIVE} workspaces, MCP on ${MCP_PORT})`);
 });

@@ -1724,10 +1724,35 @@ export class WorkspaceOrchestrator extends EventEmitter {
           if (info.model) modelFlag = ` --model ${info.model}`;
         } catch {}
 
+        // Generate MCP config for Claude Code agents
+        let mcpConfigFlag = '';
+        if (cliType === 'claude-code') {
+          try {
+            const mcpPort = Number(process.env.MCP_PORT) || 7830;
+            const mcpConfigPath = join(workDir, '.forge', 'mcp.json');
+            const mcpConfig = {
+              mcpServers: {
+                forge: {
+                  url: `http://localhost:${mcpPort}/sse`,
+                },
+              },
+            };
+            const { mkdirSync: mkdirS } = await import('node:fs');
+            mkdirS(join(workDir, '.forge'), { recursive: true });
+            writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+            mcpConfigFlag = ` --mcp-config "${mcpConfigPath}"`;
+          } catch (err: any) {
+            console.log(`[daemon] ${config.label}: MCP config generation failed: ${err.message}`);
+          }
+        }
+
+        // Set agent env vars for MCP context
+        const agentEnv = `export FORGE_AGENT_ID="${config.id}" && export FORGE_WORKSPACE_ID="${this.workspaceId}" && export FORGE_PORT="${Number(process.env.PORT) || 8403}"`;
+
         execSync(`tmux new-session -d -s "${sessionName}" -c "${workDir}"`, { timeout: 5000 });
 
         // Build CLI start command
-        const parts: string[] = [];
+        const parts: string[] = [agentEnv];
         if (envExports) parts.push(envExports.replace(/ && $/, ''));
         let cmd = cliCmd;
 
@@ -1748,6 +1773,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
         }
         if (modelFlag) cmd += modelFlag;
         if (config.skipPermissions !== false && skipPermissionsFlag) cmd += ` ${skipPermissionsFlag}`;
+        if (mcpConfigFlag) cmd += mcpConfigFlag;
         parts.push(cmd);
 
         const startCmd = parts.join(' && ');

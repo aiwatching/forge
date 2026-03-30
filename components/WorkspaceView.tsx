@@ -2228,7 +2228,7 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
               className={`text-[9px] px-1 ${hasTmux && taskStatus === 'running' ? 'text-green-400 animate-pulse' : 'text-gray-600 hover:text-green-400'}`} title="Open terminal">⌨️</button>
             {hasTmux && !config.primary && (
               <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onSwitchSession(); }}
-                className="text-[7px] text-gray-600 hover:text-yellow-400 -ml-1" title="Switch session">▾</button>
+                className="text-[10px] text-gray-600 hover:text-yellow-400 px-0.5 py-0.5" title="Switch session">▾</button>
             )}
           </span>
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onShowInbox(); }}

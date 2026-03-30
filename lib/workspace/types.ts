@@ -32,6 +32,8 @@ export interface WorkspaceAgentConfig {
   steps: AgentStep[];
   // Approval gate
   requiresApproval?: boolean;
+  // Persistent terminal: keep a tmux+claude session alive, inject messages directly
+  persistentSession?: boolean;
   // Watch: autonomous periodic monitoring
   watch?: WatchConfig;
 }

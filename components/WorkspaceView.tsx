@@ -22,6 +22,7 @@ interface AgentConfig {
   outputs: string[];
   steps: { id: string; label: string; prompt: string }[];
   requiresApproval?: boolean;
+  persistentSession?: boolean;
   watch?: { enabled: boolean; interval: number; targets: any[]; action?: 'log' | 'analyze' | 'approve' | 'send_message'; prompt?: string; sendTo?: string };
 }
 
@@ -405,6 +406,7 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
     (initial.steps || []).map(s => `${s.label}: ${s.prompt}`).join('\n') || ''
   );
   const [requiresApproval, setRequiresApproval] = useState(initial.requiresApproval || false);
+  const [persistentSession, setPersistentSession] = useState(initial.persistentSession || false);
   const [watchEnabled, setWatchEnabled] = useState(initial.watch?.enabled || false);
   const [watchInterval, setWatchInterval] = useState(String(initial.watch?.interval || 60));
   const [watchAction, setWatchAction] = useState<'log' | 'analyze' | 'approve' | 'send_message'>(initial.watch?.action || 'log');
@@ -600,6 +602,13 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
             <label htmlFor="requiresApproval" className="text-[9px] text-gray-400">Require approval before processing inbox messages</label>
           </div>
 
+          {/* Persistent Session */}
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="persistentSession" checked={persistentSession} onChange={e => setPersistentSession(e.target.checked)}
+              className="accent-[#3fb950]" />
+            <label htmlFor="persistentSession" className="text-[9px] text-gray-400">Keep terminal session alive (messages inject directly, preserves context)</label>
+          </div>
+
           {/* Steps */}
           <div className="flex flex-col gap-1">
             <label className="text-[9px] text-gray-500 uppercase">Steps (one per line — Label: Prompt)</label>
@@ -764,6 +773,7 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
               outputs: outputs.split(',').map(s => s.trim()).filter(Boolean),
               steps: parseSteps(),
               requiresApproval: requiresApproval || undefined,
+              persistentSession: persistentSession || undefined,
               watch: watchEnabled && watchTargets.length > 0 ? {
                 enabled: true,
                 interval: Math.max(10, parseInt(watchInterval) || 60),

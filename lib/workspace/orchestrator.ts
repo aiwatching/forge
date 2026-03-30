@@ -817,6 +817,12 @@ export class WorkspaceOrchestrator extends EventEmitter {
       }
     }
 
+    // Create persistent terminal sessions for configured agents
+    for (const [id, entry] of this.agents) {
+      if (entry.config.type === 'input' || !entry.config.persistentSession) continue;
+      this.ensurePersistentSession(id, entry.config);
+    }
+
     // Start watch loops for agents with watch config
     this.watchManager.start();
 
@@ -1572,6 +1578,88 @@ export class WorkspaceOrchestrator extends EventEmitter {
   // ─── Agent liveness ─────────────────────────────────────
 
   /** Find an active tmux session for an agent by checking naming conventions */
+  // ─── Persistent Terminal Sessions ────────────────────────
+
+  /** Create a persistent tmux session with claude for an agent */
+  private async ensurePersistentSession(agentId: string, config: WorkspaceAgentConfig): Promise<void> {
+    const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
+    const sessionName = `mw-forge-${safeName(this.projectName)}-${safeName(config.label)}`;
+
+    // Check if session already exists
+    try {
+      execSync(`tmux has-session -t "${sessionName}" 2>/dev/null`, { timeout: 3000 });
+      console.log(`[daemon] ${config.label}: persistent session already exists (${sessionName})`);
+    } catch {
+      // Create new session with claude
+      try {
+        // Resolve agent launch info
+        let cliCmd = 'claude';
+        let envExports = '';
+        let modelFlag = '';
+        try {
+          const { resolveTerminalLaunch } = await import('../agents/index.js') as any;
+          const info = resolveTerminalLaunch(config.agentId);
+          cliCmd = info.cliCmd || 'claude';
+          if (info.env) {
+            envExports = Object.entries(info.env)
+              .filter(([k]) => k !== 'CLAUDE_MODEL')
+              .map(([k, v]) => `export ${k}="${v}"`)
+              .join(' && ');
+            if (envExports) envExports += ' && ';
+          }
+          if (info.model) modelFlag = ` --model ${info.model}`;
+        } catch {}
+
+        const workDir = config.workDir && config.workDir !== './' && config.workDir !== '.'
+          ? `${this.projectPath}/${config.workDir}` : this.projectPath;
+
+        execSync(`tmux new-session -d -s "${sessionName}" -c "${workDir}"`, { timeout: 5000 });
+        // Start claude in the session
+        const startCmd = `${envExports}${cliCmd}${modelFlag}`;
+        execSync(`tmux send-keys -t "${sessionName}" '${startCmd}' Enter`, { timeout: 5000 });
+
+        console.log(`[daemon] ${config.label}: persistent session created (${sessionName})`);
+      } catch (err: any) {
+        console.error(`[daemon] ${config.label}: failed to create persistent session: ${err.message}`);
+        return;
+      }
+    }
+
+    // Store session name in agent state
+    const entry = this.agents.get(agentId);
+    if (entry) {
+      entry.state.tmuxSession = sessionName;
+    }
+  }
+
+  /** Inject text into an agent's persistent terminal session */
+  injectIntoSession(agentId: string, text: string): boolean {
+    const entry = this.agents.get(agentId);
+    const tmuxSession = entry?.state.tmuxSession || this.findTmuxSession(entry?.config.label || '');
+    if (!tmuxSession) return false;
+
+    try {
+      const tmpFile = `/tmp/forge-inject-${Date.now()}.txt`;
+      writeFileSync(tmpFile, text);
+      execSync(`tmux load-buffer ${tmpFile}`, { timeout: 5000 });
+      execSync(`tmux paste-buffer -t "${tmuxSession}"`, { timeout: 5000 });
+      execSync(`tmux send-keys -t "${tmuxSession}" Enter`, { timeout: 5000 });
+      try { unlinkSync(tmpFile); } catch {}
+      return true;
+    } catch (err: any) {
+      console.error(`[inject] Failed for ${tmuxSession}: ${err.message}`);
+      return false;
+    }
+  }
+
+  /** Check if agent has a persistent session available */
+  hasPersistentSession(agentId: string): boolean {
+    const entry = this.agents.get(agentId);
+    if (!entry) return false;
+    if (entry.state.tmuxSession) return true;
+    return !!this.findTmuxSession(entry.config.label);
+  }
+
   private findTmuxSession(agentLabel: string): string | null {
     const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
     const projectSafe = safeName(this.projectName);
@@ -1776,8 +1864,23 @@ export class WorkspaceOrchestrator extends EventEmitter {
         timestamp: new Date(nextMsg.timestamp).toISOString(),
       };
 
-      entry.worker.setProcessingMessage(nextMsg.id);
-      entry.worker.wake({ type: 'bus_message', messages: [logEntry] });
+      // Persistent session: inject directly into terminal instead of waking worker
+      if (entry.config.persistentSession && this.hasPersistentSession(agentId)) {
+        const injected = this.injectIntoSession(agentId, nextMsg.payload.content || nextMsg.payload.action);
+        if (injected) {
+          // Mark message as done immediately (terminal handles execution)
+          nextMsg.status = 'done' as any;
+          this.emit('event', { type: 'bus_message_status', messageId: nextMsg.id, status: 'done' } as any);
+          console.log(`[inbox] ${entry.config.label}: injected into persistent session`);
+        } else {
+          // Fallback to worker
+          entry.worker.setProcessingMessage(nextMsg.id);
+          entry.worker.wake({ type: 'bus_message', messages: [logEntry] });
+        }
+      } else {
+        entry.worker.setProcessingMessage(nextMsg.id);
+        entry.worker.wake({ type: 'bus_message', messages: [logEntry] });
+      }
     };
 
     // Check every 2 seconds

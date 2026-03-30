@@ -1664,6 +1664,27 @@ export class WorkspaceOrchestrator extends EventEmitter {
   /** Find an active tmux session for an agent by checking naming conventions */
   // ─── Persistent Terminal Sessions ────────────────────────
 
+  /**
+   * Ensure the primary agent has a fixedSessionId bound.
+   * Call from any entry point that opens/uses a terminal for this project.
+   * Returns the fixedSessionId if bound, null if no primary or no sessions.
+   */
+  ensurePrimarySessionBound(): string | null {
+    const primary = this.getPrimaryAgent();
+    if (!primary) return null;
+    if (primary.config.fixedSessionId) return primary.config.fixedSessionId;
+
+    // Try to bind latest session
+    const sessionId = this.findLatestCliSession(primary.config.workDir) || undefined;
+    if (sessionId) {
+      primary.config.fixedSessionId = sessionId;
+      this.saveNow();
+      this.emitAgentsChanged();
+      console.log(`[workspace] Primary agent "${primary.config.label}" bound to session ${sessionId}`);
+    }
+    return sessionId || null;
+  }
+
   /** Resolve the CLI session directory for a given project path (e.g., ~/.claude/projects/-Users-zliu-...) */
   private getCliSessionDir(projectPath?: string): string {
     const encoded = (projectPath || this.projectPath).replace(/\//g, '-');

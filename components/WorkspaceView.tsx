@@ -2361,6 +2361,10 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
             inboxFailed: busLog.filter(m => m.to === agent.id && m.status === 'failed' && m.type !== 'ack').length,
             onOpenTerminal: async () => {
               if (!workspaceId) return;
+              if (!daemonActiveFromStream) {
+                alert('Start daemon first before opening terminal.');
+                return;
+              }
               // If terminal already open for this agent, close it first (config may have changed)
               setFloatingTerminals(prev => prev.filter(t => t.agentId !== agent.id));
 

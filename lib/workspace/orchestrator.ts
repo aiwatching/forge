@@ -307,11 +307,14 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     // If agent CLI changed (claude→codex, etc.), kill old terminal and clear bound session
     const agentChanged = entry.config.agentId !== config.agentId;
-    if (agentChanged && entry.state.tmuxSession) {
-      try { execSync(`tmux kill-session -t "${entry.state.tmuxSession}" 2>/dev/null`, { timeout: 3000 }); } catch {}
+    if (agentChanged) {
+      console.log(`[workspace] ${config.label}: agent changed ${entry.config.agentId} → ${config.agentId}`);
+      if (entry.state.tmuxSession) {
+        try { execSync(`tmux kill-session -t "${entry.state.tmuxSession}" 2>/dev/null`, { timeout: 3000 }); } catch {}
+        console.log(`[workspace] ${config.label}: killed tmux session ${entry.state.tmuxSession}`);
+      }
       entry.state.tmuxSession = undefined;
-      config.boundSessionId = undefined; // new agent = new session
-      console.log(`[workspace] ${config.label}: agent changed to ${config.agentId}, killed old terminal`);
+      config.boundSessionId = undefined;
     }
 
     entry.config = config;

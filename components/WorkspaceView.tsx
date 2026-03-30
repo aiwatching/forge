@@ -2378,68 +2378,55 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 alert('Start daemon first before opening terminal.');
                 return;
               }
-              // If terminal already open for this agent, close it first (config may have changed)
+              // Close existing terminal (config may have changed)
               setFloatingTerminals(prev => prev.filter(t => t.agentId !== agent.id));
 
               const agentState = states[agent.id];
               const existingTmux = agentState?.tmuxSession;
-
-              // Build fixed session name: mw-forge-{project}-{agentLabel}
               const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
               const sessName = `mw-forge-${safeName(projectName)}-${safeName(agent.label)}`;
-              const workDir = agent.workDir && agent.workDir !== './' && agent.workDir !== '.'
-                ? agent.workDir : undefined;
+              const workDir = agent.workDir && agent.workDir !== './' && agent.workDir !== '.' ? agent.workDir : undefined;
 
-              // Primary agent: always use fixed session, no dialog
-              if (agent.primary && existingTmux) {
-                setFloatingTerminals(prev => [...prev, {
-                  agentId: agent.id, label: agent.label, icon: agent.icon,
-                  cliId: agent.agentId || 'claude', workDir,
-                  tmuxSession: existingTmux, sessionName: sessName, isPrimary: true, skipPermissions: agent.skipPermissions !== false,
-                }]);
-                wsApi(workspaceId, 'open_terminal', { agentId: agent.id });
-                return;
-              }
-
-              // If tmux session exists, just attach
-              if (existingTmux) {
-                setFloatingTerminals(prev => [...prev, {
-                  agentId: agent.id, label: agent.label, icon: agent.icon,
-                  cliId: agent.agentId || 'claude', workDir,
-                  tmuxSession: existingTmux, sessionName: sessName, isPrimary: agent.primary, skipPermissions: agent.skipPermissions !== false,
-                }]);
-                // Register terminal open with backend
-                wsApi(workspaceId, 'open_terminal', { agentId: agent.id });
-                return;
-              }
-
-              // Resolve terminal launch info to determine supportsSession
+              // Always resolve launch info for this agent (cliCmd, env, model)
               const resolveRes = await wsApi(workspaceId, 'open_terminal', { agentId: agent.id, resolveOnly: true }).catch(() => ({})) as any;
-              const supportsSession = resolveRes?.supportsSession ?? true;
+              const launchInfo = {
+                cliCmd: resolveRes?.cliCmd || 'claude',
+                cliType: resolveRes?.cliType || 'claude-code',
+                profileEnv: {
+                  ...(resolveRes?.env || {}),
+                  ...(resolveRes?.model ? { CLAUDE_MODEL: resolveRes.model } : {}),
+                  FORGE_AGENT_ID: agent.id,
+                  FORGE_WORKSPACE_ID: workspaceId!,
+                  FORGE_PORT: String(window.location.port || 8403),
+                },
+              };
 
-              // Primary agent without session yet — skip dialog, just open
+              // If tmux session exists → attach (primary or non-primary)
+              if (existingTmux) {
+                wsApi(workspaceId, 'open_terminal', { agentId: agent.id });
+                setFloatingTerminals(prev => [...prev, {
+                  agentId: agent.id, label: agent.label, icon: agent.icon,
+                  cliId: agent.agentId || 'claude', ...launchInfo, workDir,
+                  tmuxSession: existingTmux, sessionName: sessName,
+                  isPrimary: agent.primary, skipPermissions: agent.skipPermissions !== false,
+                }]);
+                return;
+              }
+
+              // Primary without session → open directly (no dialog)
               if (agent.primary) {
                 const res = await wsApi(workspaceId, 'open_terminal', { agentId: agent.id }).catch(() => ({})) as any;
                 setFloatingTerminals(prev => [...prev, {
                   agentId: agent.id, label: agent.label, icon: agent.icon,
-                  cliId: agent.agentId || 'claude',
-                  cliCmd: (resolveRes as any)?.cliCmd || 'claude',
-                  cliType: (resolveRes as any)?.cliType || 'claude-code',
-                  workDir,
-                  tmuxSession: res?.tmuxSession || sessName, sessionName: sessName, isPrimary: true, skipPermissions: agent.skipPermissions !== false,
-                  profileEnv: {
-                    ...((resolveRes as any)?.env || {}),
-                    ...((resolveRes as any)?.model ? { CLAUDE_MODEL: (resolveRes as any).model } : {}),
-                    FORGE_AGENT_ID: agent.id,
-                    FORGE_WORKSPACE_ID: workspaceId!,
-                    FORGE_PORT: String(window.location.port || 8403),
-                  },
+                  cliId: agent.agentId || 'claude', ...launchInfo, workDir,
+                  tmuxSession: res?.tmuxSession || sessName, sessionName: sessName,
+                  isPrimary: true, skipPermissions: agent.skipPermissions !== false,
                 }]);
                 return;
               }
 
-              // Show launch dialog with resolved info
-              setTermLaunchDialog({ agent, sessName, workDir, sessions: [], supportsSession });
+              // Non-primary without session → show launch dialog
+              setTermLaunchDialog({ agent, sessName, workDir, sessions: [], supportsSession: resolveRes?.supportsSession ?? true });
             },
             onSwitchSession: async () => {
               if (!workspaceId) return;

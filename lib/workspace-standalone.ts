@@ -302,7 +302,12 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
       }
       case 'close_terminal': {
         if (!agentId) return jsonError(res, 'agentId required');
-        orch.restartAgentDaemon(agentId);
+        if (body.kill) {
+          // Kill: clear tmuxSession → message loop falls back to headless (claude -p)
+          orch.clearTmuxSession(agentId);
+          console.log(`[workspace] ${agentId}: terminal killed, falling back to headless`);
+        }
+        // Suspend: tmuxSession stays, agent can reattach later
         return json(res, { ok: true });
       }
       case 'create_ticket': {

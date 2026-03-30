@@ -2834,9 +2834,9 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
             if (workspaceId) wsApi(workspaceId, 'set_tmux_session', { agentId: ft.agentId, sessionName: name });
             setFloatingTerminals(prev => prev.map(t => t.agentId === ft.agentId ? { ...t, tmuxSession: name } : t));
           }}
-          onClose={() => {
+          onClose={(killSession) => {
             setFloatingTerminals(prev => prev.filter(t => t.agentId !== ft.agentId));
-            if (workspaceId) wsApi(workspaceId, 'close_terminal', { agentId: ft.agentId });
+            if (workspaceId) wsApi(workspaceId, 'close_terminal', { agentId: ft.agentId, kill: killSession });
           }}
         />
       ))}

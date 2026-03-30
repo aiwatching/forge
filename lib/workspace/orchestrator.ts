@@ -1399,6 +1399,14 @@ export class WorkspaceOrchestrator extends EventEmitter {
     this.emitAgentsChanged();
   }
 
+  clearTmuxSession(agentId: string): void {
+    const entry = this.agents.get(agentId);
+    if (!entry) return;
+    entry.state.tmuxSession = undefined;
+    this.saveNow();
+    this.emitAgentsChanged();
+  }
+
   /** Record that an agent has an open terminal (tmux session tracking) */
   setManualMode(agentId: string): void {
     const entry = this.agents.get(agentId);

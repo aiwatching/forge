@@ -20,19 +20,14 @@ If MCP tools are available, use them directly:
 
 ### Option 2: HTTP API (fallback)
 
-Step 1 — Get workspace ID:
+Check inbox (uses $FORGE_WORKSPACE_ID env var):
 ```bash
-WS_ID=""; DIR="$(pwd)"; while [ "$DIR" != "/" ]; do WS_ID=$(curl -s "http://localhost:8403/api/workspace?projectPath=$DIR" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id','') if d else '')" 2>/dev/null); [ -n "$WS_ID" ] && break; DIR=$(dirname "$DIR"); done; echo "$WS_ID"
-```
-
-Step 2 — Check inbox (replace WORKSPACE_ID):
-```bash
-curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"inbox","agentId":"'"$FORGE_AGENT_ID"'"}'
+curl -s -X POST "http://localhost:8403/api/workspace/$FORGE_WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"inbox","agentId":"'"$FORGE_AGENT_ID"'"}'
 ```
 
 ## Mark message as done
 ```bash
-curl -s -X POST "http://localhost:8403/api/workspace/WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"message_done","agentId":"'"$FORGE_AGENT_ID"'","messageId":"MESSAGE_ID"}'
+curl -s -X POST "http://localhost:8403/api/workspace/$FORGE_WORKSPACE_ID/smith" -H "Content-Type: application/json" -d '{"action":"message_done","agentId":"'"$FORGE_AGENT_ID"'","messageId":"MESSAGE_ID"}'
 ```
 
 After handling a message, always mark it as done or failed.

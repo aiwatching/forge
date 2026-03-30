@@ -25,6 +25,7 @@ interface AgentConfig {
   requiresApproval?: boolean;
   persistentSession?: boolean;
   skipPermissions?: boolean;
+  boundSessionId?: string;
   watch?: { enabled: boolean; interval: number; targets: any[]; action?: 'log' | 'analyze' | 'approve' | 'send_message'; prompt?: string; sendTo?: string };
 }
 
@@ -1658,7 +1659,7 @@ function TerminalDock({ terminals, projectPath, workspaceId, onSessionReady, onC
 }
 
 // ─── Inline Terminal (no drag/resize, fills parent) ──────
-function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, skipPermissions, onSessionReady }: {
+function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, skipPermissions, boundSessionId, onSessionReady }: {
   agentLabel: string;
   agentIcon: string;
   projectPath: string;
@@ -1673,6 +1674,7 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
   profileEnv?: Record<string, string>;
   isPrimary?: boolean;
   skipPermissions?: boolean;
+  boundSessionId?: string;
   onSessionReady?: (name: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1736,15 +1738,15 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
               const envExportsClean = Object.keys(envWithoutModel).length > 0
                 ? Object.entries(envWithoutModel).map(([k, v]) => `export ${k}="${v}"`).join(' && ') + ' && '
                 : '';
-              // Primary: use fixed session. Non-primary: use explicit sessionId or -c
-              let resumeId = resumeSessionId;
+              // Resolve session: explicit > boundSessionId > fixedSession (primary) > fresh
+              let resumeId = resumeSessionId || boundSessionId;
               if (isClaude && !resumeId && isPrimary) {
                 try {
                   const { resolveFixedSession } = await import('@/lib/session-utils');
                   resumeId = (await resolveFixedSession(projectPath)) || undefined;
                 } catch {}
               }
-              const resumeFlag = isClaude ? (resumeId ? ` --resume ${resumeId}` : ' -c') : '';
+              const resumeFlag = isClaude && resumeId ? ` --resume ${resumeId}` : '';
               let mcpFlag = '';
               if (isClaude) { try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {} }
               const sf = skipPermissions ? (cliType === 'codex' ? ' --full-auto' : cliType === 'aider' ? ' --yes' : ' --dangerously-skip-permissions') : '';
@@ -1774,7 +1776,7 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
   return <div ref={containerRef} className="w-full h-full" style={{ background: '#0d1117' }} />;
 }
 
-function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, skipPermissions, persistentSession, onSessionReady, onClose }: {
+function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, skipPermissions, persistentSession, boundSessionId, onSessionReady, onClose }: {
   agentLabel: string;
   agentIcon: string;
   projectPath: string;
@@ -1790,6 +1792,7 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
   isPrimary?: boolean;
   skipPermissions?: boolean;
   persistentSession?: boolean;
+  boundSessionId?: string;
   onSessionReady?: (name: string) => void;
   onClose: (killSession: boolean) => void;
 }) {
@@ -1898,15 +1901,15 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
               ? Object.entries(envWithoutModel).map(([k, v]) => `export ${k}="${v}"`).join(' && ') + ' && '
               : '';
             // Primary: use fixed session. Non-primary: use explicit sessionId or -c
-            let resumeId = resumeSessionId;
+            // Resolve session: explicit > boundSessionId > fixedSession (primary) > fresh
+            let resumeId = resumeSessionId || boundSessionId;
             if (isClaude && !resumeId && isPrimary) {
               try {
                 const { resolveFixedSession } = await import('@/lib/session-utils');
                 resumeId = (await resolveFixedSession(projectPath)) || undefined;
               } catch {}
             }
-            // --resume <id> if explicit, otherwise -c to resume latest session
-            const resumeFlag = isClaude ? (resumeId ? ` --resume ${resumeId}` : ' -c') : '';
+            const resumeFlag = isClaude && resumeId ? ` --resume ${resumeId}` : '';
             let mcpFlag = '';
             if (isClaude) { try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {} }
             const sf = skipPermissions ? ' --dangerously-skip-permissions' : '';
@@ -2278,7 +2281,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
   const [memoryTarget, setMemoryTarget] = useState<{ id: string; label: string } | null>(null);
   const [inboxTarget, setInboxTarget] = useState<{ id: string; label: string } | null>(null);
   const [showBusPanel, setShowBusPanel] = useState(false);
-  const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; cliCmd?: string; cliType?: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string>; isPrimary?: boolean; skipPermissions?: boolean; persistentSession?: boolean }[]>([]);
+  const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; cliCmd?: string; cliType?: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string>; isPrimary?: boolean; skipPermissions?: boolean; persistentSession?: boolean; boundSessionId?: string }[]>([]);
   const [termLaunchDialog, setTermLaunchDialog] = useState<{ agent: AgentConfig; sessName: string; workDir?: string; sessions: string[]; supportsSession?: boolean } | null>(null);
 
   // Expose focusAgent to parent
@@ -2412,7 +2415,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                   agentId: agent.id, label: agent.label, icon: agent.icon,
                   cliId: agent.agentId || 'claude', ...launchInfo, workDir,
                   tmuxSession: existingTmux, sessionName: sessName,
-                  isPrimary: agent.primary, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession,
+                  isPrimary: agent.primary, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: agent.boundSessionId,
                 }]);
                 return;
               }
@@ -2424,7 +2427,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                   agentId: agent.id, label: agent.label, icon: agent.icon,
                   cliId: agent.agentId || 'claude', ...launchInfo, workDir,
                   tmuxSession: res?.tmuxSession || sessName, sessionName: sessName,
-                  isPrimary: true, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession,
+                  isPrimary: true, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: agent.boundSessionId,
                 }]);
                 return;
               }
@@ -2801,7 +2804,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 cliCmd: res.cliCmd || 'claude',
                 cliType: res.cliType || 'claude-code',
                 workDir,
-                sessionName: sessName, resumeMode, resumeSessionId: sessionId, isPrimary: false, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession,
+                sessionName: sessName, resumeMode, resumeSessionId: sessionId, isPrimary: false, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: agent.boundSessionId,
                 profileEnv: {
                   ...(res.env || {}),
                   ...(res.model ? { CLAUDE_MODEL: res.model } : {}),
@@ -2835,6 +2838,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           isPrimary={ft.isPrimary}
           skipPermissions={ft.skipPermissions}
           persistentSession={ft.persistentSession}
+          boundSessionId={ft.boundSessionId}
           onSessionReady={(name) => {
             if (workspaceId) wsApi(workspaceId, 'set_tmux_session', { agentId: ft.agentId, sessionName: name });
             setFloatingTerminals(prev => prev.map(t => t.agentId === ft.agentId ? { ...t, tmuxSession: name } : t));

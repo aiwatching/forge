@@ -1870,33 +1870,28 @@ export class WorkspaceOrchestrator extends EventEmitter {
         if (envExports) parts.push(envExports.replace(/ && $/, ''));
         let cmd = cliCmd;
 
-        // Session resume: primary uses fixedSessionId, others use -c
+        // Session resume: use bound session ID (primary from project-sessions, others from config)
         if (supportsSession) {
-          let resumed = false;
+          let sessionId: string | undefined;
+
           if (config.primary) {
             try {
               const { getFixedSession } = await import('../project-sessions') as any;
-              const fixedId = getFixedSession(this.projectPath);
-              if (fixedId) {
-                const sessionFile = join(this.getCliSessionDir(config.workDir), `${fixedId}.jsonl`);
-                if (existsSync(sessionFile)) {
-                  cmd += ` --resume ${fixedId}`;
-                  resumed = true;
-                } else {
-                  console.log(`[daemon] ${config.label}: session file ${fixedId} missing, starting fresh`);
-                }
-              }
+              sessionId = getFixedSession(this.projectPath);
             } catch {}
+          } else {
+            sessionId = config.boundSessionId;
           }
-          if (!resumed) {
-            // Only add -c if the workDir has existing sessions (avoid "No conversation found")
-            const sessionDir = this.getCliSessionDir(config.workDir);
-            try {
-              const { readdirSync } = await import('node:fs');
-              const hasSession = readdirSync(sessionDir).some(f => f.endsWith('.jsonl'));
-              if (hasSession) cmd += ' -c';
-            } catch {} // dir doesn't exist → no sessions → start fresh
+
+          if (sessionId) {
+            const sessionFile = join(this.getCliSessionDir(config.workDir), `${sessionId}.jsonl`);
+            if (existsSync(sessionFile)) {
+              cmd += ` --resume ${sessionId}`;
+            } else {
+              console.log(`[daemon] ${config.label}: bound session ${sessionId} missing, starting fresh`);
+            }
           }
+          // No bound session → start fresh (no -c, avoids "No conversation found")
         }
         if (modelFlag) cmd += modelFlag;
         if (config.skipPermissions !== false && skipPermissionsFlag) cmd += ` ${skipPermissionsFlag}`;
@@ -1943,6 +1938,26 @@ export class WorkspaceOrchestrator extends EventEmitter {
             return;
           }
         } catch {}
+        // Auto-bind session: if no boundSessionId, detect new session file after 5s
+        if (!config.primary && !config.boundSessionId && supportsSession) {
+          setTimeout(() => {
+            try {
+              const sessionDir = this.getCliSessionDir(config.workDir);
+              if (existsSync(sessionDir)) {
+                const { readdirSync, statSync: statS } = require('node:fs');
+                const files = readdirSync(sessionDir).filter((f: string) => f.endsWith('.jsonl'));
+                if (files.length > 0) {
+                  const latest = files
+                    .map((f: string) => ({ name: f, mtime: statS(join(sessionDir, f)).mtimeMs }))
+                    .sort((a: any, b: any) => b.mtime - a.mtime)[0];
+                  config.boundSessionId = latest.name.replace('.jsonl', '');
+                  this.saveNow();
+                  console.log(`[daemon] ${config.label}: auto-bound to session ${config.boundSessionId}`);
+                }
+              }
+            } catch {}
+          }, 5000);
+        }
       } catch (err: any) {
         console.error(`[daemon] ${config.label}: failed to create persistent session: ${err.message}`);
         const entry = this.agents.get(agentId);

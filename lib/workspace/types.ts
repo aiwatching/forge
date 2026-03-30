@@ -36,6 +36,8 @@ export interface WorkspaceAgentConfig {
   requiresApproval?: boolean;
   // Persistent terminal: keep a tmux+claude session alive, inject messages directly
   persistentSession?: boolean;
+  // Bound CLI session ID for this agent (like fixedSessionId but per-agent)
+  boundSessionId?: string;
   // Skip dangerous permissions check (default true when persistentSession is enabled)
   skipPermissions?: boolean;
   // Watch: autonomous periodic monitoring

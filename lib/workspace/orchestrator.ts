@@ -1639,10 +1639,12 @@ export class WorkspaceOrchestrator extends EventEmitter {
       }
     }
 
-    // Store session name in agent state
+    // Store session name in agent state + notify frontend
     const entry = this.agents.get(agentId);
     if (entry) {
       entry.state.tmuxSession = sessionName;
+      this.saveNow();
+      this.emitAgentsChanged();
     }
   }
 

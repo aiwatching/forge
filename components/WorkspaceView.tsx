@@ -1740,7 +1740,7 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
                   resumeId = (await resolveFixedSession(projectPath)) || undefined;
                 } catch {}
               }
-              const resumeFlag = isClaude && resumeId ? ` --resume ${resumeId}` : '';
+              const resumeFlag = isClaude ? (resumeId ? ` --resume ${resumeId}` : ' -c') : '';
               let mcpFlag = '';
               if (isClaude) { try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {} }
               const sf = skipPermissions ? ' --dangerously-skip-permissions' : '';
@@ -1900,8 +1900,8 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
                 resumeId = (await resolveFixedSession(projectPath)) || undefined;
               } catch {}
             }
-            // Use --resume <id> if explicit, otherwise no -c (avoids "No conversation found" in subdirs)
-            const resumeFlag = isClaude && resumeId ? ` --resume ${resumeId}` : '';
+            // --resume <id> if explicit, otherwise -c to resume latest session
+            const resumeFlag = isClaude ? (resumeId ? ` --resume ${resumeId}` : ' -c') : '';
             let mcpFlag = '';
             if (isClaude) { try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {} }
             const sf = skipPermissions ? ' --dangerously-skip-permissions' : '';

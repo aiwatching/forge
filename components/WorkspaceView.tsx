@@ -2503,40 +2503,21 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           </div>
         </div>
       ) : (
-        <div className="flex-1 min-h-0 flex">
-          {/* Canvas */}
-          <div className="flex-1 min-w-0 min-h-0">
-            <ReactFlow
-              nodes={rfNodes}
-              edges={rfEdges}
-              onNodesChange={onNodesChange}
-              nodeTypes={nodeTypes}
-              fitView
-              fitViewOptions={{ padding: 0.3 }}
-              minZoom={0.3}
-              maxZoom={2}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background color="#1a1a2e" gap={20} size={1} />
-              <Controls style={{ background: '#0d1117', border: '1px solid #30363d' }} showInteractive={false} />
-            </ReactFlow>
-          </div>
-          {/* Terminal dock — right side panel */}
-          {floatingTerminals.length > 0 && (
-            <TerminalDock
-              terminals={floatingTerminals}
-              projectPath={projectPath}
-              workspaceId={workspaceId}
-              onSessionReady={(agentId, name) => {
-                if (workspaceId) wsApi(workspaceId, 'set_tmux_session', { agentId, sessionName: name });
-                setFloatingTerminals(prev => prev.map(t => t.agentId === agentId ? { ...t, tmuxSession: name } : t));
-              }}
-              onClose={(agentId) => {
-                setFloatingTerminals(prev => prev.filter(t => t.agentId !== agentId));
-                if (workspaceId) wsApi(workspaceId, 'close_terminal', { agentId });
-              }}
-            />
-          )}
+        <div className="flex-1 min-h-0">
+          <ReactFlow
+            nodes={rfNodes}
+            edges={rfEdges}
+            onNodesChange={onNodesChange}
+            nodeTypes={nodeTypes}
+            fitView
+            fitViewOptions={{ padding: 0.3 }}
+            minZoom={0.3}
+            maxZoom={2}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background color="#1a1a2e" gap={20} size={1} />
+            <Controls style={{ background: '#0d1117', border: '1px solid #30363d' }} showInteractive={false} />
+          </ReactFlow>
         </div>
       )}
 
@@ -2648,7 +2629,32 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
         />
       )}
 
-      {/* Terminals now rendered in TerminalDock (inline right panel) */}
+      {/* Floating terminals — positioned near their agent node */}
+      {floatingTerminals.map(ft => (
+        <FloatingTerminal
+          key={ft.agentId}
+          agentLabel={ft.label}
+          agentIcon={ft.icon}
+          projectPath={projectPath}
+          agentCliId={ft.cliId}
+          cliCmd={ft.cliCmd}
+          cliType={ft.cliType}
+          workDir={ft.workDir}
+          preferredSessionName={ft.sessionName}
+          existingSession={ft.tmuxSession}
+          resumeMode={ft.resumeMode}
+          resumeSessionId={ft.resumeSessionId}
+          profileEnv={ft.profileEnv}
+          onSessionReady={(name) => {
+            if (workspaceId) wsApi(workspaceId, 'set_tmux_session', { agentId: ft.agentId, sessionName: name });
+            setFloatingTerminals(prev => prev.map(t => t.agentId === ft.agentId ? { ...t, tmuxSession: name } : t));
+          }}
+          onClose={() => {
+            setFloatingTerminals(prev => prev.filter(t => t.agentId !== ft.agentId));
+            if (workspaceId) wsApi(workspaceId, 'close_terminal', { agentId: ft.agentId });
+          }}
+        />
+      ))}
 
       {/* User input request from agent (via bus) */}
       {userInputRequest && workspaceId && (

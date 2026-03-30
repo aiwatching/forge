@@ -9,6 +9,7 @@ interface MonitorData {
     telegram: { running: boolean; pid: string; startedAt?: string };
     workspace: { running: boolean; pid: string; startedAt?: string };
     tunnel: { running: boolean; pid: string; url: string };
+    mcp: { running: boolean; port: number; sessions: number };
   };
   sessions: { name: string; created: string; attached: boolean; windows: number }[];
   uptime: string;
@@ -50,6 +51,7 @@ export default function MonitorPanel({ onClose }: { onClose: () => void }) {
                   { label: 'Telegram Bot', ...data.processes.telegram },
                   { label: 'Workspace Daemon', ...data.processes.workspace },
                   { label: 'Tunnel', ...data.processes.tunnel },
+                  { label: 'MCP Server', running: data.processes.mcp?.running || false, pid: data.processes.mcp?.port ? String(data.processes.mcp.port) : '', startedAt: data.processes.mcp?.sessions ? `${data.processes.mcp.sessions} session(s)` : '' },
                 ].map(p => (
                   <div key={p.label} className="flex items-center gap-2 text-xs">
                     <span className={p.running ? 'text-green-400' : 'text-gray-500'}>●</span>

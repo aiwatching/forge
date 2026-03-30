@@ -24,6 +24,17 @@ export async function GET() {
   const workspace = countProcess('workspace-standalone');
   const tunnel = countProcess('cloudflared tunnel');
 
+  // MCP Server (runs inside workspace process, check /health endpoint)
+  let mcpStatus = { running: false, sessions: 0 };
+  try {
+    const mcpPort = Number(process.env.MCP_PORT) || 8406;
+    const mcpRes = run(`curl -s http://localhost:${mcpPort}/health 2>/dev/null`);
+    if (mcpRes.includes('"ok":true')) {
+      const data = JSON.parse(mcpRes);
+      mcpStatus = { running: true, sessions: data.sessions || 0 };
+    }
+  } catch {}
+
   // Tunnel URL
   let tunnelUrl = '';
   try {
@@ -55,6 +66,7 @@ export async function GET() {
       telegram: { running: telegram.count > 0, pid: telegram.pid, startedAt: telegram.startedAt },
       workspace: { running: workspace.count > 0, pid: workspace.pid, startedAt: workspace.startedAt },
       tunnel: { running: tunnel.count > 0, pid: tunnel.pid, url: tunnelUrl, startedAt: tunnel.startedAt },
+      mcp: { running: mcpStatus.running, port: 8406, sessions: mcpStatus.sessions },
     },
     sessions,
     uptime: uptime.replace(/.*up\s+/, '').replace(/,\s+\d+ user.*/, '').trim(),

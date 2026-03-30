@@ -41,6 +41,15 @@ else
   echo "  ○ Workspace       stopped"
 fi
 
+# MCP Server (runs inside workspace-standalone)
+mcp_status=$(curl -s http://localhost:8406/health 2>/dev/null)
+if echo "$mcp_status" | grep -q '"ok":true'; then
+  sessions=$(echo "$mcp_status" | python3 -c "import sys,json; print(json.load(sys.stdin).get('sessions',0))" 2>/dev/null)
+  echo "  ● MCP Server      running (port: 8406, sessions: $sessions)"
+else
+  echo "  ○ MCP Server      stopped"
+fi
+
 # Cloudflare Tunnel
 count=$(ps aux | grep 'cloudflared tunnel' | grep -v grep | wc -l | tr -d ' ')
 pid=$(ps aux | grep 'cloudflared tunnel' | grep -v grep | awk '{print $2}' | head -1)

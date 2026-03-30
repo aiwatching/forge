@@ -2491,8 +2491,22 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
       {agents.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3">
           <span className="text-3xl">🚀</span>
-          <div className="text-sm text-gray-400">Add agents to start</div>
-          <div className="flex gap-2 mt-2 flex-wrap justify-center">
+          <div className="text-sm text-gray-400">Set up your workspace</div>
+          {/* Primary agent prompt */}
+          <button onClick={() => setModal({ mode: 'add', initial: {
+            label: 'Engineer', icon: '👨‍💻', primary: true, persistentSession: true,
+            role: 'Primary engineer — handles coding tasks in the project root.',
+            backend: 'cli' as const, agentId: 'claude', workDir: './', dependsOn: [], outputs: [], steps: [],
+          }})}
+            className="flex items-center gap-3 px-5 py-3 rounded-lg border-2 border-dashed border-[#f0883e]/50 bg-[#f0883e]/5 hover:bg-[#f0883e]/10 hover:border-[#f0883e]/80 transition-colors">
+            <span className="text-2xl">👨‍💻</span>
+            <div className="text-left">
+              <div className="text-[11px] font-semibold text-[#f0883e]">Add Primary Agent</div>
+              <div className="text-[9px] text-gray-500">Terminal-only, root directory, fixed session</div>
+            </div>
+          </button>
+          <div className="text-[9px] text-gray-600 mt-1">or add other agents:</div>
+          <div className="flex gap-2 flex-wrap justify-center">
             {PRESET_AGENTS.map((p, i) => (
               <button key={i} onClick={() => setModal({ mode: 'add', initial: p })}
                 className="text-[10px] px-3 py-1.5 rounded border border-[#30363d] text-gray-300 hover:text-white hover:border-[#58a6ff]/60 flex items-center gap-1">
@@ -2520,7 +2534,20 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           </div>
         </div>
       ) : (
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 flex flex-col">
+          {/* No primary agent hint */}
+          {!agents.some(a => a.primary) && (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-[#f0883e]/10 border-b border-[#f0883e]/20 shrink-0">
+              <span className="text-[10px] text-[#f0883e]">No primary agent set.</span>
+              <button onClick={() => setModal({ mode: 'add', initial: {
+                label: 'Engineer', icon: '👨‍💻', primary: true, persistentSession: true,
+                role: 'Primary engineer — handles coding tasks in the project root.',
+                backend: 'cli' as const, agentId: 'claude', workDir: './', dependsOn: [], outputs: [], steps: [],
+              }})}
+                className="text-[10px] text-[#f0883e] underline hover:text-white">Add one</button>
+              <span className="text-[9px] text-gray-600">or edit an existing agent to set as primary.</span>
+            </div>
+          )}
           <ReactFlow
             nodes={rfNodes}
             edges={rfEdges}

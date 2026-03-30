@@ -285,9 +285,6 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
           return json(res, { ok: true, ...launchInfo });
         }
 
-        // Ensure primary session is bound on every terminal open
-        orch.ensurePrimarySessionBound();
-
         // Primary agent: always return its fixed session, no selection
         if (agentConfig.primary && agentState.tmuxSession) {
           return json(res, { ok: true, primary: true, tmuxSession: agentState.tmuxSession, fixedSession: true, ...launchInfo });

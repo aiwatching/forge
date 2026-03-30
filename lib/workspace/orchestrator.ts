@@ -11,7 +11,7 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { readFileSync, existsSync, writeFileSync, unlinkSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -301,7 +301,6 @@ export class WorkspaceOrchestrator extends EventEmitter {
       config.persistentSession = true;
       config.workDir = './';
     }
-    // Auto-bind latest CLI session if persistentSession enabled and no fixedSessionId
     if (entry.worker && entry.state.taskStatus === 'running') {
       entry.worker.stop();
     }
@@ -1651,71 +1650,12 @@ export class WorkspaceOrchestrator extends EventEmitter {
   /** Find an active tmux session for an agent by checking naming conventions */
   // ─── Persistent Terminal Sessions ────────────────────────
 
-  /**
-   * Ensure the primary agent has a fixedSessionId bound.
-   * Call from any entry point that opens/uses a terminal for this project.
-   * Returns the fixedSessionId if bound, null if no primary or no sessions.
-   */
-  ensurePrimarySessionBound(): string | null {
-    const primary = this.getPrimaryAgent();
-    if (!primary) return null;
-    if (primary.config.fixedSessionId) return primary.config.fixedSessionId;
-
-    // Try to bind latest session
-    const sessionId = this.findLatestCliSession(primary.config.workDir) || undefined;
-    if (sessionId) {
-      primary.config.fixedSessionId = sessionId;
-      this.saveNow();
-      this.emitAgentsChanged();
-      console.log(`[workspace] Primary agent "${primary.config.label}" bound to session ${sessionId}`);
-    }
-    return sessionId || null;
-  }
-
-  /** Resolve the CLI session directory for a given project path (e.g., ~/.claude/projects/-Users-zliu-...) */
-  private getCliSessionDir(projectPath?: string): string {
-    const encoded = (projectPath || this.projectPath).replace(/\//g, '-');
+  /** Resolve the CLI session directory for a given project path */
+  private getCliSessionDir(workDir?: string): string {
+    const projectPath = workDir && workDir !== './' && workDir !== '.'
+      ? `${this.projectPath}/${workDir}` : this.projectPath;
+    const encoded = projectPath.replace(/\//g, '-');
     return join(homedir(), '.claude', 'projects', encoded);
-  }
-
-  /** Detect newly created CLI session file after starting a CLI agent */
-  private detectNewCliSession(beforeFiles: Set<string>): string | null {
-    try {
-      const dir = this.getCliSessionDir();
-      if (!existsSync(dir)) return null;
-      const files = readdirSync(dir).filter(f => f.endsWith('.jsonl'));
-      const newFile = files.find(f => !beforeFiles.has(f));
-      if (newFile) return newFile.replace('.jsonl', '');
-    } catch {}
-    return null;
-  }
-
-  /** Find the latest (most recently modified) CLI session file for a project path */
-  private findLatestCliSession(workDir?: string): string | null {
-    try {
-      // Resolve the actual project path for session lookup
-      const projectPath = workDir && workDir !== './' && workDir !== '.'
-        ? `${this.projectPath}/${workDir}` : this.projectPath;
-      const dir = this.getCliSessionDir(projectPath);
-      if (!existsSync(dir)) return null;
-      const files = readdirSync(dir).filter(f => f.endsWith('.jsonl'));
-      if (files.length === 0) return null;
-
-      // Exclude sessions already bound to other agents
-      const boundIds = new Set<string>();
-      for (const [, entry] of this.agents) {
-        if (entry.config.fixedSessionId) boundIds.add(entry.config.fixedSessionId);
-      }
-      const available = files.filter(f => !boundIds.has(f.replace('.jsonl', '')));
-      if (available.length === 0) return null;
-
-      // Sort by mtime descending — latest modified first
-      const sorted = available
-        .map(f => ({ name: f, mtime: statSync(join(dir, f)).mtimeMs }))
-        .sort((a, b) => b.mtime - a.mtime);
-      return sorted[0].name.replace('.jsonl', '');
-    } catch {}
-    return null;
   }
 
   /** Create a persistent tmux session with the CLI agent */
@@ -1759,15 +1699,6 @@ export class WorkspaceOrchestrator extends EventEmitter {
         const workDir = config.workDir && config.workDir !== './' && config.workDir !== '.'
           ? `${this.projectPath}/${config.workDir}` : this.projectPath;
 
-        // Snapshot existing session files before starting (to detect new one)
-        let beforeFiles = new Set<string>();
-        if (supportsSession) {
-          try {
-            const dir = this.getCliSessionDir();
-            if (existsSync(dir)) beforeFiles = new Set(readdirSync(dir).filter(f => f.endsWith('.jsonl')));
-          } catch {}
-        }
-
         execSync(`tmux new-session -d -s "${sessionName}" -c "${workDir}"`, { timeout: 5000 });
 
         // Build CLI start command
@@ -1775,24 +1706,13 @@ export class WorkspaceOrchestrator extends EventEmitter {
         if (envExports) parts.push(envExports.replace(/ && $/, ''));
         let cmd = cliCmd;
 
-        // Fixed session binding: use --resume <id> for deterministic session
-        if (supportsSession && !config.fixedSessionId) {
-          // No stored session — find the latest existing one to bind
-          config.fixedSessionId = this.findLatestCliSession(config.workDir) || undefined;
-          if (config.fixedSessionId) {
-            this.saveNow();
-            console.log(`[daemon] ${config.label}: auto-bound to latest CLI session ${config.fixedSessionId}`);
-          }
-        }
+        // Use --resume <id> if fixedSessionId is set and file exists
         if (supportsSession && config.fixedSessionId) {
-          // Verify session file still exists before using --resume
           const sessionFile = join(this.getCliSessionDir(config.workDir), `${config.fixedSessionId}.jsonl`);
           if (existsSync(sessionFile)) {
             cmd += ` --resume ${config.fixedSessionId}`;
           } else {
             console.log(`[daemon] ${config.label}: session file ${config.fixedSessionId} missing, starting fresh`);
-            config.fixedSessionId = undefined;
-            // Will detect and bind new session after CLI starts (via setTimeout below)
           }
         }
         if (modelFlag) cmd += modelFlag;
@@ -1803,21 +1723,6 @@ export class WorkspaceOrchestrator extends EventEmitter {
         execSync(`tmux send-keys -t "${sessionName}" '${startCmd}' Enter`, { timeout: 5000 });
 
         console.log(`[daemon] ${config.label}: persistent session created (${sessionName}) [${cliType}: ${cliCmd}]`);
-
-        // If no fixed session ID yet, detect the newly created one after CLI starts
-        if (supportsSession && !config.fixedSessionId) {
-          // Wait a moment for claude to create the session file
-          setTimeout(() => {
-            const newId = this.detectNewCliSession(beforeFiles);
-            if (newId) {
-              config.fixedSessionId = newId;
-              this.saveNow();
-              console.log(`[daemon] ${config.label}: bound to CLI session ${newId}`);
-            } else {
-              console.log(`[daemon] ${config.label}: could not detect CLI session ID (will retry on next message)`);
-            }
-          }, 5000);
-        }
       } catch (err: any) {
         console.error(`[daemon] ${config.label}: failed to create persistent session: ${err.message}`);
         return;

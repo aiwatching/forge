@@ -1654,7 +1654,7 @@ function TerminalDock({ terminals, projectPath, workspaceId, onSessionReady, onC
 }
 
 // ─── Inline Terminal (no drag/resize, fills parent) ──────
-function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, onSessionReady }: {
+function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, skipPermissions, onSessionReady }: {
   agentLabel: string;
   agentIcon: string;
   projectPath: string;
@@ -1668,6 +1668,7 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
   resumeSessionId?: string;
   profileEnv?: Record<string, string>;
   isPrimary?: boolean;
+  skipPermissions?: boolean;
   onSessionReady?: (name: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1742,7 +1743,8 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
               const resumeFlag = isClaude && resumeId ? ` --resume ${resumeId}` : '';
               let mcpFlag = '';
               if (isClaude) { try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {} }
-              const cmd = `${envExportsClean}${cdCmd} && ${cli}${resumeFlag}${modelFlag}${mcpFlag}\n`;
+              const sf = skipPermissions ? ' --dangerously-skip-permissions' : '';
+              const cmd = `${envExportsClean}${cdCmd} && ${cli}${resumeFlag}${modelFlag}${sf}${mcpFlag}\n`;
               setTimeout(() => {
                 if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: cmd }));
               }, 300);

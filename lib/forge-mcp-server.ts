@@ -246,6 +246,48 @@ function createForgeMcpServer(sessionId: string): McpServer {
     }
   );
 
+  // ── check_outbox ──────────────────────────
+  server.tool(
+    'check_outbox',
+    'Check status of messages you sent to other agents. See if they replied or completed.',
+    {},
+    async () => {
+      const { workspaceId, agentId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context' }] };
+
+      try {
+        const orch = getOrch(workspaceId);
+        const snapshot = orch.getSnapshot();
+        const getLabel = (id: string) => snapshot.agents.find((a: any) => a.id === id)?.label || id;
+
+        // Messages sent BY this agent
+        const sent = orch.getBus().getLog()
+          .filter((m: any) => m.from === agentId && m.type !== 'ack')
+          .slice(-20);
+
+        if (sent.length === 0) {
+          return { content: [{ type: 'text', text: 'No messages sent.' }] };
+        }
+
+        // Check for replies
+        const formatted = sent.map((m: any) => {
+          const targetLabel = getLabel(m.to);
+          const replies = orch.getBus().getLog().filter((r: any) =>
+            r.from === m.to && r.to === agentId && r.timestamp > m.timestamp && r.type !== 'ack'
+          );
+          const replyInfo = replies.length > 0
+            ? `replied: ${replies[replies.length - 1].payload?.content?.slice(0, 100) || '(no content)'}`
+            : 'no reply yet';
+          return `→ ${targetLabel}: [${m.status}] ${(m.payload?.content || '').slice(0, 60)} | ${replyInfo}`;
+        }).join('\n');
+
+        return { content: [{ type: 'text', text: formatted }] };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
+      }
+    }
+  );
+
   return server;
 }
 

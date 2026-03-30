@@ -1596,19 +1596,28 @@ export class WorkspaceOrchestrator extends EventEmitter {
     const causedBy = this.buildCausedBy(agentId, entry);
     const processedMsg = causedBy ? this.bus.getLog().find(m => m.id === causedBy.messageId) : null;
 
-    if (processedMsg && !this.isUpstream(processedMsg.from, agentId)) {
-      // Processed a message from downstream — no extra reply needed.
-      // The original message is already marked done via markMessageDone().
-      // Sender can check their outbox message status. Only broadcast to downstream.
+    if (processedMsg) {
+      // Send result back to the original sender
       const senderLabel = this.agents.get(processedMsg.from)?.config.label || processedMsg.from;
-      console.log(`[bus] ${entry.config.label}: processed request from ${senderLabel} — marked done, no reply`);
-      // Still broadcast to own downstream (e.g., QA processed Engineer's msg → notify Reviewer)
+      const replyContent = summary
+        ? `${entry.config.label} completed: ${summary.slice(0, 300)}`
+        : `${entry.config.label} completed processing your request.`;
+
+      // Only reply if sender is different from self and not the system
+      if (processedMsg.from !== agentId && processedMsg.from !== '_system') {
+        this.bus.send(agentId, processedMsg.from, 'notify', {
+          action: 'task_complete',
+          content: replyContent,
+          files,
+        }, { category: 'notification', causedBy });
+        console.log(`[bus] ${entry.config.label} → ${senderLabel}: sent completion reply`);
+      }
+
+      // Also broadcast to downstream
       this.broadcastCompletion(agentId, causedBy);
     } else {
-      // Normal upstream completion or initial execution → broadcast to all downstream
+      // No triggering message — broadcast to all downstream
       this.broadcastCompletion(agentId, causedBy);
-      // notifyDownstreamForRevalidation removed — causes duplicate messages and re-execution loops
-      // Downstream agents that already completed will be handled in future iteration mode
     }
 
     this.emitWorkspaceStatus();

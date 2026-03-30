@@ -1165,7 +1165,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
           if (targetEntry && targetEntry.state.smithStatus === 'active') {
             this.bus.send('_forge', msg.to, 'notify', {
               action: 'info_request',
-              content: `You completed a request from ${senderLabel} but haven't sent them results. Please use send_message to send a brief summary of what you did.`,
+              content: `[IMPORTANT] You finished a task requested by ${senderLabel} but did not send them the results. You MUST call the send_message tool now with to="${senderLabel}" and include a summary of what you did and the outcome. Do not do any other work until you have sent this reply.`,
             });
             this.forgeActedMessages.add(msg.id);
             console.log(`[forge-agent] Nudged ${targetEntry.config.label} to reply to ${senderLabel}`);

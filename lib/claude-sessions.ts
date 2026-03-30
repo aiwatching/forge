@@ -53,36 +53,11 @@ export function listClaudeSessions(projectName: string): ClaudeSessionInfo[] {
   const dir = getClaudeDirForProject(projectName);
   if (!dir) return [];
 
-  // Try reading sessions-index.json first
-  const indexPath = join(dir, 'sessions-index.json');
-  if (existsSync(indexPath)) {
-    try {
-      const index = JSON.parse(readFileSync(indexPath, 'utf-8'));
-      const sessions: ClaudeSessionInfo[] = (index.entries || []).map((e: any) => ({
-        sessionId: e.sessionId,
-        summary: e.summary,
-        firstPrompt: e.firstPrompt,
-        messageCount: e.messageCount,
-        created: e.created,
-        modified: e.modified,
-        gitBranch: e.gitBranch,
-        fileSize: 0,
-      }));
-
-      // Enrich with file size
-      for (const s of sessions) {
-        const fp = join(dir, `${s.sessionId}.jsonl`);
-        try { s.fileSize = statSync(fp).size; } catch {}
-      }
-
-      return sessions.sort((a, b) => (b.modified || '').localeCompare(a.modified || ''));
-    } catch {}
-  }
-
-  // Fallback: scan for .jsonl files
+  // Scan .jsonl files on disk (authoritative source)
+  let diskSessions: ClaudeSessionInfo[] = [];
   try {
     const files = readdirSync(dir).filter(f => f.endsWith('.jsonl'));
-    return files.map(f => {
+    diskSessions = files.map(f => {
       const sessionId = f.replace('.jsonl', '');
       const fp = join(dir, f);
       const stat = statSync(fp);
@@ -96,6 +71,29 @@ export function listClaudeSessions(projectName: string): ClaudeSessionInfo[] {
   } catch {
     return [];
   }
+
+  // Enrich with metadata from sessions-index.json if available
+  const indexPath = join(dir, 'sessions-index.json');
+  if (existsSync(indexPath)) {
+    try {
+      const index = JSON.parse(readFileSync(indexPath, 'utf-8'));
+      const indexMap = new Map<string, any>();
+      for (const e of (index.entries || [])) {
+        if (e.sessionId) indexMap.set(e.sessionId, e);
+      }
+      for (const s of diskSessions) {
+        const meta = indexMap.get(s.sessionId);
+        if (meta) {
+          s.summary = meta.summary;
+          s.firstPrompt = meta.firstPrompt;
+          s.messageCount = meta.messageCount;
+          s.gitBranch = meta.gitBranch;
+        }
+      }
+    } catch {}
+  }
+
+  return diskSessions;
 }
 
 /**

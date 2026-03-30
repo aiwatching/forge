@@ -82,7 +82,7 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [pipelineBindings, setPipelineBindings] = useState<{ id: number; workflowName: string; enabled: boolean; config: any; lastRunAt: string | null; nextRunAt: string | null }[]>([]);
   const [pipelineRuns, setPipelineRuns] = useState<{ id: string; workflowName: string; pipelineId: string; status: string; summary: string; dedupKey: string | null; createdAt: string }[]>([]);
   const [availableWorkflows, setAvailableWorkflows] = useState<{ name: string; description?: string; builtin?: boolean; type?: string }[]>([]);
-  const [boundSession, setBoundSession] = useState<{ agentLabel: string; sessionId: string; workspaceId: string; agentId: string } | null>(null);
+  const [boundSession, setBoundSession] = useState<{ sessionId: string } | null>(null);
   const [showSessionPicker, setShowSessionPicker] = useState(false);
   const [availableSessions, setAvailableSessions] = useState<{ id: string; modified: string; size: number }[]>([]);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
@@ -404,15 +404,12 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
     // Fetch git info and file tree in parallel
     fetchGitInfo();
     fetchTree();
-    // Fetch workspace bound session
-    fetch(`/api/workspace?projectPath=${encodeURIComponent(projectPath)}`)
+    // Fetch project-level fixed session
+    fetch(`/api/project-sessions?projectPath=${encodeURIComponent(projectPath)}`)
       .then(r => r.json())
-      .then(ws => {
-        if (ws?.agents) {
-          const primary = ws.agents.find((a: any) => a.primary && a.fixedSessionId);
-          if (primary) setBoundSession({ agentLabel: primary.label, sessionId: primary.fixedSessionId, workspaceId: ws.id, agentId: primary.id });
-          else setBoundSession(null);
-        }
+      .then(data => {
+        if (data?.fixedSessionId) setBoundSession({ sessionId: data.fixedSessionId });
+        else setBoundSession(null);
       })
       .catch(() => {});
   }, [projectPath, fetchGitInfo, fetchTree]);
@@ -501,18 +498,12 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
                   {availableSessions.map(s => (
                     <button key={s.id} onClick={async () => {
                       try {
-                        const ws = await fetch(`/api/workspace?projectPath=${encodeURIComponent(projectPath)}`).then(r => r.json());
-                        if (ws?.agents) {
-                          const primary = ws.agents.find((a: any) => a.primary);
-                          if (primary) {
-                            primary.fixedSessionId = s.id;
-                            await fetch(`/api/workspace/${ws.id}/smith`, {
-                              method: 'POST', headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ action: 'update', agentId: primary.id, config: primary }),
-                            });
-                            setBoundSession(prev => prev ? { ...prev, sessionId: s.id } : { agentLabel: primary.label, sessionId: s.id, workspaceId: ws.id, agentId: primary.id });
-                          }
-                        }
+                        await fetch('/api/project-sessions', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ projectPath, fixedSessionId: s.id }),
+                        });
+                        setBoundSession({ sessionId: s.id });
                       } catch {}
                       setShowSessionPicker(false);
                     }}

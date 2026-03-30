@@ -1,40 +1,14 @@
 /**
  * Shared session utilities for client-side components.
- * Resolves fixedSessionId from workspace primary agent.
+ * Resolves fixedSessionId from project-level binding.
  */
 
-/** Fetch the fixedSessionId for a project's primary agent. Auto-sets latest if empty. */
+/** Fetch the fixedSessionId for a project. Returns null if not set. */
 export async function resolveFixedSession(projectPath: string): Promise<string | null> {
   try {
-    const wsRes = await fetch(`/api/workspace?projectPath=${encodeURIComponent(projectPath)}`);
-    const ws = await wsRes.json();
-    if (!ws?.agents) return null;
-
-    const primary = ws.agents.find((a: any) => a.primary);
-    if (!primary) return null;
-
-    // Already bound
-    if (primary.fixedSessionId) return primary.fixedSessionId;
-
-    // Not bound — find latest session and bind it
-    const projectName = projectPath.replace(/\/+$/, '').split('/').pop() || '';
-    const sessRes = await fetch(`/api/claude-sessions/${encodeURIComponent(projectName)}`);
-    const sessions = await sessRes.json();
-    if (!Array.isArray(sessions) || sessions.length === 0) return null;
-
-    // Pick latest (first in sorted list)
-    const latestId = sessions[0].sessionId || sessions[0].id;
-    if (!latestId) return null;
-
-    // Save binding
-    primary.fixedSessionId = latestId;
-    await fetch(`/api/workspace/${ws.id}/smith`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'update', agentId: primary.id, config: primary }),
-    });
-
-    return latestId;
+    const res = await fetch(`/api/project-sessions?projectPath=${encodeURIComponent(projectPath)}`);
+    const data = await res.json();
+    return data?.fixedSessionId || null;
   } catch {
     return null;
   }

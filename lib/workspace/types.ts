@@ -181,6 +181,8 @@ export interface WorkspaceState {
   id: string;
   projectPath: string;
   projectName: string;
+  // Fixed CLI session ID — bound to this project (used by --resume)
+  fixedSessionId?: string;
   agents: WorkspaceAgentConfig[];
   agentStates: Record<string, AgentState>;
   nodePositions: Record<string, { x: number; y: number }>;

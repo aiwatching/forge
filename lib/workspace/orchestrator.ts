@@ -1706,14 +1706,20 @@ export class WorkspaceOrchestrator extends EventEmitter {
         if (envExports) parts.push(envExports.replace(/ && $/, ''));
         let cmd = cliCmd;
 
-        // Use --resume <id> if fixedSessionId is set and file exists
-        if (supportsSession && config.fixedSessionId) {
-          const sessionFile = join(this.getCliSessionDir(config.workDir), `${config.fixedSessionId}.jsonl`);
-          if (existsSync(sessionFile)) {
-            cmd += ` --resume ${config.fixedSessionId}`;
-          } else {
-            console.log(`[daemon] ${config.label}: session file ${config.fixedSessionId} missing, starting fresh`);
-          }
+        // Use --resume <id> if project has a fixed session binding
+        if (supportsSession) {
+          try {
+            const { getFixedSession } = await import('../project-sessions') as any;
+            const fixedId = getFixedSession(this.projectPath);
+            if (fixedId) {
+              const sessionFile = join(this.getCliSessionDir(config.workDir), `${fixedId}.jsonl`);
+              if (existsSync(sessionFile)) {
+                cmd += ` --resume ${fixedId}`;
+              } else {
+                console.log(`[daemon] ${config.label}: session file ${fixedId} missing, starting fresh`);
+              }
+            }
+          } catch {}
         }
         if (modelFlag) cmd += modelFlag;
         if (config.skipPermissions !== false && skipPermissionsFlag) cmd += ` ${skipPermissionsFlag}`;

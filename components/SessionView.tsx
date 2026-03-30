@@ -58,8 +58,8 @@ export default function SessionView({
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Map<string, Set<string>>>(new Map());
   const bottomRef = useRef<HTMLDivElement>(null);
-  // Workspace bound session info per project
-  const [boundSessions, setBoundSessions] = useState<Record<string, { sessionId: string; workspaceId: string; agentId: string }>>({});
+  // Project-level fixed session binding
+  const [boundSessions, setBoundSessions] = useState<Record<string, { sessionId: string }>>({});
 
   // Load cached sessions tree
   const loadTree = useCallback(async (force = false) => {
@@ -86,28 +86,17 @@ export default function SessionView({
     } catch {}
   }, []);
 
-  // Load workspace bound sessions for all known projects
+  // Load project-level fixed session bindings
   const loadBoundSessions = useCallback(async () => {
     try {
-      const bound: Record<string, { sessionId: string; workspaceId: string; agentId: string }> = {};
-      // Fetch workspace for each project we know about
-      const projectPaths = projects.map(p => p.path);
-      await Promise.all(projectPaths.map(async (pp) => {
-        try {
-          const wsRes = await fetch(`/api/workspace?projectPath=${encodeURIComponent(pp)}`);
-          const ws = await wsRes.json();
-          if (ws?.agents) {
-            const primary = ws.agents.find((a: any) => a.primary);
-            if (primary) {
-              bound[ws.projectName] = {
-                sessionId: primary.fixedSessionId || '',
-                workspaceId: ws.id,
-                agentId: primary.id,
-              };
-            }
-          }
-        } catch {}
-      }));
+      const res = await fetch('/api/project-sessions');
+      const all = await res.json(); // { "/path/to/project": "session-uuid", ... }
+      const bound: Record<string, { sessionId: string }> = {};
+      for (const p of projects) {
+        if (all[p.path]) {
+          bound[p.name] = { sessionId: all[p.path] };
+        }
+      }
       setBoundSessions(bound);
     } catch {}
   }, [projects]);
@@ -444,17 +433,12 @@ export default function SessionView({
                                 e.stopPropagation();
                                 const pp = projects.find(p => p.name === project)?.path || '';
                                 try {
-                                  const wsRes = await fetch(`/api/workspace?projectPath=${encodeURIComponent(pp)}`);
-                                  const ws = await wsRes.json();
-                                  if (!ws?.agents) return; // no workspace for this project
-                                  const primary = ws.agents.find((a: any) => a.primary);
-                                  if (!primary) return; // no primary agent
-                                  primary.fixedSessionId = s.sessionId;
-                                  await fetch(`/api/workspace/${ws.id}/smith`, {
-                                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: 'update', agentId: primary.id, config: primary }),
+                                  await fetch('/api/project-sessions', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ projectPath: pp, fixedSessionId: s.sessionId }),
                                   });
-                                  setBoundSessions(prev => ({ ...prev, [project]: { sessionId: s.sessionId, workspaceId: ws.id, agentId: primary.id } }));
+                                  setBoundSessions(prev => ({ ...prev, [project]: { sessionId: s.sessionId } }));
                                 } catch {}
                               }}
                               className="text-[8px] px-1 py-0.5 rounded bg-[#f0883e]/10 text-[#f0883e] hover:bg-[#f0883e]/20"

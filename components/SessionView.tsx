@@ -86,17 +86,15 @@ export default function SessionView({
     } catch {}
   }, []);
 
-  // Load workspace bound sessions for visible projects
+  // Load workspace bound sessions for all known projects
   const loadBoundSessions = useCallback(async () => {
     try {
-      // Get workspace list (summaries), then fetch full data for each to find bindings
-      const listRes = await fetch('/api/workspace');
-      const summaries = await listRes.json();
-      if (!Array.isArray(summaries)) return;
       const bound: Record<string, { sessionId: string; workspaceId: string; agentId: string }> = {};
-      await Promise.all(summaries.map(async (s: any) => {
+      // Fetch workspace for each project we know about
+      const projectPaths = projects.map(p => p.path);
+      await Promise.all(projectPaths.map(async (pp) => {
         try {
-          const wsRes = await fetch(`/api/workspace?projectPath=${encodeURIComponent(s.projectPath)}`);
+          const wsRes = await fetch(`/api/workspace?projectPath=${encodeURIComponent(pp)}`);
           const ws = await wsRes.json();
           if (ws?.agents) {
             const primary = ws.agents.find((a: any) => a.primary);
@@ -112,7 +110,7 @@ export default function SessionView({
       }));
       setBoundSessions(bound);
     } catch {}
-  }, []);
+  }, [projects]);
 
   useEffect(() => {
     // In single-project mode: load cached first (fast), then sync in background
@@ -437,7 +435,7 @@ export default function SessionView({
                       {/* Hover actions — hide in batch mode */}
                       {!batchMode && (
                         <span className="hidden group-hover:flex items-center gap-0.5 shrink-0">
-                          {/* Bind / unbind session */}
+                          {/* Bind session — show if workspace has primary agent and this isn't already bound */}
                           {boundSessions[project] && boundSessions[project].sessionId !== s.sessionId && (
                             <button
                               onClick={async (e) => {

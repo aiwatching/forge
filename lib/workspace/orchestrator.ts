@@ -255,15 +255,28 @@ export class WorkspaceOrchestrator extends EventEmitter {
     // Reset status but keep history/artifacts (don't wipe logs)
     entry.state.taskStatus = 'idle';
     entry.state.error = undefined;
+    if (entry.worker) {
+      entry.worker.removeAllListeners();
+      entry.worker.stop();
+    }
     entry.worker = null;
-    // Restart watch if config changed
+
     if (this.daemonActive) {
+      // Rebuild worker + message loop
+      this.enterDaemonListening(id);
+      this.startMessageLoop(id);
+      entry.state.smithStatus = 'active';
+      // Restart watch if config changed
       this.watchManager.startWatch(id, config);
+      // Create persistent session if configured
+      if (config.persistentSession) {
+        this.ensurePersistentSession(id, config);
+      }
     }
     this.saveNow();
     this.emitAgentsChanged();
-    // Push status update so frontend reflects the reset
     this.emit('event', { type: 'task_status', agentId: id, taskStatus: 'idle' } satisfies WorkerEvent);
+    this.emit('event', { type: 'smith_status', agentId: id, smithStatus: entry.state.smithStatus, mode: entry.state.mode } as any);
   }
 
   getAgentState(id: string): Readonly<AgentState> | undefined {

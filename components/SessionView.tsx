@@ -423,62 +423,6 @@ export default function SessionView({
                         {s.summary || s.firstPrompt?.slice(0, 40) || s.sessionId.slice(0, 8)}
                       </span>
                       {isWatched && <span className="text-[8px] text-[var(--accent)]">👁</span>}
-                      {/* Hover actions — hide in batch mode */}
-                      {!batchMode && (
-                        <span className="hidden group-hover:flex items-center gap-0.5 shrink-0">
-                          {/* Bind session — always show unless already bound */}
-                          {boundSessions[project]?.sessionId !== s.sessionId && (
-                            <button
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                const pp = projects.find(p => p.name === project)?.path || '';
-                                if (!pp) { console.error('[bind] No project path found for:', project); return; }
-                                const res = await fetch('/api/project-sessions', {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ projectPath: pp, fixedSessionId: s.sessionId }),
-                                });
-                                if (res.ok) {
-                                  setBoundSessions(prev => ({ ...prev, [project]: { sessionId: s.sessionId } }));
-                                  window.dispatchEvent(new Event('forge:session-bound'));
-                                } else {
-                                  console.error('[bind] Failed:', await res.text());
-                                }
-                              }}
-                              className="text-[8px] px-1 py-0.5 rounded bg-[#f0883e]/10 text-[#f0883e] hover:bg-[#f0883e]/20"
-                              title="Set as fixed session for this project"
-                            >
-                              bind
-                            </button>
-                          )}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const pp = projects.find(p => p.name === project)?.path || '';
-                              if (pp && onOpenInTerminal) onOpenInTerminal(s.sessionId, pp);
-                              else if (pp) window.dispatchEvent(new CustomEvent('forge:open-terminal', { detail: { projectPath: pp, projectName: project, agentId: 'claude', resumeMode: true, sessionId: s.sessionId } }));
-                            }}
-                            className="text-[8px] px-1 py-0.5 rounded bg-green-500/10 text-green-400 hover:bg-green-500/20"
-                            title="Open this session in terminal"
-                          >
-                            open
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); createMonitorTask(project, s.sessionId); }}
-                            className="text-[8px] px-1 py-0.5 rounded bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20"
-                            title="Create monitor task (notify via Telegram)"
-                          >
-                            monitor
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); deleteSessionById(project, s.sessionId); }}
-                            className="text-[8px] px-1 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20"
-                            title="Delete session"
-                          >
-                            del
-                          </button>
-                        </span>
-                      )}
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className="text-[8px] text-[var(--text-secondary)] font-mono">{s.sessionId.slice(0, 8)}</span>
@@ -489,6 +433,50 @@ export default function SessionView({
                       {s.modified && (
                         <span className="text-[8px] text-[var(--text-secondary)]">
                           {timeAgo(s.modified)}
+                        </span>
+                      )}
+                      {/* Actions — right side */}
+                      {!batchMode && (
+                        <span className="hidden group-hover:flex items-center gap-0.5 ml-auto shrink-0">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const pp = projects.find(p => p.name === project)?.path || '';
+                              if (pp && onOpenInTerminal) onOpenInTerminal(s.sessionId, pp);
+                              else if (pp) window.dispatchEvent(new CustomEvent('forge:open-terminal', { detail: { projectPath: pp, projectName: project, agentId: 'claude', resumeMode: true, sessionId: s.sessionId } }));
+                            }}
+                            className="text-[8px] px-1 py-0.5 rounded bg-green-500/10 text-green-400 hover:bg-green-500/20"
+                            title="Open this session in terminal"
+                          >open</button>
+                          {boundSessions[project]?.sessionId !== s.sessionId && (
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                const pp = projects.find(p => p.name === project)?.path || '';
+                                if (!pp) return;
+                                const res = await fetch('/api/project-sessions', {
+                                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ projectPath: pp, fixedSessionId: s.sessionId }),
+                                });
+                                if (res.ok) {
+                                  setBoundSessions(prev => ({ ...prev, [project]: { sessionId: s.sessionId } }));
+                                  window.dispatchEvent(new Event('forge:session-bound'));
+                                }
+                              }}
+                              className="text-[8px] px-1 py-0.5 rounded bg-[#f0883e]/10 text-[#f0883e] hover:bg-[#f0883e]/20"
+                              title="Set as fixed session"
+                            >bind</button>
+                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); createMonitorTask(project, s.sessionId); }}
+                            className="text-[8px] px-1 py-0.5 rounded bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20"
+                            title="Monitor via Telegram"
+                          >monitor</button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteSessionById(project, s.sessionId); }}
+                            className="text-[8px] px-1 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                            title="Delete session"
+                          >del</button>
                         </span>
                       )}
                     </div>

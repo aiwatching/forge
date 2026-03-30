@@ -1641,9 +1641,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
   /** Find an active tmux session for an agent by checking naming conventions */
   // ─── Persistent Terminal Sessions ────────────────────────
 
-  /** Resolve the CLI session directory for a project (e.g., ~/.claude/projects/-Users-zliu-...) */
-  private getCliSessionDir(): string {
-    const encoded = this.projectPath.replace(/\//g, '-');
+  /** Resolve the CLI session directory for a given project path (e.g., ~/.claude/projects/-Users-zliu-...) */
+  private getCliSessionDir(projectPath?: string): string {
+    const encoded = (projectPath || this.projectPath).replace(/\//g, '-');
     return join(homedir(), '.claude', 'projects', encoded);
   }
 
@@ -1659,15 +1659,27 @@ export class WorkspaceOrchestrator extends EventEmitter {
     return null;
   }
 
-  /** Find the latest (most recently modified) CLI session file for this project */
-  private findLatestCliSession(): string | null {
+  /** Find the latest (most recently modified) CLI session file for a project path */
+  private findLatestCliSession(workDir?: string): string | null {
     try {
-      const dir = this.getCliSessionDir();
+      // Resolve the actual project path for session lookup
+      const projectPath = workDir && workDir !== './' && workDir !== '.'
+        ? `${this.projectPath}/${workDir}` : this.projectPath;
+      const dir = this.getCliSessionDir(projectPath);
       if (!existsSync(dir)) return null;
       const files = readdirSync(dir).filter(f => f.endsWith('.jsonl'));
       if (files.length === 0) return null;
+
+      // Exclude sessions already bound to other agents
+      const boundIds = new Set<string>();
+      for (const [, entry] of this.agents) {
+        if (entry.config.fixedSessionId) boundIds.add(entry.config.fixedSessionId);
+      }
+      const available = files.filter(f => !boundIds.has(f.replace('.jsonl', '')));
+      if (available.length === 0) return null;
+
       // Sort by mtime descending — latest modified first
-      const sorted = files
+      const sorted = available
         .map(f => ({ name: f, mtime: statSync(join(dir, f)).mtimeMs }))
         .sort((a, b) => b.mtime - a.mtime);
       return sorted[0].name.replace('.jsonl', '');
@@ -1735,14 +1747,22 @@ export class WorkspaceOrchestrator extends EventEmitter {
         // Fixed session binding: use --resume <id> for deterministic session
         if (supportsSession && !config.fixedSessionId) {
           // No stored session — find the latest existing one to bind
-          config.fixedSessionId = this.findLatestCliSession() || undefined;
+          config.fixedSessionId = this.findLatestCliSession(config.workDir) || undefined;
           if (config.fixedSessionId) {
             this.saveNow();
             console.log(`[daemon] ${config.label}: auto-bound to latest CLI session ${config.fixedSessionId}`);
           }
         }
         if (supportsSession && config.fixedSessionId) {
-          cmd += ` --resume ${config.fixedSessionId}`;
+          // Verify session file still exists before using --resume
+          const sessionFile = join(this.getCliSessionDir(config.workDir), `${config.fixedSessionId}.jsonl`);
+          if (existsSync(sessionFile)) {
+            cmd += ` --resume ${config.fixedSessionId}`;
+          } else {
+            console.log(`[daemon] ${config.label}: session file ${config.fixedSessionId} missing, starting fresh`);
+            config.fixedSessionId = undefined;
+            // Will detect and bind new session after CLI starts (via setTimeout below)
+          }
         }
         if (modelFlag) cmd += modelFlag;
         if (config.skipPermissions !== false && skipPermissionsFlag) cmd += ` ${skipPermissionsFlag}`;

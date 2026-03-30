@@ -1129,15 +1129,19 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
   // Track which messages Forge agent already acted on (avoid duplicate nudges)
   private forgeActedMessages = new Set<string>();
+  private forgeAgentStartTime = 0;
 
   /** Forge agent scans bus for actionable states */
   private runForgeAgentCheck(): void {
+    if (!this.forgeAgentStartTime) this.forgeAgentStartTime = Date.now();
     const log = this.bus.getLog();
     const now = Date.now();
 
     for (const msg of log) {
       if (msg.type === 'ack' || msg.from === '_forge') continue;
       if (this.forgeActedMessages.has(msg.id)) continue;
+      // Skip messages from before daemon start (don't act on history)
+      if (msg.timestamp < this.forgeAgentStartTime) continue;
 
       // Case 1: Message done but no reply from target → ask target to send summary
       if (msg.status === 'done') {

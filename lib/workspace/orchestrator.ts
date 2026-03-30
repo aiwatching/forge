@@ -13,7 +13,8 @@
 import { EventEmitter } from 'node:events';
 import { readFileSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { homedir } from 'node:os';
 import type {
   WorkspaceAgentConfig,
   AgentState,
@@ -1689,11 +1690,28 @@ export class WorkspaceOrchestrator extends EventEmitter {
     const vcName = `mw-${projectSafe}`;
     try { execSync(`tmux has-session -t "${vcName}" 2>/dev/null`, { timeout: 3000 }); return vcName; } catch {}
 
-    // Search all tmux sessions for one containing project name
+    // Search terminal-state.json for project matching tmux session
     try {
-      const sessions = execSync('tmux list-sessions -F "#{session_name}"', { timeout: 3000, encoding: 'utf-8' }).trim().split('\n');
-      const match = sessions.find(s => s.includes(projectSafe) || s.includes(agentSafe));
-      if (match) return match;
+      const statePath = join(homedir(), '.forge', 'data', 'terminal-state.json');
+      if (existsSync(statePath)) {
+        const termState = JSON.parse(readFileSync(statePath, 'utf-8'));
+        for (const tab of termState.tabs || []) {
+          if (tab.projectPath === this.projectPath) {
+            const findSession = (tree: any): string | null => {
+              if (tree?.type === 'terminal' && tree.sessionName) return tree.sessionName;
+              for (const child of tree?.children || []) {
+                const found = findSession(child);
+                if (found) return found;
+              }
+              return null;
+            };
+            const sess = findSession(tab.tree);
+            if (sess) {
+              try { execSync(`tmux has-session -t "${sess}" 2>/dev/null`, { timeout: 3000 }); return sess; } catch {}
+            }
+          }
+        }
+      }
     } catch {}
 
     return null;

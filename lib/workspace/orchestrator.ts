@@ -1130,7 +1130,11 @@ export class WorkspaceOrchestrator extends EventEmitter {
       const message = prompt || summary;
 
       // Try to inject directly into an open terminal session
-      // Check workspace terminal first, then try VibeCoding terminal naming convention
+      // Verify stored session is alive, clear if dead
+      if (targetEntry.state.tmuxSession) {
+        try { execSync(`tmux has-session -t "${targetEntry.state.tmuxSession}" 2>/dev/null`, { timeout: 3000 }); }
+        catch { targetEntry.state.tmuxSession = undefined; }
+      }
       const tmuxSession = targetEntry.state.tmuxSession || this.findTmuxSession(targetEntry.config.label);
       if (tmuxSession) {
         try {

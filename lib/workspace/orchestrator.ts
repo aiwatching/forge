@@ -1875,12 +1875,21 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
         execSync(`tmux new-session -d -s "${sessionName}" -c "${workDir}"`, { timeout: 5000 });
 
-        // Set FORGE env vars in the tmux shell before starting CLI
-        execSync(`tmux send-keys -t "${sessionName}" 'export FORGE_WORKSPACE_ID="${this.workspaceId}" FORGE_AGENT_ID="${config.id}" FORGE_PORT="${Number(process.env.PORT) || 8403}"' Enter`, { timeout: 5000 });
+        // Reset profile env vars (unset any leftover from previous agent) then set new ones
+        const profileVarsToReset = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_SMALL_FAST_MODEL', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_TELEMETRY', 'DISABLE_ERROR_REPORTING', 'DISABLE_AUTOUPDATER', 'DISABLE_NON_ESSENTIAL_MODEL_CALLS', 'CLAUDE_MODEL'];
+        const unsetCmd = profileVarsToReset.map(v => `unset ${v}`).join(' && ');
+        execSync(`tmux send-keys -t "${sessionName}" '${unsetCmd}' Enter`, { timeout: 5000 });
+
+        // Set FORGE env vars + profile env vars
+        const forgeVars = `export FORGE_WORKSPACE_ID="${this.workspaceId}" FORGE_AGENT_ID="${config.id}" FORGE_PORT="${Number(process.env.PORT) || 8403}"`;
+        if (envExports) {
+          execSync(`tmux send-keys -t "${sessionName}" '${forgeVars} && ${envExports.replace(/ && $/, '')}' Enter`, { timeout: 5000 });
+        } else {
+          execSync(`tmux send-keys -t "${sessionName}" '${forgeVars}' Enter`, { timeout: 5000 });
+        }
 
         // Build CLI start command
         const parts: string[] = [];
-        if (envExports) parts.push(envExports.replace(/ && $/, ''));
         let cmd = cliCmd;
 
         // Session resume: use bound session ID (primary from project-sessions, others from config)

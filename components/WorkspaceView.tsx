@@ -1735,9 +1735,12 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
               const envWithoutModel = profileEnv ? Object.fromEntries(
                 Object.entries(profileEnv).filter(([k]) => k !== 'CLAUDE_MODEL')
               ) : {};
-              const envExportsClean = Object.keys(envWithoutModel).length > 0
+              // Unset old profile vars + set new ones
+              const profileVarsToReset = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_SMALL_FAST_MODEL', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_TELEMETRY', 'DISABLE_ERROR_REPORTING', 'DISABLE_AUTOUPDATER', 'DISABLE_NON_ESSENTIAL_MODEL_CALLS', 'CLAUDE_MODEL'];
+              const unsetPrefix = profileVarsToReset.map(v => `unset ${v}`).join(' && ') + ' && ';
+              const envExportsClean = unsetPrefix + (Object.keys(envWithoutModel).length > 0
                 ? Object.entries(envWithoutModel).map(([k, v]) => `export ${k}="${v}"`).join(' && ') + ' && '
-                : '';
+                : '');
               // Resolve session: explicit > boundSessionId > fixedSession (primary) > fresh
               let resumeId = resumeSessionId || boundSessionId;
               if (isClaude && !resumeId && isPrimary) {
@@ -1897,9 +1900,12 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
             const envWithoutModel = profileEnv ? Object.fromEntries(
               Object.entries(profileEnv).filter(([k]) => k !== 'CLAUDE_MODEL')
             ) : {};
-            const envExportsClean = Object.keys(envWithoutModel).length > 0
+            // Unset old profile vars + set new ones (prevents leaking between agent switches)
+            const profileVarsToReset = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_SMALL_FAST_MODEL', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_TELEMETRY', 'DISABLE_ERROR_REPORTING', 'DISABLE_AUTOUPDATER', 'DISABLE_NON_ESSENTIAL_MODEL_CALLS', 'CLAUDE_MODEL'];
+            const unsetPrefix = profileVarsToReset.map(v => `unset ${v}`).join(' && ') + ' && ';
+            const envExportsClean = unsetPrefix + (Object.keys(envWithoutModel).length > 0
               ? Object.entries(envWithoutModel).map(([k, v]) => `export ${k}="${v}"`).join(' && ') + ' && '
-              : '';
+              : '');
             // Primary: use fixed session. Non-primary: use explicit sessionId or -c
             // Resolve session: explicit > boundSessionId > fixedSession (primary) > fresh
             let resumeId = resumeSessionId || boundSessionId;

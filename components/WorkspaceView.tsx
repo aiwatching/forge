@@ -2047,13 +2047,17 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
               const workDir = agent.workDir && agent.workDir !== './' && agent.workDir !== '.'
                 ? agent.workDir : undefined;
 
-              // If already manual with a tmux session, just reopen (attach)
-              if (agentState?.mode === 'manual' && existingTmux) {
+              // If tmux session exists (manual mode or persistent session), just attach
+              if (existingTmux) {
                 setFloatingTerminals(prev => [...prev, {
                   agentId: agent.id, label: agent.label, icon: agent.icon,
                   cliId: agent.agentId || 'claude', workDir,
                   tmuxSession: existingTmux, sessionName: sessName,
                 }]);
+                if (agentState?.mode !== 'manual') {
+                  // Switch to manual mode so message loop pauses
+                  wsApi(workspaceId, 'open_terminal', { agentId: agent.id });
+                }
                 return;
               }
 

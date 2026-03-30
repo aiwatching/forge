@@ -256,17 +256,16 @@ function detectSessionChanges(projectPath: string, pattern: string | undefined, 
       }
     }
 
+    // Only extract the LAST assistant/result text (not all entries)
     const entries: string[] = [];
-    for (const line of newLines) {
+    for (const line of [...newLines].reverse()) {
       try {
         const parsed = JSON.parse(line);
-        // Extract text content from various session JSONL formats
         let text = '';
         if (parsed.type === 'assistant' && parsed.message?.content) {
           for (const block of (Array.isArray(parsed.message.content) ? parsed.message.content : [parsed.message.content])) {
             if (typeof block === 'string') text += block;
             else if (block.type === 'text' && block.text) text += block.text;
-            else if (block.type === 'tool_use') text += `[tool: ${block.name}] `;
           }
         } else if (parsed.type === 'result' && parsed.result) {
           text = typeof parsed.result === 'string' ? parsed.result : JSON.stringify(parsed.result);
@@ -290,6 +289,7 @@ function detectSessionChanges(projectPath: string, pattern: string | undefined, 
           text = text.slice(0, contextChars);
         }
         entries.push(text);
+        break; // only take the last matching entry (we're scanning in reverse)
       } catch {}
     }
 

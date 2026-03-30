@@ -31,3 +31,4 @@ Thumbs.db
 .accord
 tsconfig.tsbuildinfo
 next-env.d.ts
+.forge/

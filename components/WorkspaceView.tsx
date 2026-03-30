@@ -2432,7 +2432,19 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 return;
               }
 
-              // Non-primary without session → show launch dialog
+              // Non-primary: has boundSessionId → use it directly; no bound → show dialog
+              if (agent.boundSessionId) {
+                const res = await wsApi(workspaceId, 'open_terminal', { agentId: agent.id }).catch(() => ({})) as any;
+                setFloatingTerminals(prev => [...prev, {
+                  agentId: agent.id, label: agent.label, icon: agent.icon,
+                  cliId: agent.agentId || 'claude', ...launchInfo, workDir,
+                  tmuxSession: res?.tmuxSession || sessName, sessionName: sessName,
+                  resumeSessionId: agent.boundSessionId,
+                  isPrimary: false, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: agent.boundSessionId,
+                }]);
+                return;
+              }
+              // No bound session → show launch dialog (New / Resume / Select)
               setTermLaunchDialog({ agent, sessName, workDir, sessions: [], supportsSession: resolveRes?.supportsSession ?? true });
             },
             onSwitchSession: async () => {
@@ -2798,13 +2810,17 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
             setTermLaunchDialog(null);
             const res = await wsApi(workspaceId, 'open_terminal', { agentId: agent.id });
             if (res.ok) {
+              // Save selected session as boundSessionId if user chose a specific one
+              if (sessionId) {
+                wsApi(workspaceId, 'update', { agentId: agent.id, config: { ...agent, boundSessionId: sessionId } }).catch(() => {});
+              }
               setFloatingTerminals(prev => [...prev, {
                 agentId: agent.id, label: agent.label, icon: agent.icon,
                 cliId: agent.agentId || 'claude',
                 cliCmd: res.cliCmd || 'claude',
                 cliType: res.cliType || 'claude-code',
                 workDir,
-                sessionName: sessName, resumeMode, resumeSessionId: sessionId, isPrimary: false, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: agent.boundSessionId,
+                sessionName: sessName, resumeMode, resumeSessionId: sessionId, isPrimary: false, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: sessionId || agent.boundSessionId,
                 profileEnv: {
                   ...(res.env || {}),
                   ...(res.model ? { CLAUDE_MODEL: res.model } : {}),

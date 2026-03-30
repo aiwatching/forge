@@ -51,7 +51,6 @@ export default function MonitorPanel({ onClose }: { onClose: () => void }) {
                   { label: 'Telegram Bot', ...data.processes.telegram },
                   { label: 'Workspace Daemon', ...data.processes.workspace },
                   { label: 'Tunnel', ...data.processes.tunnel },
-                  { label: 'MCP Server', running: data.processes.mcp?.running || false, pid: data.processes.mcp?.port ? String(data.processes.mcp.port) : '', startedAt: data.processes.mcp?.sessions ? `${data.processes.mcp.sessions} session(s)` : '' },
                 ].map(p => (
                   <div key={p.label} className="flex items-center gap-2 text-xs">
                     <span className={p.running ? 'text-green-400' : 'text-gray-500'}>●</span>
@@ -66,9 +65,23 @@ export default function MonitorPanel({ onClose }: { onClose: () => void }) {
                     )}
                   </div>
                 ))}
+                {/* MCP Server — separate row (no pid, uses port + sessions) */}
+                <div className="flex items-center gap-2 text-xs">
+                  <span className={data.processes.mcp?.running ? 'text-green-400' : 'text-gray-500'}>●</span>
+                  <span className="text-[var(--text-primary)] w-28">MCP Server</span>
+                  {data.processes.mcp?.running ? (
+                    <>
+                      <span className="text-[var(--text-secondary)] font-mono text-[10px]">port: {data.processes.mcp.port}</span>
+                      <span className="text-gray-500 font-mono text-[9px]">{data.processes.mcp.sessions} session(s)</span>
+                    </>
+                  ) : (
+                    <span className="text-gray-500 text-[10px]">stopped</span>
+                  )}
+                </div>
                 {data.processes.tunnel.running && data.processes.tunnel.url && (
                   <div className="pl-6 text-[10px] text-[var(--accent)] truncate">{data.processes.tunnel.url}</div>
                 )}
+                <div className="border-t border-[var(--border)] my-1" />
               </div>
             </div>
 

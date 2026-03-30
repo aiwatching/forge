@@ -1854,11 +1854,11 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
         execSync(`tmux new-session -d -s "${sessionName}" -c "${workDir}"`, { timeout: 5000 });
 
-        // Set FORGE env vars in tmux (for HTTP skill fallback with codex/aider)
-        const forgeEnv = `export FORGE_WORKSPACE_ID="${this.workspaceId}" && export FORGE_AGENT_ID="${config.id}" && export FORGE_PORT="${Number(process.env.PORT) || 8403}"`;
+        // Set FORGE env vars in the tmux shell before starting CLI
+        execSync(`tmux send-keys -t "${sessionName}" 'export FORGE_WORKSPACE_ID="${this.workspaceId}" FORGE_AGENT_ID="${config.id}" FORGE_PORT="${Number(process.env.PORT) || 8403}"' Enter`, { timeout: 5000 });
 
         // Build CLI start command
-        const parts: string[] = [forgeEnv];
+        const parts: string[] = [];
         if (envExports) parts.push(envExports.replace(/ && $/, ''));
         let cmd = cliCmd;
 

@@ -2009,19 +2009,19 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
                 Suspend
                 <span className="block text-[9px] text-gray-500 mt-0.5">Hide panel, session keeps running</span>
               </button>
-              {!persistentSession && (
-                <button onClick={() => {
-                  setShowCloseDialog(false);
-                  if (wsRef.current?.readyState === WebSocket.OPEN && sessionNameRef.current) {
-                    wsRef.current.send(JSON.stringify({ type: 'kill', sessionName: sessionNameRef.current }));
-                  }
-                  onClose(true);
-                }}
-                  className="flex-1 px-3 py-1.5 text-[11px] rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">
-                  Kill Session
-                  <span className="block text-[9px] text-red-400/60 mt-0.5">End session permanently</span>
-                </button>
-              )}
+              <button onClick={() => {
+                setShowCloseDialog(false);
+                if (wsRef.current?.readyState === WebSocket.OPEN && sessionNameRef.current) {
+                  wsRef.current.send(JSON.stringify({ type: 'kill', sessionName: sessionNameRef.current }));
+                }
+                onClose(true);
+              }}
+                className={`flex-1 px-3 py-1.5 text-[11px] rounded ${persistentSession ? 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30' : 'bg-red-500/20 text-red-400 hover:bg-red-500/30'}`}>
+                {persistentSession ? 'Restart Session' : 'Kill Session'}
+                <span className={`block text-[9px] mt-0.5 ${persistentSession ? 'text-yellow-400/60' : 'text-red-400/60'}`}>
+                  {persistentSession ? 'Kill and restart with fresh env' : 'End session permanently'}
+                </span>
+              </button>
             </div>
             <button onClick={() => setShowCloseDialog(false)}
               className="w-full mt-2 px-3 py-1 text-[10px] text-gray-500 hover:text-gray-300">

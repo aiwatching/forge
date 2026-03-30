@@ -48,14 +48,6 @@ function loadOrchestrator(id: string): WorkspaceOrchestrator {
   const existing = orchestrators.get(id);
   if (existing) return existing;
 
-  // Enforce max active limit
-  if (orchestrators.size >= MAX_ACTIVE) {
-    const evicted = evictIdleWorkspace();
-    if (!evicted) {
-      throw new Error(`Maximum ${MAX_ACTIVE} active workspaces. Stop agents in another workspace first.`);
-    }
-  }
-
   const state = loadWorkspace(id);
   if (!state) throw new Error('Workspace not found');
 
@@ -388,6 +380,11 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
         return json(res, { ok: true });
       }
       case 'start_daemon': {
+        // Check active daemon count before starting
+        const activeCount = Array.from(orchestrators.values()).filter(o => o.isDaemonActive()).length;
+        if (activeCount >= MAX_ACTIVE && !orch.isDaemonActive()) {
+          return jsonError(res, `Maximum ${MAX_ACTIVE} active daemons. Stop agents in another workspace first.`);
+        }
         orch.startDaemon().catch(err => {
           console.error('[workspace] startDaemon error:', err.message);
         });

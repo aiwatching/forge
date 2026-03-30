@@ -1123,8 +1123,10 @@ export class WorkspaceOrchestrator extends EventEmitter {
         return;
       }
 
-      const prompt = entry.config.watch?.prompt || 'Watch detected changes, please review:';
-      const message = `${prompt}\n\n${summary}`;
+      const prompt = entry.config.watch?.prompt;
+      // For terminal injection: send the configured prompt directly (pattern is the trigger, not the payload)
+      // If no prompt configured, send the summary
+      const message = prompt || summary;
 
       // Try to inject directly into an open terminal session
       // Check workspace terminal first, then try VibeCoding terminal naming convention
@@ -1134,8 +1136,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
           const tmpFile = `/tmp/forge-watch-${Date.now()}.txt`;
           writeFileSync(tmpFile, message);
           execSync(`tmux load-buffer ${tmpFile}`, { timeout: 5000 });
-          execSync(`tmux paste-buffer -t "${tmuxSession}"`, { timeout: 5000 });
-          execSync(`tmux send-keys -t "${tmuxSession}" Enter`, { timeout: 5000 });
+          execSync(`tmux paste-buffer -t "${tmuxSession}" && sleep 0.2 && tmux send-keys -t "${tmuxSession}" Enter`, { timeout: 5000 });
           try { unlinkSync(tmpFile); } catch {}
           console.log(`[watch] ${entry.config.label} → ${targetEntry.config.label}: injected into terminal (${tmuxSession})`);
         } catch (err: any) {

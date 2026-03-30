@@ -1107,16 +1107,18 @@ export class WorkspaceOrchestrator extends EventEmitter {
       const prompt = entry.config.watch?.prompt || 'Watch detected changes, please review:';
       const message = `${prompt}\n\n${summary}`;
 
-      // If target has an open terminal (manual mode), inject directly into session
-      if (targetEntry.state.tmuxSession && targetEntry.state.mode === 'manual') {
+      // Try to inject directly into an open terminal session
+      // Check workspace terminal first, then try VibeCoding terminal naming convention
+      const tmuxSession = targetEntry.state.tmuxSession || this.findTmuxSession(targetEntry.config.label);
+      if (tmuxSession) {
         try {
           const tmpFile = `/tmp/forge-watch-${Date.now()}.txt`;
           writeFileSync(tmpFile, message);
           execSync(`tmux load-buffer ${tmpFile}`, { timeout: 5000 });
-          execSync(`tmux paste-buffer -t "${targetEntry.state.tmuxSession}"`, { timeout: 5000 });
-          execSync(`tmux send-keys -t "${targetEntry.state.tmuxSession}" Enter`, { timeout: 5000 });
+          execSync(`tmux paste-buffer -t "${tmuxSession}"`, { timeout: 5000 });
+          execSync(`tmux send-keys -t "${tmuxSession}" Enter`, { timeout: 5000 });
           try { unlinkSync(tmpFile); } catch {}
-          console.log(`[watch] ${entry.config.label} → ${targetEntry.config.label}: injected into terminal session`);
+          console.log(`[watch] ${entry.config.label} → ${targetEntry.config.label}: injected into terminal (${tmuxSession})`);
         } catch (err: any) {
           console.error(`[watch] Terminal inject failed: ${err.message}, falling back to bus`);
           this.bus.send(agentId, targetId, 'notify', { action: 'watch_alert', content: message });
@@ -1568,6 +1570,30 @@ export class WorkspaceOrchestrator extends EventEmitter {
   }
 
   // ─── Agent liveness ─────────────────────────────────────
+
+  /** Find an active tmux session for an agent by checking naming conventions */
+  private findTmuxSession(agentLabel: string): string | null {
+    const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
+    const projectSafe = safeName(this.projectName);
+    const agentSafe = safeName(agentLabel);
+
+    // Try workspace naming: mw-forge-{project}-{agent}
+    const wsName = `mw-forge-${projectSafe}-${agentSafe}`;
+    try { execSync(`tmux has-session -t "${wsName}" 2>/dev/null`, { timeout: 3000 }); return wsName; } catch {}
+
+    // Try VibeCoding naming: mw-{project}
+    const vcName = `mw-${projectSafe}`;
+    try { execSync(`tmux has-session -t "${vcName}" 2>/dev/null`, { timeout: 3000 }); return vcName; } catch {}
+
+    // Search all tmux sessions for one containing project name
+    try {
+      const sessions = execSync('tmux list-sessions -F "#{session_name}"', { timeout: 3000, encoding: 'utf-8' }).trim().split('\n');
+      const match = sessions.find(s => s.includes(projectSafe) || s.includes(agentSafe));
+      if (match) return match;
+    } catch {}
+
+    return null;
+  }
 
   private updateAgentLiveness(agentId: string): void {
     const entry = this.agents.get(agentId);

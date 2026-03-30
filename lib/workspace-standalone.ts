@@ -673,15 +673,20 @@ async function handleSmith(id: string, body: any, res: ServerResponse): Promise<
     }
 
     case 'primary_session': {
-      // Get the primary agent's fixed tmux session — used by VibeCoding as default
+      // Get the primary agent's tmux session + project-level fixed session
       const primary = orch.getPrimaryAgent();
       if (!primary) return json(res, { ok: false, error: 'No primary agent configured' });
+      let fixedSessionId: string | null = null;
+      try {
+        const { getFixedSession } = await import('./project-sessions.js');
+        fixedSessionId = getFixedSession(orch.projectPath) || null;
+      } catch {}
       return json(res, {
         ok: true,
         agentId: primary.config.id,
         label: primary.config.label,
         tmuxSession: primary.state.tmuxSession || null,
-        fixedSessionId: primary.config.fixedSessionId || null,
+        fixedSessionId,
       });
     }
 

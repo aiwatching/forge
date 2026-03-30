@@ -14,8 +14,6 @@ export interface WorkspaceAgentConfig {
   type?: 'agent' | 'input';
   // Primary agent: one per workspace, terminal-only, root dir, fixed session
   primary?: boolean;
-  // Fixed CLI session ID (e.g., claude session UUID) — persisted across restarts
-  fixedSessionId?: string;
   // Input node: append-only entries (latest is active, older are history)
   content?: string;                    // legacy single content (migrated to entries)
   entries?: InputEntry[];              // incremental input history
@@ -181,8 +179,6 @@ export interface WorkspaceState {
   id: string;
   projectPath: string;
   projectName: string;
-  // Fixed CLI session ID — bound to this project (used by --resume)
-  fixedSessionId?: string;
   agents: WorkspaceAgentConfig[];
   agentStates: Record<string, AgentState>;
   nodePositions: Record<string, { x: number; y: number }>;

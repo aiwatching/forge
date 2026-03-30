@@ -25,7 +25,6 @@ interface AgentConfig {
   requiresApproval?: boolean;
   persistentSession?: boolean;
   skipPermissions?: boolean;
-  fixedSessionId?: string;
   watch?: { enabled: boolean; interval: number; targets: any[]; action?: 'log' | 'analyze' | 'approve' | 'send_message'; prompt?: string; sendTo?: string };
 }
 
@@ -334,15 +333,15 @@ function SessionTargetSelector({ target, agents, projectPath, onChange }: {
 }) {
   const [sessions, setSessions] = useState<{ id: string; modified: string; label: string }[]>([]);
 
-  // Load sessions and resolve fixedSessionId
+  // Load sessions and mark fixed session
   useEffect(() => {
     if (!projectPath) return;
     const pName = (projectPath || '').replace(/\/+$/, '').split('/').pop() || '';
     Promise.all([
       fetch(`/api/claude-sessions/${encodeURIComponent(pName)}`).then(r => r.json()).catch(() => []),
-      fetch(`/api/workspace?projectPath=${encodeURIComponent(projectPath)}`).then(r => r.json()).catch(() => null),
-    ]).then(([data, ws]) => {
-      const fixedId = ws?.agents?.find((a: any) => a.primary)?.fixedSessionId || '';
+      fetch(`/api/project-sessions?projectPath=${encodeURIComponent(projectPath)}`).then(r => r.json()).catch(() => ({})),
+    ]).then(([data, psData]) => {
+      const fixedId = psData?.fixedSessionId || '';
       if (Array.isArray(data)) {
         setSessions(data.map((s: any, i: number) => {
           const sid = s.sessionId || s.id || '';
@@ -462,7 +461,6 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
   );
   const [requiresApproval, setRequiresApproval] = useState(initial.requiresApproval || false);
   const [isPrimary, setIsPrimary] = useState(initial.primary || false);
-  const [fixedSessionId, setFixedSessionId] = useState(initial.fixedSessionId || '');
   const hasPrimaryAlready = existingAgents.some(a => a.primary && a.id !== initial.id);
   const [persistentSession, setPersistentSession] = useState(initial.persistentSession || initial.primary || false);
   const [skipPermissions, setSkipPermissions] = useState(initial.skipPermissions !== false);
@@ -694,8 +692,6 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
                   className="accent-[#f0883e]" />
                 <label htmlFor="skipPermissions" className="text-[9px] text-gray-400">Skip permissions (auto-approve all tool calls)</label>
               </div>
-              {/* Fixed Session ID */}
-              <FixedSessionPicker projectPath={projectPath} value={fixedSessionId} onChange={setFixedSessionId} />
             </div>
           )}
 
@@ -866,7 +862,6 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
               requiresApproval: requiresApproval || undefined,
               persistentSession: isPrimary ? true : (persistentSession || undefined),
               skipPermissions: persistentSession ? (skipPermissions ? undefined : false) : undefined,
-              fixedSessionId: fixedSessionId.trim() || undefined,
               watch: watchEnabled && watchTargets.length > 0 ? {
                 enabled: true,
                 interval: Math.max(10, parseInt(watchInterval) || 60),

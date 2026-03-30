@@ -2156,9 +2156,9 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
           </div>
           <div className="flex items-center gap-1">
             {(() => {
-              const isTerminal = hasTmux || config.persistentSession;
-              const color = hasTmux ? '#3fb950' : isTerminal ? '#f0883e' : '#484f58';
-              const label = hasTmux ? 'terminal' : isTerminal ? 'terminal (pending)' : 'headless';
+              const isActive = smithStatus === 'active';
+              const color = hasTmux ? '#3fb950' : (!isActive && config.persistentSession) ? '#f0883e' : '#484f58';
+              const label = hasTmux ? 'terminal' : (!isActive && config.persistentSession) ? 'terminal (pending)' : 'headless';
               return (<>
                 <div className="w-1.5 h-1.5 rounded-full" style={{ background: color }} />
                 <span className="text-[7px] font-medium" style={{ color }}>{label}</span>

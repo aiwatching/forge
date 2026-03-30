@@ -1394,6 +1394,48 @@ function BusPanel({ busLog, agents, onClose }: {
 
 // ─── Terminal Launch Dialog ───────────────────────────────
 
+function SessionItem({ session, formatTime, formatSize, onSelect }: {
+  session: { id: string; modified: string; size: number };
+  formatTime: (iso: string) => string;
+  formatSize: (bytes: number) => string;
+  onSelect: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const copyId = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(session.id).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  return (
+    <div className="rounded border border-[#21262d] hover:border-[#30363d] hover:bg-[#161b22] transition-colors">
+      <div className="flex items-center gap-2 px-3 py-1.5 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        <span className="text-[8px] text-gray-600">{expanded ? '▼' : '▶'}</span>
+        <span className="text-[9px] text-gray-400 font-mono">{session.id.slice(0, 8)}</span>
+        <span className="text-[8px] text-gray-600">{formatTime(session.modified)}</span>
+        <span className="text-[8px] text-gray-600">{formatSize(session.size)}</span>
+        <button onClick={(e) => { e.stopPropagation(); onSelect(); }}
+          className="ml-auto text-[8px] px-1.5 py-0.5 rounded bg-[#238636]/20 text-[#3fb950] hover:bg-[#238636]/40">Resume</button>
+      </div>
+      {expanded && (
+        <div className="px-3 pb-2 flex items-center gap-1.5">
+          <code className="text-[8px] text-gray-500 font-mono bg-[#161b22] px-1.5 py-0.5 rounded border border-[#21262d] select-all flex-1 overflow-hidden text-ellipsis">
+            {session.id}
+          </code>
+          <button onClick={copyId}
+            className="text-[8px] px-1.5 py-0.5 rounded bg-[#30363d] text-gray-400 hover:text-white hover:bg-[#484f58] shrink-0">
+            {copied ? '✓' : 'Copy'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TerminalLaunchDialog({ agent, workDir, sessName, projectPath, workspaceId, supportsSession, onLaunch, onCancel }: {
   agent: AgentConfig; workDir?: string; sessName: string; projectPath: string; workspaceId: string;
   supportsSession?: boolean;
@@ -1456,19 +1498,13 @@ function TerminalLaunchDialog({ agent, workDir, sessName, projectPath, workspace
           {isClaude && sessions.length > 1 && (
             <button onClick={() => setShowSessions(!showSessions)}
               className="w-full text-[9px] text-gray-500 hover:text-white py-1">
-              {showSessions ? '▼' : '▶'} More sessions ({sessions.length - 1})
+              {showSessions ? '▼' : '▶'} All sessions ({sessions.length})
             </button>
           )}
 
-          {showSessions && sessions.slice(1).map(s => (
-            <button key={s.id} onClick={() => onLaunch(true, s.id)}
-              className="w-full text-left px-3 py-1.5 rounded border border-[#21262d] hover:border-[#30363d] hover:bg-[#161b22] transition-colors">
-              <div className="flex items-center gap-2">
-                <span className="text-[9px] text-gray-400 font-mono">{s.id.slice(0, 8)}</span>
-                <span className="text-[8px] text-gray-600">{formatTime(s.modified)}</span>
-                <span className="text-[8px] text-gray-600">{formatSize(s.size)}</span>
-              </div>
-            </button>
+          {showSessions && sessions.map(s => (
+            <SessionItem key={s.id} session={s} formatTime={formatTime} formatSize={formatSize}
+              onSelect={() => onLaunch(true, s.id)} />
           ))}
         </div>
 

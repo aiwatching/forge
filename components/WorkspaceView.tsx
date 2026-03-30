@@ -1768,7 +1768,7 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
   return <div ref={containerRef} className="w-full h-full" style={{ background: '#0d1117' }} />;
 }
 
-function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, onSessionReady, onClose }: {
+function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, skipPermissions, onSessionReady, onClose }: {
   agentLabel: string;
   agentIcon: string;
   projectPath: string;
@@ -1782,6 +1782,7 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
   resumeSessionId?: string;
   profileEnv?: Record<string, string>;
   isPrimary?: boolean;
+  skipPermissions?: boolean;
   onSessionReady?: (name: string) => void;
   onClose: (killSession: boolean) => void;
 }) {
@@ -1901,7 +1902,8 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
             const resumeFlag = isClaude && resumeId ? ` --resume ${resumeId}` : '';
             let mcpFlag = '';
             if (isClaude) { try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {} }
-            const cmd = `${envExportsClean}${cdCmd} && ${cli}${resumeFlag}${modelFlag}${mcpFlag}\n`;
+            const sf = skipPermissions ? ' --dangerously-skip-permissions' : '';
+            const cmd = `${envExportsClean}${cdCmd} && ${cli}${resumeFlag}${modelFlag}${sf}${mcpFlag}\n`;
             setTimeout(() => {
               if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: cmd }));
             }, 300);
@@ -2261,7 +2263,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
   const [memoryTarget, setMemoryTarget] = useState<{ id: string; label: string } | null>(null);
   const [inboxTarget, setInboxTarget] = useState<{ id: string; label: string } | null>(null);
   const [showBusPanel, setShowBusPanel] = useState(false);
-  const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; cliCmd?: string; cliType?: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string>; isPrimary?: boolean }[]>([]);
+  const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; cliCmd?: string; cliType?: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string>; isPrimary?: boolean; skipPermissions?: boolean }[]>([]);
   const [termLaunchDialog, setTermLaunchDialog] = useState<{ agent: AgentConfig; sessName: string; workDir?: string; sessions: string[]; supportsSession?: boolean } | null>(null);
 
   // Expose focusAgent to parent
@@ -2382,7 +2384,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 setFloatingTerminals(prev => [...prev, {
                   agentId: agent.id, label: agent.label, icon: agent.icon,
                   cliId: agent.agentId || 'claude', workDir,
-                  tmuxSession: existingTmux, sessionName: sessName, isPrimary: true,
+                  tmuxSession: existingTmux, sessionName: sessName, isPrimary: true, skipPermissions: agent.skipPermissions !== false,
                 }]);
                 wsApi(workspaceId, 'open_terminal', { agentId: agent.id });
                 return;
@@ -2393,7 +2395,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 setFloatingTerminals(prev => [...prev, {
                   agentId: agent.id, label: agent.label, icon: agent.icon,
                   cliId: agent.agentId || 'claude', workDir,
-                  tmuxSession: existingTmux, sessionName: sessName, isPrimary: agent.primary,
+                  tmuxSession: existingTmux, sessionName: sessName, isPrimary: agent.primary, skipPermissions: agent.skipPermissions !== false,
                 }]);
                 // Register terminal open with backend
                 wsApi(workspaceId, 'open_terminal', { agentId: agent.id });
@@ -2413,7 +2415,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                   cliCmd: (resolveRes as any)?.cliCmd || 'claude',
                   cliType: (resolveRes as any)?.cliType || 'claude-code',
                   workDir,
-                  tmuxSession: res?.tmuxSession || sessName, sessionName: sessName, isPrimary: true,
+                  tmuxSession: res?.tmuxSession || sessName, sessionName: sessName, isPrimary: true, skipPermissions: agent.skipPermissions !== false,
                   profileEnv: {
                     ...((resolveRes as any)?.env || {}),
                     ...((resolveRes as any)?.model ? { CLAUDE_MODEL: (resolveRes as any).model } : {}),
@@ -2785,7 +2787,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 cliCmd: res.cliCmd || 'claude',
                 cliType: res.cliType || 'claude-code',
                 workDir,
-                sessionName: sessName, resumeMode, resumeSessionId: sessionId, isPrimary: false,
+                sessionName: sessName, resumeMode, resumeSessionId: sessionId, isPrimary: false, skipPermissions: agent.skipPermissions !== false,
                 profileEnv: {
                   ...(res.env || {}),
                   ...(res.model ? { CLAUDE_MODEL: res.model } : {}),
@@ -2817,6 +2819,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           resumeSessionId={ft.resumeSessionId}
           profileEnv={ft.profileEnv}
           isPrimary={ft.isPrimary}
+          skipPermissions={ft.skipPermissions}
           onSessionReady={(name) => {
             if (workspaceId) wsApi(workspaceId, 'set_tmux_session', { agentId: ft.agentId, sessionName: name });
             setFloatingTerminals(prev => prev.map(t => t.agentId === ft.agentId ? { ...t, tmuxSession: name } : t));

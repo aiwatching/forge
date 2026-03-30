@@ -406,8 +406,9 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
     (initial.steps || []).map(s => `${s.label}: ${s.prompt}`).join('\n') || ''
   );
   const [requiresApproval, setRequiresApproval] = useState(initial.requiresApproval || false);
-  const isPrimary = initial.primary || false;
-  const [persistentSession, setPersistentSession] = useState(initial.persistentSession || isPrimary || false);
+  const [isPrimary, setIsPrimary] = useState(initial.primary || false);
+  const hasPrimaryAlready = existingAgents.some(a => a.primary && a.id !== initial.id);
+  const [persistentSession, setPersistentSession] = useState(initial.persistentSession || initial.primary || false);
   const [skipPermissions, setSkipPermissions] = useState(initial.skipPermissions !== false);
   const [watchEnabled, setWatchEnabled] = useState(initial.watch?.enabled || false);
   const [watchInterval, setWatchInterval] = useState(String(initial.watch?.interval || 60));
@@ -596,6 +597,22 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
               <input value={outputs} onChange={e => setOutputs(e.target.value)} placeholder="docs/prd.md, src/"
                 className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff]" />
             </div>
+          </div>
+
+          {/* Primary Agent */}
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="primaryAgent" checked={isPrimary}
+              onChange={e => {
+                const v = e.target.checked;
+                setIsPrimary(v);
+                if (v) { setPersistentSession(true); setWorkDirVal('./'); }
+              }}
+              disabled={hasPrimaryAlready && !isPrimary}
+              className={`accent-[#f0883e] ${hasPrimaryAlready && !isPrimary ? 'opacity-50 cursor-not-allowed' : ''}`} />
+            <label htmlFor="primaryAgent" className={`text-[9px] ${isPrimary ? 'text-[#f0883e] font-medium' : 'text-gray-400'}`}>
+              Primary agent (terminal-only, root directory, fixed session)
+              {hasPrimaryAlready && !isPrimary && <span className="text-gray-600 ml-1">— already set on another agent</span>}
+            </label>
           </div>
 
           {/* Requires Approval */}

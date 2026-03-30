@@ -29,12 +29,22 @@ function getOrch(workspaceId: string): any {
   return _getOrchestrator(workspaceId);
 }
 
-// Per-session context (resolved from SSE URL params)
+// Per-session context (resolved from SSE URL + orchestrator topo)
 interface SessionContext {
   workspaceId: string;
-  agentId: string;
+  agentId: string; // resolved dynamically, may be empty for non-agent terminals
 }
 const sessionContexts = new Map<string, SessionContext>();
+
+/** Resolve agentId from orchestrator's agent-tmux mapping */
+function resolveAgentFromOrch(workspaceId: string): string {
+  // For now, default to primary agent. Future: resolve from tmux session → agent map
+  try {
+    const orch = getOrch(workspaceId);
+    const primary = orch.getPrimaryAgent();
+    return primary?.config?.id || '';
+  } catch { return ''; }
+}
 
 // ─── MCP Server Definition ──────────────────────────────
 
@@ -221,7 +231,7 @@ export async function startMcpServer(port: number): Promise<void> {
 
       // Extract workspace context from URL params
       const workspaceId = url.searchParams.get('workspaceId') || '';
-      const agentId = url.searchParams.get('agentId') || '';
+      const agentId = url.searchParams.get('agentId') || (workspaceId ? resolveAgentFromOrch(workspaceId) : '');
       sessionContexts.set(sessionId, { workspaceId, agentId });
 
       transport.onclose = () => {

@@ -48,8 +48,7 @@ function ensureMcpConfig(projectPath: string): void {
       const { findWorkspaceByProject } = require('@/lib/workspace');
       const ws = findWorkspaceByProject(projectPath);
       if (ws) {
-        const primary = ws.agents?.find((a: any) => a.primary);
-        wsParam = `?workspaceId=${ws.id}${primary ? `&agentId=${primary.id}` : ''}`;
+        wsParam = `?workspaceId=${ws.id}`;
       }
     } catch {}
 

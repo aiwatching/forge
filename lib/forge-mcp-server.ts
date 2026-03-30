@@ -62,23 +62,29 @@ function createForgeMcpServer(sessionId: string): McpServer {
     'send_message',
     'Send a message to another agent in the workspace',
     {
-      to: z.string().describe('Target agent label (e.g., "Engineer", "QA", "Reviewer")'),
+      to: z.string().describe('Target agent — name like "Reviewer", or description like "the one who does testing"'),
       content: z.string().describe('Message content'),
       action: z.string().optional().describe('Message type: fix_request, update_notify, question, review, info_request'),
     },
     async (params) => {
       const { to, content, action = 'update_notify' } = params;
       const { workspaceId, agentId } = ctx();
-      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context. MCP URL missing workspaceId.' }] };
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context.' }] };
 
       try {
         const orch = getOrch(workspaceId);
         const snapshot = orch.getSnapshot();
-        const target = snapshot.agents.find((a: any) =>
-          a.label.toLowerCase() === to.toLowerCase() || a.id === to
-        );
+        const candidates = snapshot.agents.filter((a: any) => a.type !== 'input' && a.id !== agentId);
+
+        // Match: exact label > label contains > role contains
+        const toLower = to.toLowerCase();
+        let target = candidates.find((a: any) => a.label.toLowerCase() === toLower);
+        if (!target) target = candidates.find((a: any) => a.label.toLowerCase().includes(toLower));
+        if (!target) target = candidates.find((a: any) => (a.role || '').toLowerCase().includes(toLower));
+
         if (!target) {
-          return { content: [{ type: 'text', text: `Agent "${to}" not found. Available: ${snapshot.agents.filter((a: any) => a.type !== 'input').map((a: any) => a.label).join(', ')}` }] };
+          const available = candidates.map((a: any) => `${a.label} (${(a.role || '').slice(0, 50)})`).join(', ');
+          return { content: [{ type: 'text', text: `No agent matches "${to}". Available: ${available}` }] };
         }
 
         orch.getBus().send(agentId, target.id, 'notify', { action, content });
@@ -173,6 +179,41 @@ function createForgeMcpServer(sessionId: string): McpServer {
           });
 
         return { content: [{ type: 'text', text: lines.join('\n') || 'No agents configured.' }] };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── get_agents ────────────────────────────
+  server.tool(
+    'get_agents',
+    'Get all agents in the workspace with their roles and relationships. Use this to understand who does what before sending messages.',
+    {},
+    async () => {
+      const { workspaceId, agentId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context' }] };
+
+      try {
+        const orch = getOrch(workspaceId);
+        const snapshot = orch.getSnapshot();
+
+        const agents = snapshot.agents
+          .filter((a: any) => a.type !== 'input')
+          .map((a: any) => {
+            const deps = a.dependsOn
+              .map((depId: string) => snapshot.agents.find((d: any) => d.id === depId)?.label || depId)
+              .join(', ');
+            const isMe = a.id === agentId;
+            return [
+              `${a.icon} ${a.label}${isMe ? ' (you)' : ''}${a.primary ? ' [PRIMARY]' : ''}`,
+              `  Role: ${a.role || '(no role defined)'}`,
+              deps ? `  Depends on: ${deps}` : null,
+              a.workDir && a.workDir !== './' ? `  Work dir: ${a.workDir}` : null,
+            ].filter(Boolean).join('\n');
+          });
+
+        return { content: [{ type: 'text', text: agents.join('\n\n') || 'No agents configured.' }] };
       } catch (err: any) {
         return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
       }

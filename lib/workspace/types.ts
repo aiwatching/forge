@@ -14,6 +14,8 @@ export interface WorkspaceAgentConfig {
   type?: 'agent' | 'input';
   // Primary agent: one per workspace, terminal-only, root dir, fixed session
   primary?: boolean;
+  // Fixed CLI session ID (e.g., claude session UUID) — persisted across restarts
+  fixedSessionId?: string;
   // Input node: append-only entries (latest is active, older are history)
   content?: string;                    // legacy single content (migrated to entries)
   entries?: InputEntry[];              // incremental input history

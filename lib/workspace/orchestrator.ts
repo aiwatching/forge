@@ -11,7 +11,7 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { readFileSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, unlinkSync, readdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -1641,23 +1641,40 @@ export class WorkspaceOrchestrator extends EventEmitter {
   /** Find an active tmux session for an agent by checking naming conventions */
   // ─── Persistent Terminal Sessions ────────────────────────
 
-  /** Create a persistent tmux session with claude for an agent */
+  /** Resolve the CLI session directory for a project (e.g., ~/.claude/projects/-Users-zliu-...) */
+  private getCliSessionDir(): string {
+    const encoded = this.projectPath.replace(/\//g, '-');
+    return join(homedir(), '.claude', 'projects', encoded);
+  }
+
+  /** Detect newly created CLI session file after starting a CLI agent */
+  private detectNewCliSession(beforeFiles: Set<string>): string | null {
+    try {
+      const dir = this.getCliSessionDir();
+      if (!existsSync(dir)) return null;
+      const files = readdirSync(dir).filter(f => f.endsWith('.jsonl'));
+      const newFile = files.find(f => !beforeFiles.has(f));
+      if (newFile) return newFile.replace('.jsonl', '');
+    } catch {}
+    return null;
+  }
+
+  /** Create a persistent tmux session with the CLI agent */
   private async ensurePersistentSession(agentId: string, config: WorkspaceAgentConfig): Promise<void> {
     const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
     const sessionName = `mw-forge-${safeName(this.projectName)}-${safeName(config.label)}`;
 
-    // Check if session already exists
+    // Check if tmux session already exists
     try {
       execSync(`tmux has-session -t "${sessionName}" 2>/dev/null`, { timeout: 3000 });
       console.log(`[daemon] ${config.label}: persistent session already exists (${sessionName})`);
     } catch {
       // Create new tmux session and start the CLI agent
       try {
-        // Resolve agent launch info (cliCmd, flags, env, model, etc.)
+        // Resolve agent launch info
         let cliCmd = 'claude';
         let cliType = 'claude-code';
         let supportsSession = true;
-        let resumeFlag = '-c';
         let skipPermissionsFlag = '--dangerously-skip-permissions';
         let envExports = '';
         let modelFlag = '';
@@ -1667,8 +1684,6 @@ export class WorkspaceOrchestrator extends EventEmitter {
           cliCmd = info.cliCmd || 'claude';
           cliType = info.cliType || 'claude-code';
           supportsSession = info.supportsSession ?? true;
-          resumeFlag = info.resumeFlag || '';
-          // Resolve skip permissions flag from agent config
           const agents = listAgents();
           const agentDef = agents.find((a: any) => a.id === config.agentId);
           if (agentDef?.skipPermissionsFlag) skipPermissionsFlag = agentDef.skipPermissionsFlag;
@@ -1685,17 +1700,29 @@ export class WorkspaceOrchestrator extends EventEmitter {
         const workDir = config.workDir && config.workDir !== './' && config.workDir !== '.'
           ? `${this.projectPath}/${config.workDir}` : this.projectPath;
 
+        // Snapshot existing session files before starting (to detect new one)
+        let beforeFiles = new Set<string>();
+        if (supportsSession) {
+          try {
+            const dir = this.getCliSessionDir();
+            if (existsSync(dir)) beforeFiles = new Set(readdirSync(dir).filter(f => f.endsWith('.jsonl')));
+          } catch {}
+        }
+
         execSync(`tmux new-session -d -s "${sessionName}" -c "${workDir}"`, { timeout: 5000 });
 
-        // Build CLI start command based on agent type
+        // Build CLI start command
         const parts: string[] = [];
         if (envExports) parts.push(envExports.replace(/ && $/, ''));
         let cmd = cliCmd;
-        // Resume flag: only for agents that support sessions (e.g., claude -c)
-        if (supportsSession && resumeFlag) cmd += ` ${resumeFlag}`;
-        // Model override
+
+        // Fixed session binding: use --resume <id> if we have a stored session ID
+        if (supportsSession && config.fixedSessionId) {
+          cmd += ` --resume ${config.fixedSessionId}`;
+        } else if (supportsSession) {
+          // No fixed session yet — start fresh (will detect and bind after)
+        }
         if (modelFlag) cmd += modelFlag;
-        // Skip permissions: default true, user can override to false
         if (config.skipPermissions !== false && skipPermissionsFlag) cmd += ` ${skipPermissionsFlag}`;
         parts.push(cmd);
 
@@ -1703,13 +1730,28 @@ export class WorkspaceOrchestrator extends EventEmitter {
         execSync(`tmux send-keys -t "${sessionName}" '${startCmd}' Enter`, { timeout: 5000 });
 
         console.log(`[daemon] ${config.label}: persistent session created (${sessionName}) [${cliType}: ${cliCmd}]`);
+
+        // If no fixed session ID yet, detect the newly created one after CLI starts
+        if (supportsSession && !config.fixedSessionId) {
+          // Wait a moment for claude to create the session file
+          setTimeout(() => {
+            const newId = this.detectNewCliSession(beforeFiles);
+            if (newId) {
+              config.fixedSessionId = newId;
+              this.saveNow();
+              console.log(`[daemon] ${config.label}: bound to CLI session ${newId}`);
+            } else {
+              console.log(`[daemon] ${config.label}: could not detect CLI session ID (will retry on next message)`);
+            }
+          }, 5000);
+        }
       } catch (err: any) {
         console.error(`[daemon] ${config.label}: failed to create persistent session: ${err.message}`);
         return;
       }
     }
 
-    // Store session name in agent state + notify frontend
+    // Store tmux session name in agent state
     const entry = this.agents.get(agentId);
     if (entry) {
       entry.state.tmuxSession = sessionName;

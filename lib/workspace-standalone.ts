@@ -681,6 +681,7 @@ async function handleSmith(id: string, body: any, res: ServerResponse): Promise<
         agentId: primary.config.id,
         label: primary.config.label,
         tmuxSession: primary.state.tmuxSession || null,
+        fixedSessionId: primary.config.fixedSessionId || null,
       });
     }
 

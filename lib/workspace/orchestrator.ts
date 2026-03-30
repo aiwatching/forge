@@ -1883,20 +1883,21 @@ export class WorkspaceOrchestrator extends EventEmitter {
             /failed to parse/i,
             /could not read/i,
             /fatal/i,
+            /No conversation found/i,
+            /could not connect/i,
+            /ECONNREFUSED/i,
           ];
           const hasError = errorPatterns.some(p => p.test(paneContent));
           if (hasError) {
-            // Extract error message from pane
-            const errorLines = paneContent.split('\n').filter(l => /error|invalid|syntax|fatal|failed/i.test(l)).slice(0, 3);
+            const errorLines = paneContent.split('\n').filter(l => /error|invalid|syntax|fatal|failed|No conversation|ECONNREFUSED/i.test(l)).slice(0, 3);
             const errorMsg = errorLines.join(' ').slice(0, 200) || 'CLI failed to start (check project settings)';
             console.error(`[daemon] ${config.label}: CLI startup error detected: ${errorMsg}`);
 
             const entry = this.agents.get(agentId);
             if (entry) {
-              entry.state.error = errorMsg;
-              entry.state.smithStatus = 'down';
-              this.emit('event', { type: 'smith_status', agentId, smithStatus: 'down' } as any);
-              this.emit('event', { type: 'log', agentId, entry: { type: 'system', subtype: 'error', content: `CLI startup failed: ${errorMsg}`, timestamp: new Date().toISOString() } } as any);
+              entry.state.error = `Terminal failed: ${errorMsg}. Falling back to headless mode.`;
+              entry.state.tmuxSession = undefined; // clear so message loop uses headless (claude -p)
+              this.emit('event', { type: 'log', agentId, entry: { type: 'system', subtype: 'error', content: `Terminal startup failed: ${errorMsg}. Auto-fallback to headless (claude -p).`, timestamp: new Date().toISOString() } } as any);
               this.emitAgentsChanged();
             }
             // Kill the failed tmux session

@@ -1633,8 +1633,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
           ? `${this.projectPath}/${config.workDir}` : this.projectPath;
 
         execSync(`tmux new-session -d -s "${sessionName}" -c "${workDir}"`, { timeout: 5000 });
-        // Start claude in the session
-        const startCmd = `${envExports}${cliCmd}${modelFlag}`;
+        // Start claude with -c to resume last session (preserve context)
+        const startCmd = `${envExports}${cliCmd} -c${modelFlag}`;
         execSync(`tmux send-keys -t "${sessionName}" '${startCmd}' Enter`, { timeout: 5000 });
 
         console.log(`[daemon] ${config.label}: persistent session created (${sessionName})`);

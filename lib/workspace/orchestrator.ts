@@ -1036,7 +1036,13 @@ export class WorkspaceOrchestrator extends EventEmitter {
         entry.worker = null;
       }
 
-      // 3. Set smith down
+      // 3. Kill tmux session
+      if (entry.state.tmuxSession) {
+        try { execSync(`tmux kill-session -t "${entry.state.tmuxSession}" 2>/dev/null`, { timeout: 3000 }); } catch {}
+        entry.state.tmuxSession = undefined;
+      }
+
+      // 4. Set smith down
       entry.state.smithStatus = 'down';
       entry.state.error = undefined;
       this.updateAgentLiveness(id);
@@ -1051,6 +1057,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
     this.watchManager.stop();
     this.stopAllTerminalMonitors();
     this.stopHealthCheck();
+    this.forgeActedMessages.clear();
     console.log('[workspace] Daemon stopped');
   }
 
@@ -1131,18 +1138,17 @@ export class WorkspaceOrchestrator extends EventEmitter {
   private forgeActedMessages = new Set<string>();
   private forgeAgentStartTime = 0;
 
-  /** Forge agent scans bus for actionable states */
+  /** Forge agent scans bus for actionable states (only recent messages) */
   private runForgeAgentCheck(): void {
     if (!this.forgeAgentStartTime) this.forgeAgentStartTime = Date.now();
     const log = this.bus.getLog();
     const now = Date.now();
 
+    // Only scan messages from after daemon start (skip all history)
     for (const msg of log) {
+      if (msg.timestamp < this.forgeAgentStartTime) continue;
       if (msg.type === 'ack' || msg.from === '_forge') continue;
       if (this.forgeActedMessages.has(msg.id)) continue;
-      // Skip old done/failed messages (avoid re-notifying on history)
-      // But DO process old pending/pending_approval/running (need cleanup)
-      if (msg.timestamp < this.forgeAgentStartTime && (msg.status === 'done' || msg.status === 'failed')) continue;
 
       // Case 1: Message done but no reply from target → ask target to send summary
       if (msg.status === 'done') {

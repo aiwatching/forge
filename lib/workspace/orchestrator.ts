@@ -1596,25 +1596,17 @@ export class WorkspaceOrchestrator extends EventEmitter {
     const causedBy = this.buildCausedBy(agentId, entry);
     const processedMsg = causedBy ? this.bus.getLog().find(m => m.id === causedBy.messageId) : null;
 
-    if (processedMsg) {
-      // Auto-reply to the original sender with completion summary
-      const senderLabel = this.agents.get(processedMsg.from)?.config.label || processedMsg.from;
-      const replyContent = summary
-        ? `${entry.config.label} completed: ${summary.slice(0, 300)}`
-        : `${entry.config.label} completed processing your request.`;
+    this.broadcastCompletion(agentId, causedBy);
 
-      if (processedMsg.from !== agentId && processedMsg.from !== '_system') {
-        this.bus.send(agentId, processedMsg.from, 'notify', {
-          action: 'task_complete',
-          content: replyContent,
-          files,
-        }, { category: 'notification', causedBy });
-        console.log(`[bus] ${entry.config.label} → ${senderLabel}: completion reply sent`);
+    // Nudge the original sender to check results (inject hint into their terminal)
+    if (processedMsg && processedMsg.from !== agentId && processedMsg.from !== '_system') {
+      const senderEntry = this.agents.get(processedMsg.from);
+      if (senderEntry?.state.tmuxSession) {
+        const hint = `[Forge] ${entry.config.label} finished processing your request. Use check_outbox() or get_inbox() to see results.`;
+        this.injectIntoSession(processedMsg.from, hint);
+        console.log(`[bus] Nudged ${senderEntry.config.label} — ${entry.config.label} completed`);
       }
     }
-
-    // Also broadcast to downstream (DAG-based)
-    this.broadcastCompletion(agentId, causedBy);
 
     this.emitWorkspaceStatus();
     this.checkWorkspaceComplete?.();

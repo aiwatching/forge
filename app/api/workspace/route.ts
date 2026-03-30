@@ -2,35 +2,6 @@ import { NextResponse } from 'next/server';
 import { listWorkspaces, findWorkspaceByProject, loadWorkspace, saveWorkspace, deleteWorkspace } from '@/lib/workspace';
 import type { WorkspaceState } from '@/lib/workspace';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-
-/** Auto-bind fixedSessionId for primary agent if missing. Cached to avoid repeated fs scans. */
-const bindCache = new Map<string, number>(); // wsId → timestamp of last check
-const BIND_CACHE_TTL = 30_000; // 30s
-
-function ensureSessionBound(ws: WorkspaceState): boolean {
-  const primary = ws.agents.find((a: any) => a.primary && a.persistentSession && !a.fixedSessionId);
-  if (!primary) return false;
-  // Skip if recently checked
-  const lastCheck = bindCache.get(ws.id);
-  if (lastCheck && Date.now() - lastCheck < BIND_CACHE_TTL) return false;
-  bindCache.set(ws.id, Date.now());
-  try {
-    const workDir = primary.workDir && primary.workDir !== './' && primary.workDir !== '.' ? `${ws.projectPath}/${primary.workDir}` : ws.projectPath;
-    const dir = join(homedir(), '.claude', 'projects', workDir.replace(/\//g, '-'));
-    if (!existsSync(dir)) return false;
-    const files = readdirSync(dir).filter(f => f.endsWith('.jsonl'));
-    if (files.length === 0) return false;
-    const boundIds = new Set(ws.agents.filter((a: any) => a.fixedSessionId).map((a: any) => a.fixedSessionId));
-    const available = files.filter(f => !boundIds.has(f.replace('.jsonl', '')));
-    if (available.length === 0) return false;
-    const sorted = available.map(f => ({ name: f, mtime: statSync(join(dir, f)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
-    (primary as any).fixedSessionId = sorted[0].name.replace('.jsonl', '');
-    return true;
-  } catch { return false; }
-}
 
 // List workspaces, find by projectPath, or export template
 export async function GET(req: Request) {
@@ -53,9 +24,6 @@ export async function GET(req: Request) {
 
   if (projectPath) {
     const ws = findWorkspaceByProject(projectPath);
-    if (ws && ensureSessionBound(ws)) {
-      saveWorkspace(ws); // persist the binding
-    }
     return NextResponse.json(ws || null);
   }
 

@@ -442,9 +442,6 @@ function handleStream(id: string, req: IncomingMessage, res: ServerResponse): vo
     'Connection': 'keep-alive',
   });
 
-  // Auto-bind primary session on every SSE connect (covers page load/refresh)
-  orch.ensurePrimarySessionBound();
-
   // Send initial snapshot
   const snapshot = orch.getSnapshot();
   res.write(`data: ${JSON.stringify({ type: 'init', ...snapshot })}\n\n`);
@@ -680,7 +677,6 @@ async function handleSmith(id: string, body: any, res: ServerResponse): Promise<
 
     case 'primary_session': {
       // Get the primary agent's fixed tmux session — used by VibeCoding as default
-      orch.ensurePrimarySessionBound(); // auto-bind if not yet
       const primary = orch.getPrimaryAgent();
       if (!primary) return json(res, { ok: false, error: 'No primary agent configured' });
       return json(res, {

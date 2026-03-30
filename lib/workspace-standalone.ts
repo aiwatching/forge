@@ -30,7 +30,7 @@ import { execSync } from 'node:child_process';
 
 const PORT = Number(process.env.WORKSPACE_PORT) || 8405;
 const FORGE_PORT = Number(process.env.PORT) || 8403;
-const MAX_ACTIVE = 2;
+const MAX_ACTIVE = 5;
 
 // ─── State ───────────────────────────────────────────────
 

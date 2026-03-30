@@ -86,18 +86,24 @@ export default function SessionView({
     } catch {}
   }, []);
 
-  // Load workspace bound sessions for all projects
+  // Load workspace bound sessions for visible projects
   const loadBoundSessions = useCallback(async () => {
     try {
-      const res = await fetch('/api/workspace');
-      const workspaces = await res.json();
-      if (!Array.isArray(workspaces)) return;
+      // Get workspace list (summaries), then fetch full data for each to find bindings
+      const listRes = await fetch('/api/workspace');
+      const summaries = await listRes.json();
+      if (!Array.isArray(summaries)) return;
       const bound: Record<string, string> = {};
-      for (const ws of workspaces) {
-        if (!ws.agents) continue;
-        const primary = ws.agents.find((a: any) => a.primary && a.fixedSessionId);
-        if (primary) bound[ws.projectName] = primary.fixedSessionId;
-      }
+      await Promise.all(summaries.map(async (s: any) => {
+        try {
+          const wsRes = await fetch(`/api/workspace?projectPath=${encodeURIComponent(s.projectPath)}`);
+          const ws = await wsRes.json();
+          if (ws?.agents) {
+            const primary = ws.agents.find((a: any) => a.primary && a.fixedSessionId);
+            if (primary) bound[ws.projectName] = primary.fixedSessionId;
+          }
+        } catch {}
+      }));
       setBoundSessions(bound);
     } catch {}
   }, []);

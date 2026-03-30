@@ -1455,6 +1455,201 @@ function getWsUrl() {
   return `${p}//${h}:${port + 1}`;
 }
 
+// ─── Terminal Dock (right side panel with tabs) ──────────
+type TerminalEntry = { agentId: string; label: string; icon: string; cliId: string; cliCmd?: string; cliType?: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string> };
+
+function TerminalDock({ terminals, projectPath, workspaceId, onSessionReady, onClose }: {
+  terminals: TerminalEntry[];
+  projectPath: string;
+  workspaceId: string | null;
+  onSessionReady: (agentId: string, name: string) => void;
+  onClose: (agentId: string) => void;
+}) {
+  const [activeTab, setActiveTab] = useState(terminals[0]?.agentId || '');
+  const [width, setWidth] = useState(520);
+  const dragRef = useRef<{ startX: number; origW: number } | null>(null);
+
+  // Auto-select new tab when added
+  useEffect(() => {
+    if (terminals.length > 0 && !terminals.find(t => t.agentId === activeTab)) {
+      setActiveTab(terminals[terminals.length - 1].agentId);
+    }
+  }, [terminals, activeTab]);
+
+  const active = terminals.find(t => t.agentId === activeTab);
+
+  return (
+    <div className="flex shrink-0" style={{ width }}>
+      {/* Resize handle */}
+      <div
+        className="w-1 cursor-col-resize hover:bg-[#58a6ff]/30 active:bg-[#58a6ff]/50 transition-colors"
+        style={{ background: '#21262d' }}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          dragRef.current = { startX: e.clientX, origW: width };
+          const onMove = (ev: MouseEvent) => {
+            if (!dragRef.current) return;
+            const newW = dragRef.current.origW - (ev.clientX - dragRef.current.startX);
+            setWidth(Math.max(300, Math.min(1200, newW)));
+          };
+          const onUp = () => { dragRef.current = null; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+          window.addEventListener('mousemove', onMove);
+          window.addEventListener('mouseup', onUp);
+        }}
+      />
+      <div className="flex-1 flex flex-col min-w-0 bg-[#0d1117] border-l border-[#30363d]">
+        {/* Tabs */}
+        <div className="flex items-center bg-[#161b22] border-b border-[#30363d] overflow-x-auto shrink-0">
+          {terminals.map(t => (
+            <button
+              key={t.agentId}
+              onClick={() => setActiveTab(t.agentId)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] border-r border-[#30363d] shrink-0 ${
+                t.agentId === activeTab
+                  ? 'bg-[#0d1117] text-white border-b-2 border-b-[#58a6ff]'
+                  : 'text-gray-500 hover:text-gray-300 hover:bg-[#1c2128]'
+              }`}
+            >
+              <span>{t.icon}</span>
+              <span className="font-medium">{t.label}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); onClose(t.agentId); }}
+                className="ml-1 text-gray-600 hover:text-red-400 text-[8px]"
+              >✕</button>
+            </button>
+          ))}
+        </div>
+        {/* Active terminal */}
+        {active && (
+          <div className="flex-1 min-h-0" key={active.agentId}>
+            <FloatingTerminalInline
+              agentLabel={active.label}
+              agentIcon={active.icon}
+              projectPath={projectPath}
+              agentCliId={active.cliId}
+              cliCmd={active.cliCmd}
+              cliType={active.cliType}
+              workDir={active.workDir}
+              preferredSessionName={active.sessionName}
+              existingSession={active.tmuxSession}
+              resumeMode={active.resumeMode}
+              resumeSessionId={active.resumeSessionId}
+              profileEnv={active.profileEnv}
+              onSessionReady={(name) => onSessionReady(active.agentId, name)}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Inline Terminal (no drag/resize, fills parent) ──────
+function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, onSessionReady }: {
+  agentLabel: string;
+  agentIcon: string;
+  projectPath: string;
+  agentCliId: string;
+  cliCmd?: string;
+  cliType?: string;
+  workDir?: string;
+  preferredSessionName?: string;
+  existingSession?: string;
+  resumeMode?: boolean;
+  resumeSessionId?: string;
+  profileEnv?: Record<string, string>;
+  onSessionReady?: (name: string) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let disposed = false;
+
+    Promise.all([
+      import('@xterm/xterm'),
+      import('@xterm/addon-fit'),
+    ]).then(([{ Terminal }, { FitAddon }]) => {
+      if (disposed) return;
+
+      const term = new Terminal({
+        cursorBlink: true, fontSize: 13,
+        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        scrollback: 5000,
+        theme: { background: '#0d1117', foreground: '#c9d1d9', cursor: '#58a6ff' },
+      });
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(el);
+      setTimeout(() => { try { fitAddon.fit(); } catch {} }, 100);
+
+      const ro = new ResizeObserver(() => { try { fitAddon.fit(); } catch {} });
+      ro.observe(el);
+
+      // Connect to terminal server
+      const wsUrl = getWsUrl();
+      const ws = new WebSocket(wsUrl);
+      ws.binaryType = 'arraybuffer';
+      const decoder = new TextDecoder();
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({
+          type: 'create',
+          cols: term.cols, rows: term.rows,
+          sessionName: existingSession || preferredSessionName,
+          existingSession: existingSession || undefined,
+        }));
+      };
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(typeof event.data === 'string' ? event.data : decoder.decode(event.data));
+          if (msg.type === 'data') {
+            term.write(typeof msg.data === 'string' ? msg.data : new Uint8Array(Object.values(msg.data)));
+          } else if (msg.type === 'created') {
+            onSessionReady?.(msg.sessionName);
+            // Auto-run CLI on newly created session
+            if (!existingSession) {
+              const cli = cliCmdProp || 'claude';
+              const targetDir = workDir ? `${projectPath}/${workDir}` : projectPath;
+              const cdCmd = `mkdir -p "${targetDir}" && cd "${targetDir}"`;
+              const isClaude = (cliType || 'claude-code') === 'claude-code';
+              const resumeFlag = isClaude
+                ? (resumeSessionId ? ` --resume ${resumeSessionId}` : ' -c')
+                : '';
+              const modelFlag = isClaude && profileEnv?.CLAUDE_MODEL ? ` --model ${profileEnv.CLAUDE_MODEL}` : '';
+              const envWithoutModel = profileEnv ? Object.fromEntries(
+                Object.entries(profileEnv).filter(([k]) => k !== 'CLAUDE_MODEL')
+              ) : {};
+              const envExportsClean = Object.keys(envWithoutModel).length > 0
+                ? Object.entries(envWithoutModel).map(([k, v]) => `export ${k}="${v}"`).join(' && ') + ' && '
+                : '';
+              const cmd = `${envExportsClean}${cdCmd} && ${cli}${resumeFlag}${modelFlag}\n`;
+              setTimeout(() => {
+                if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: cmd }));
+              }, 300);
+            }
+          }
+        } catch {}
+      };
+
+      term.onData(data => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data })); });
+      term.onResize(({ cols, rows }) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows })); });
+
+      return () => {
+        disposed = true;
+        ro.disconnect();
+        ws.close();
+        term.dispose();
+      };
+    });
+
+    return () => { disposed = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return <div ref={containerRef} className="w-full h-full" style={{ background: '#0d1117' }} />;
+}
+
 function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, onSessionReady, onClose }: {
   agentLabel: string;
   agentIcon: string;
@@ -2308,21 +2503,40 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           </div>
         </div>
       ) : (
-        <div className="flex-1 min-h-0">
-          <ReactFlow
-            nodes={rfNodes}
-            edges={rfEdges}
-            onNodesChange={onNodesChange}
-            nodeTypes={nodeTypes}
-            fitView
-            fitViewOptions={{ padding: 0.3 }}
-            minZoom={0.3}
-            maxZoom={2}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background color="#1a1a2e" gap={20} size={1} />
-            <Controls style={{ background: '#0d1117', border: '1px solid #30363d' }} showInteractive={false} />
-          </ReactFlow>
+        <div className="flex-1 min-h-0 flex">
+          {/* Canvas */}
+          <div className="flex-1 min-w-0 min-h-0">
+            <ReactFlow
+              nodes={rfNodes}
+              edges={rfEdges}
+              onNodesChange={onNodesChange}
+              nodeTypes={nodeTypes}
+              fitView
+              fitViewOptions={{ padding: 0.3 }}
+              minZoom={0.3}
+              maxZoom={2}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background color="#1a1a2e" gap={20} size={1} />
+              <Controls style={{ background: '#0d1117', border: '1px solid #30363d' }} showInteractive={false} />
+            </ReactFlow>
+          </div>
+          {/* Terminal dock — right side panel */}
+          {floatingTerminals.length > 0 && (
+            <TerminalDock
+              terminals={floatingTerminals}
+              projectPath={projectPath}
+              workspaceId={workspaceId}
+              onSessionReady={(agentId, name) => {
+                if (workspaceId) wsApi(workspaceId, 'set_tmux_session', { agentId, sessionName: name });
+                setFloatingTerminals(prev => prev.map(t => t.agentId === agentId ? { ...t, tmuxSession: name } : t));
+              }}
+              onClose={(agentId) => {
+                setFloatingTerminals(prev => prev.filter(t => t.agentId !== agentId));
+                if (workspaceId) wsApi(workspaceId, 'close_terminal', { agentId });
+              }}
+            />
+          )}
         </div>
       )}
 
@@ -2434,36 +2648,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
         />
       )}
 
-      {/* Floating terminals for manual agents */}
-      {floatingTerminals.map(ft => (
-        <FloatingTerminal
-          key={ft.agentId}
-          agentLabel={ft.label}
-          agentIcon={ft.icon}
-          projectPath={projectPath}
-          agentCliId={ft.cliId}
-          cliCmd={ft.cliCmd}
-          cliType={ft.cliType}
-          workDir={ft.workDir}
-          preferredSessionName={ft.sessionName}
-          existingSession={ft.tmuxSession}
-          resumeMode={ft.resumeMode}
-          resumeSessionId={ft.resumeSessionId}
-          profileEnv={ft.profileEnv}
-          onSessionReady={(name) => {
-            if (workspaceId) {
-              wsApi(workspaceId, 'set_tmux_session', { agentId: ft.agentId, sessionName: name });
-            }
-            setFloatingTerminals(prev => prev.map(t => t.agentId === ft.agentId ? { ...t, tmuxSession: name } : t));
-          }}
-          onClose={() => {
-            setFloatingTerminals(prev => prev.filter(t => t.agentId !== ft.agentId));
-            if (workspaceId) {
-              wsApi(workspaceId, 'close_terminal', { agentId: ft.agentId });
-            }
-          }}
-        />
-      ))}
+      {/* Terminals now rendered in TerminalDock (inline right panel) */}
 
       {/* User input request from agent (via bus) */}
       {userInputRequest && workspaceId && (

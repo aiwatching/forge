@@ -1881,7 +1881,13 @@ export class WorkspaceOrchestrator extends EventEmitter {
             } catch {}
           }
           if (!resumed) {
-            cmd += ' -c'; // resume latest session in workDir
+            // Only add -c if the workDir has existing sessions (avoid "No conversation found")
+            const sessionDir = this.getCliSessionDir(config.workDir);
+            try {
+              const { readdirSync } = await import('node:fs');
+              const hasSession = readdirSync(sessionDir).some(f => f.endsWith('.jsonl'));
+              if (hasSession) cmd += ' -c';
+            } catch {} // dir doesn't exist → no sessions → start fresh
           }
         }
         if (modelFlag) cmd += modelFlag;

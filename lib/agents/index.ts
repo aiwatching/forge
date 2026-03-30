@@ -30,7 +30,7 @@ export function listAgents(): AgentConfig[] {
   const codex = detectAgent('codex', 'OpenAI Codex', codexConfig?.path || 'codex');
   if (codex) {
     codex.capabilities.requiresTTY = true;
-    agents.push({ ...codex, enabled: codexConfig?.enabled !== false, detected: true, skipPermissionsFlag: codexConfig?.skipPermissionsFlag || '--full-auto', cliType: 'codex' } as any);
+    agents.push({ ...codex, enabled: codexConfig?.enabled !== false, detected: true, skipPermissionsFlag: codexConfig?.skipPermissionsFlag || '--dangerously-bypass-approvals-and-sandbox', cliType: 'codex' } as any);
   }
 
   // Aider

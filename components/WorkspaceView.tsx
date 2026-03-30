@@ -1747,7 +1747,7 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
               const resumeFlag = isClaude ? (resumeId ? ` --resume ${resumeId}` : ' -c') : '';
               let mcpFlag = '';
               if (isClaude) { try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {} }
-              const sf = skipPermissions ? ' --dangerously-skip-permissions' : '';
+              const sf = skipPermissions ? (cliType === 'codex' ? ' --dangerously-bypass-approvals-and-sandbox' : cliType === 'aider' ? ' --yes' : ' --dangerously-skip-permissions') : '';
               const cmd = `${envExportsClean}${cdCmd} && ${cli}${resumeFlag}${modelFlag}${sf}${mcpFlag}\n`;
               setTimeout(() => {
                 if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: cmd }));

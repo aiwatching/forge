@@ -1654,7 +1654,7 @@ function TerminalDock({ terminals, projectPath, workspaceId, onSessionReady, onC
 }
 
 // ─── Inline Terminal (no drag/resize, fills parent) ──────
-function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, onSessionReady }: {
+function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, onSessionReady }: {
   agentLabel: string;
   agentIcon: string;
   projectPath: string;
@@ -1667,6 +1667,7 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
   resumeMode?: boolean;
   resumeSessionId?: string;
   profileEnv?: Record<string, string>;
+  isPrimary?: boolean;
   onSessionReady?: (name: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1730,9 +1731,9 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
               const envExportsClean = Object.keys(envWithoutModel).length > 0
                 ? Object.entries(envWithoutModel).map(([k, v]) => `export ${k}="${v}"`).join(' && ') + ' && '
                 : '';
-              // Resolve fixedSession if no explicit resumeSessionId
+              // Primary: use fixed session. Non-primary: use explicit sessionId or -c
               let resumeId = resumeSessionId;
-              if (isClaude && !resumeId) {
+              if (isClaude && !resumeId && isPrimary) {
                 try {
                   const { resolveFixedSession } = await import('@/lib/session-utils');
                   resumeId = (await resolveFixedSession(projectPath)) || undefined;
@@ -1765,7 +1766,7 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
   return <div ref={containerRef} className="w-full h-full" style={{ background: '#0d1117' }} />;
 }
 
-function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, onSessionReady, onClose }: {
+function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, onSessionReady, onClose }: {
   agentLabel: string;
   agentIcon: string;
   projectPath: string;
@@ -1778,6 +1779,7 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
   resumeMode?: boolean;
   resumeSessionId?: string;
   profileEnv?: Record<string, string>;
+  isPrimary?: boolean;
   onSessionReady?: (name: string) => void;
   onClose: (killSession: boolean) => void;
 }) {
@@ -1885,9 +1887,9 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
             const envExportsClean = Object.keys(envWithoutModel).length > 0
               ? Object.entries(envWithoutModel).map(([k, v]) => `export ${k}="${v}"`).join(' && ') + ' && '
               : '';
-            // Resolve fixedSession if no explicit resumeSessionId
+            // Primary: use fixed session. Non-primary: use explicit sessionId or -c
             let resumeId = resumeSessionId;
-            if (isClaude && !resumeId) {
+            if (isClaude && !resumeId && isPrimary) {
               try {
                 const { resolveFixedSession } = await import('@/lib/session-utils');
                 resumeId = (await resolveFixedSession(projectPath)) || undefined;
@@ -2254,7 +2256,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
   const [memoryTarget, setMemoryTarget] = useState<{ id: string; label: string } | null>(null);
   const [inboxTarget, setInboxTarget] = useState<{ id: string; label: string } | null>(null);
   const [showBusPanel, setShowBusPanel] = useState(false);
-  const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; cliCmd?: string; cliType?: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string> }[]>([]);
+  const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; cliCmd?: string; cliType?: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string>; isPrimary?: boolean }[]>([]);
   const [termLaunchDialog, setTermLaunchDialog] = useState<{ agent: AgentConfig; sessName: string; workDir?: string; sessions: string[]; supportsSession?: boolean } | null>(null);
 
   // Expose focusAgent to parent
@@ -2373,7 +2375,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 setFloatingTerminals(prev => [...prev, {
                   agentId: agent.id, label: agent.label, icon: agent.icon,
                   cliId: agent.agentId || 'claude', workDir,
-                  tmuxSession: existingTmux, sessionName: sessName,
+                  tmuxSession: existingTmux, sessionName: sessName, isPrimary: true,
                 }]);
                 wsApi(workspaceId, 'open_terminal', { agentId: agent.id });
                 return;
@@ -2384,7 +2386,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 setFloatingTerminals(prev => [...prev, {
                   agentId: agent.id, label: agent.label, icon: agent.icon,
                   cliId: agent.agentId || 'claude', workDir,
-                  tmuxSession: existingTmux, sessionName: sessName,
+                  tmuxSession: existingTmux, sessionName: sessName, isPrimary: agent.primary,
                 }]);
                 // Register terminal open with backend
                 wsApi(workspaceId, 'open_terminal', { agentId: agent.id });
@@ -2401,7 +2403,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 setFloatingTerminals(prev => [...prev, {
                   agentId: agent.id, label: agent.label, icon: agent.icon,
                   cliId: agent.agentId || 'claude', workDir,
-                  tmuxSession: res?.tmuxSession || sessName, sessionName: sessName,
+                  tmuxSession: res?.tmuxSession || sessName, sessionName: sessName, isPrimary: true,
                 }]);
                 return;
               }
@@ -2766,7 +2768,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 cliCmd: res.cliCmd || 'claude',
                 cliType: res.cliType || 'claude-code',
                 workDir,
-                sessionName: sessName, resumeMode, resumeSessionId: sessionId,
+                sessionName: sessName, resumeMode, resumeSessionId: sessionId, isPrimary: false,
                 profileEnv: {
                   ...(res.env || {}),
                   ...(res.model ? { CLAUDE_MODEL: res.model } : {}),
@@ -2797,6 +2799,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           resumeMode={ft.resumeMode}
           resumeSessionId={ft.resumeSessionId}
           profileEnv={ft.profileEnv}
+          isPrimary={ft.isPrimary}
           onSessionReady={(name) => {
             if (workspaceId) wsApi(workspaceId, 'set_tmux_session', { agentId: ft.agentId, sessionName: name });
             setFloatingTerminals(prev => prev.map(t => t.agentId === ft.agentId ? { ...t, tmuxSession: name } : t));

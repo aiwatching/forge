@@ -1122,6 +1122,57 @@ export class WorkspaceOrchestrator extends EventEmitter {
         }
       }
     }
+
+    // ── Forge Agent: autonomous bus monitor ──
+    this.runForgeAgentCheck();
+  }
+
+  // Track which messages Forge agent already acted on (avoid duplicate nudges)
+  private forgeActedMessages = new Set<string>();
+
+  /** Forge agent scans bus for actionable states */
+  private runForgeAgentCheck(): void {
+    const log = this.bus.getLog();
+    const now = Date.now();
+
+    for (const msg of log) {
+      if (msg.type === 'ack' || msg.from === '_forge') continue;
+      if (this.forgeActedMessages.has(msg.id)) continue;
+
+      // Case 1: Message done but no reply from target → ask target to send summary
+      if (msg.status === 'done') {
+        const age = now - msg.timestamp;
+        if (age < 30_000) continue; // give 30s grace period
+
+        const hasReply = log.some(r =>
+          r.from === msg.to && r.to === msg.from &&
+          r.timestamp > msg.timestamp && r.type !== 'ack'
+        );
+        if (!hasReply) {
+          const senderLabel = this.agents.get(msg.from)?.config.label || msg.from;
+          const targetEntry = this.agents.get(msg.to);
+          if (targetEntry && targetEntry.state.smithStatus === 'active') {
+            this.bus.send('_forge', msg.to, 'notify', {
+              action: 'info_request',
+              content: `You completed a request from ${senderLabel} but haven't sent them results. Please use send_message to send a brief summary of what you did.`,
+            });
+            this.forgeActedMessages.add(msg.id);
+            console.log(`[forge-agent] Nudged ${targetEntry.config.label} to reply to ${senderLabel}`);
+          }
+        }
+      }
+
+      // Case 2: Message running too long (>5min) → log warning
+      if (msg.status === 'running') {
+        const age = now - msg.timestamp;
+        if (age > 300_000 && !this.forgeActedMessages.has(`running-${msg.id}`)) {
+          const targetLabel = this.agents.get(msg.to)?.config.label || msg.to;
+          console.log(`[forge-agent] Warning: ${targetLabel} has been running message ${msg.id.slice(0, 8)} for ${Math.round(age / 60000)}min`);
+          this.emit('event', { type: 'log', agentId: msg.to, entry: { type: 'system', subtype: 'warning', content: `Message running for ${Math.round(age / 60000)}min — may be stuck`, timestamp: new Date().toISOString() } } as any);
+          this.forgeActedMessages.add(`running-${msg.id}`);
+        }
+      }
+    }
   }
 
   /** Handle watch alert based on agent's configured action */
@@ -1597,25 +1648,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
     const processedMsg = causedBy ? this.bus.getLog().find(m => m.id === causedBy.messageId) : null;
 
     this.broadcastCompletion(agentId, causedBy);
-
-    // Forge agent: when agent B completes A's request but doesn't reply,
-    // automatically send a follow-up message to B asking for a summary.
-    if (processedMsg && processedMsg.from !== agentId && processedMsg.from !== '_system') {
-      // Check if B already sent a reply to A after the original message
-      const hasReply = this.bus.getLog().some(m =>
-        m.from === agentId && m.to === processedMsg.from &&
-        m.timestamp > processedMsg.timestamp && m.type !== 'ack'
-      );
-      if (!hasReply) {
-        const senderLabel = this.agents.get(processedMsg.from)?.config.label || processedMsg.from;
-        // Forge agent sends a follow-up request to the completed agent
-        this.bus.send('_forge', agentId, 'notify', {
-          action: 'info_request',
-          content: `You just finished processing a request from ${senderLabel}. Please send them a brief summary of what you did and the results using send_message.`,
-        });
-        console.log(`[forge-agent] Asked ${entry.config.label} to send results to ${senderLabel}`);
-      }
-    }
+    // Note: Forge agent (runForgeAgentCheck) monitors for missing replies
+    // and nudges agents to send summaries. No action needed here.
 
     this.emitWorkspaceStatus();
     this.checkWorkspaceComplete?.();

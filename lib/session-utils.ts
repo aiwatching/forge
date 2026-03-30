@@ -39,3 +39,10 @@ export function buildResumeFlag(fixedSessionId: string | null, hasExistingSessio
   if (hasExistingSessions) return ' -c';
   return '';
 }
+
+/** Get --mcp-config flag for claude-code. Triggers server-side mcp.json creation. */
+export async function getMcpFlag(projectPath: string): Promise<string> {
+  // Ensure .forge/mcp.json exists (server generates it)
+  await fetch(`/api/project-sessions?projectPath=${encodeURIComponent(projectPath)}`).catch(() => {});
+  return ` --mcp-config "${projectPath}/.forge/mcp.json"`;
+}

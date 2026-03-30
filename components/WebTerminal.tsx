@@ -310,11 +310,13 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
   // ─── Imperative handle for parent ─────────────────────
 
   useImperativeHandle(ref, () => ({
-    openSessionInTerminal(sessionId: string, projectPath: string) {
+    async openSessionInTerminal(sessionId: string, projectPath: string) {
       const tree = makeTerminal(undefined, projectPath);
       const paneId = firstTerminalId(tree);
       const sf = skipPermissions ? ' --dangerously-skip-permissions' : '';
-      const cmd = `cd "${projectPath}" && claude --resume ${sessionId}${sf}\n`;
+      let mcpFlag = '';
+      try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {}
+      const cmd = `cd "${projectPath}" && claude --resume ${sessionId}${sf}${mcpFlag}\n`;
       pendingCommands.set(paneId, cmd);
       const projectName = projectPath.split('/').pop() || 'Terminal';
       const newTab: TabState = {
@@ -380,6 +382,12 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
       // Wait for fixedSession resolution before building command
       if (fixedSessionPending) await fixedSessionPending;
 
+      // MCP config flag for claude-code agents
+      let mcpFlag = '';
+      if (agentCmd === 'claude' && projectPath) {
+        try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {}
+      }
+
       let targetTabId: number | null = null;
 
       setTabs(prev => {
@@ -390,7 +398,7 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
         }
         const tree = makeTerminal(undefined, projectPath);
         const paneId = firstTerminalId(tree);
-        pendingCommands.set(paneId, `${envPrefix}cd "${projectPath}" && ${agentCmd}${resumeFlag}${modelFlag}${sf}\n`);
+        pendingCommands.set(paneId, `${envPrefix}cd "${projectPath}" && ${agentCmd}${resumeFlag}${modelFlag}${sf}${mcpFlag}\n`);
         const newTab: TabState = {
           id: nextId++,
           label: projectName,
@@ -929,7 +937,13 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
                                               sf = cfg?.skipPermissionsFlag ? ` ${cfg.skipPermissionsFlag}` : (cliCmd === 'claude' ? ' --dangerously-skip-permissions' : '');
                                             }
 
-                                            cmd = `${envExports}cd "${p.path}" && ${cliCmd}${resumeFlag}${modelFlag}${sf}\n`;
+                                            // MCP config flag
+                                            let mcpFlag = '';
+                                            if (cliCmd === 'claude') {
+                                              try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(p.path); } catch {}
+                                            }
+
+                                            cmd = `${envExports}cd "${p.path}" && ${cliCmd}${resumeFlag}${modelFlag}${sf}${mcpFlag}\n`;
                                           } catch {
                                             cmd = `cd "${p.path}" && ${a.id}\n`;
                                           }
@@ -1461,13 +1475,13 @@ const MemoTerminalPane = memo(function TerminalPane({
             if (isNewlyCreated && projectPathRef.current && !pendingCommands.has(id)) {
               isNewlyCreated = false;
               const pp = projectPathRef.current;
-              import('@/lib/session-utils').then(({ resolveFixedSession, buildResumeFlag }) => {
-                resolveFixedSession(pp).then(fixedId => {
+              import('@/lib/session-utils').then(({ resolveFixedSession, buildResumeFlag, getMcpFlag }) => {
+                Promise.all([resolveFixedSession(pp), getMcpFlag(pp)]).then(([fixedId, mcpFlag]) => {
                   const resumeFlag = buildResumeFlag(fixedId, true);
                   const skipFlag = skipPermRef.current ? ' --dangerously-skip-permissions' : '';
                   setTimeout(() => {
                     if (!disposed && ws?.readyState === WebSocket.OPEN) {
-                      ws.send(JSON.stringify({ type: 'input', data: `cd "${pp}" && claude${resumeFlag}${skipFlag}\n` }));
+                      ws.send(JSON.stringify({ type: 'input', data: `cd "${pp}" && claude${resumeFlag}${skipFlag}${mcpFlag}\n` }));
                     }
                   }, 300);
                 });

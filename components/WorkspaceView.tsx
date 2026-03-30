@@ -1740,7 +1740,9 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
                 } catch {}
               }
               const resumeFlag = isClaude ? (resumeId ? ` --resume ${resumeId}` : ' -c') : '';
-              const cmd = `${envExportsClean}${cdCmd} && ${cli}${resumeFlag}${modelFlag}\n`;
+              let mcpFlag = '';
+              if (isClaude) { try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {} }
+              const cmd = `${envExportsClean}${cdCmd} && ${cli}${resumeFlag}${modelFlag}${mcpFlag}\n`;
               setTimeout(() => {
                 if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: cmd }));
               }, 300);
@@ -1896,7 +1898,9 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
               } catch {}
             }
             const resumeFlag = isClaude ? (resumeId ? ` --resume ${resumeId}` : ' -c') : '';
-            const cmd = `${envExportsClean}${cdCmd} && ${cli}${resumeFlag}${modelFlag}\n`;
+            let mcpFlag = '';
+            if (isClaude) { try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {} }
+            const cmd = `${envExportsClean}${cdCmd} && ${cli}${resumeFlag}${modelFlag}${mcpFlag}\n`;
             setTimeout(() => {
               if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: cmd }));
             }, 300);

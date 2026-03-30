@@ -1448,29 +1448,57 @@ const MemoTerminalPane = memo(function TerminalPane({
             // Auto-run claude for project tabs (only if no pendingCommand already set)
             if (isNewlyCreated && projectPathRef.current && !pendingCommands.has(id)) {
               isNewlyCreated = false;
-              // Check if project has existing claude sessions to decide -c flag
+              // Check workspace primary session first, then fall back to -c
               const pp = projectPathRef.current;
               const pName = pp.replace(/\/+$/, '').split('/').pop() || '';
-              fetch(`/api/claude-sessions/${encodeURIComponent(pName)}`)
-                .then(r => r.json())
-                .then(sData => {
-                  const hasSession = Array.isArray(sData) ? sData.length > 0 : false;
-                  const resumeFlag = hasSession ? ' -c' : '';
+
+              // Try to get workspace primary agent's fixed session ID
+              const tryPrimarySession = async (): Promise<string | null> => {
+                try {
+                  const wsRes = await fetch(`/api/workspace?projectPath=${encodeURIComponent(pp)}`);
+                  const wsData = await wsRes.json();
+                  if (wsData?.id) {
+                    const primaryRes = await fetch(`/api/workspace/${wsData.id}/smith`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'primary_session' }) });
+                    const primary = await primaryRes.json();
+                    if (primary?.ok && primary.fixedSessionId) return primary.fixedSessionId;
+                  }
+                } catch {}
+                return null;
+              };
+
+              tryPrimarySession().then(fixedId => {
+                if (fixedId) {
+                  // Use workspace primary agent's fixed session
                   const skipFlag = skipPermRef.current ? ' --dangerously-skip-permissions' : '';
                   setTimeout(() => {
                     if (!disposed && ws?.readyState === WebSocket.OPEN) {
-                      ws.send(JSON.stringify({ type: 'input', data: `cd "${pp}" && claude${resumeFlag}${skipFlag}\n` }));
+                      ws.send(JSON.stringify({ type: 'input', data: `cd "${pp}" && claude --resume ${fixedId}${skipFlag}\n` }));
                     }
                   }, 300);
-                })
-                .catch(() => {
-                  const skipFlag = skipPermRef.current ? ' --dangerously-skip-permissions' : '';
-                  setTimeout(() => {
-                    if (!disposed && ws?.readyState === WebSocket.OPEN) {
-                      ws.send(JSON.stringify({ type: 'input', data: `cd "${pp}" && claude${skipFlag}\n` }));
-                    }
-                  }, 300);
-                });
+                  return;
+                }
+                // No workspace primary — fall back to session detection
+                fetch(`/api/claude-sessions/${encodeURIComponent(pName)}`)
+                  .then(r => r.json())
+                  .then(sData => {
+                    const hasSession = Array.isArray(sData) ? sData.length > 0 : false;
+                    const resumeFlag = hasSession ? ' -c' : '';
+                    const skipFlag = skipPermRef.current ? ' --dangerously-skip-permissions' : '';
+                    setTimeout(() => {
+                      if (!disposed && ws?.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'input', data: `cd "${pp}" && claude${resumeFlag}${skipFlag}\n` }));
+                      }
+                    }, 300);
+                  })
+                  .catch(() => {
+                    const skipFlag = skipPermRef.current ? ' --dangerously-skip-permissions' : '';
+                    setTimeout(() => {
+                      if (!disposed && ws?.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'input', data: `cd "${pp}" && claude${skipFlag}\n` }));
+                      }
+                    }, 300);
+                  });
+              });
             }
             isNewlyCreated = false;
             // Force tmux to redraw by toggling size, then send reset

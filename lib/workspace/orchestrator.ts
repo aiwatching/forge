@@ -1663,6 +1663,29 @@ export class WorkspaceOrchestrator extends EventEmitter {
     const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
     const sessionName = `mw-forge-${safeName(this.projectName)}-${safeName(config.label)}`;
 
+    // Pre-flight: check project's .claude/settings.json is valid
+    const workDir = config.workDir && config.workDir !== './' && config.workDir !== '.'
+      ? `${this.projectPath}/${config.workDir}` : this.projectPath;
+    const projectSettingsFile = join(workDir, '.claude', 'settings.json');
+    if (existsSync(projectSettingsFile)) {
+      try {
+        const raw = readFileSync(projectSettingsFile, 'utf-8');
+        JSON.parse(raw);
+      } catch (err: any) {
+        const errorMsg = `Invalid .claude/settings.json: ${err.message}`;
+        console.error(`[daemon] ${config.label}: ${errorMsg}`);
+        const entry = this.agents.get(agentId);
+        if (entry) {
+          entry.state.error = errorMsg;
+          entry.state.smithStatus = 'down';
+          this.emit('event', { type: 'smith_status', agentId, smithStatus: 'down' } as any);
+          this.emit('event', { type: 'log', agentId, entry: { type: 'system', subtype: 'error', content: `⚠️ ${errorMsg}`, timestamp: new Date().toISOString() } } as any);
+          this.emitAgentsChanged();
+        }
+        return;
+      }
+    }
+
     // Check if tmux session already exists
     try {
       execSync(`tmux has-session -t "${sessionName}" 2>/dev/null`, { timeout: 3000 });
@@ -1696,9 +1719,6 @@ export class WorkspaceOrchestrator extends EventEmitter {
           if (info.model) modelFlag = ` --model ${info.model}`;
         } catch {}
 
-        const workDir = config.workDir && config.workDir !== './' && config.workDir !== '.'
-          ? `${this.projectPath}/${config.workDir}` : this.projectPath;
-
         execSync(`tmux new-session -d -s "${sessionName}" -c "${workDir}"`, { timeout: 5000 });
 
         // Build CLI start command
@@ -1729,8 +1749,50 @@ export class WorkspaceOrchestrator extends EventEmitter {
         execSync(`tmux send-keys -t "${sessionName}" '${startCmd}' Enter`, { timeout: 5000 });
 
         console.log(`[daemon] ${config.label}: persistent session created (${sessionName}) [${cliType}: ${cliCmd}]`);
+
+        // Verify CLI started successfully (check after 3s if process is still alive)
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        try {
+          const paneContent = execSync(`tmux capture-pane -t "${sessionName}" -p -S -20`, { timeout: 3000, encoding: 'utf-8' });
+          // Check for common startup errors
+          const errorPatterns = [
+            /error.*settings\.json/i,
+            /invalid.*json/i,
+            /SyntaxError/i,
+            /ENOENT.*settings/i,
+            /failed to parse/i,
+            /could not read/i,
+            /fatal/i,
+          ];
+          const hasError = errorPatterns.some(p => p.test(paneContent));
+          if (hasError) {
+            // Extract error message from pane
+            const errorLines = paneContent.split('\n').filter(l => /error|invalid|syntax|fatal|failed/i.test(l)).slice(0, 3);
+            const errorMsg = errorLines.join(' ').slice(0, 200) || 'CLI failed to start (check project settings)';
+            console.error(`[daemon] ${config.label}: CLI startup error detected: ${errorMsg}`);
+
+            const entry = this.agents.get(agentId);
+            if (entry) {
+              entry.state.error = errorMsg;
+              entry.state.smithStatus = 'down';
+              this.emit('event', { type: 'smith_status', agentId, smithStatus: 'down' } as any);
+              this.emit('event', { type: 'log', agentId, entry: { type: 'system', subtype: 'error', content: `CLI startup failed: ${errorMsg}`, timestamp: new Date().toISOString() } } as any);
+              this.emitAgentsChanged();
+            }
+            // Kill the failed tmux session
+            try { execSync(`tmux kill-session -t "${sessionName}" 2>/dev/null`, { timeout: 3000 }); } catch {}
+            return;
+          }
+        } catch {}
       } catch (err: any) {
         console.error(`[daemon] ${config.label}: failed to create persistent session: ${err.message}`);
+        const entry = this.agents.get(agentId);
+        if (entry) {
+          entry.state.error = `Failed to create terminal: ${err.message}`;
+          entry.state.smithStatus = 'down';
+          this.emit('event', { type: 'smith_status', agentId, smithStatus: 'down' } as any);
+          this.emitAgentsChanged();
+        }
         return;
       }
     }

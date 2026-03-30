@@ -25,6 +25,7 @@ interface AgentConfig {
   requiresApproval?: boolean;
   persistentSession?: boolean;
   skipPermissions?: boolean;
+  fixedSessionId?: string;
   watch?: { enabled: boolean; interval: number; targets: any[]; action?: 'log' | 'analyze' | 'approve' | 'send_message'; prompt?: string; sendTo?: string };
 }
 
@@ -407,6 +408,7 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
   );
   const [requiresApproval, setRequiresApproval] = useState(initial.requiresApproval || false);
   const [isPrimary, setIsPrimary] = useState(initial.primary || false);
+  const [fixedSessionId, setFixedSessionId] = useState(initial.fixedSessionId || '');
   const hasPrimaryAlready = existingAgents.some(a => a.primary && a.id !== initial.id);
   const [persistentSession, setPersistentSession] = useState(initial.persistentSession || initial.primary || false);
   const [skipPermissions, setSkipPermissions] = useState(initial.skipPermissions !== false);
@@ -632,10 +634,25 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
             </label>
           </div>
           {persistentSession && (
-            <div className="flex items-center gap-2 ml-4">
-              <input type="checkbox" id="skipPermissions" checked={skipPermissions} onChange={e => setSkipPermissions(e.target.checked)}
-                className="accent-[#f0883e]" />
-              <label htmlFor="skipPermissions" className="text-[9px] text-gray-400">Skip permissions (auto-approve all tool calls)</label>
+            <div className="flex flex-col gap-1.5 ml-4">
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="skipPermissions" checked={skipPermissions} onChange={e => setSkipPermissions(e.target.checked)}
+                  className="accent-[#f0883e]" />
+                <label htmlFor="skipPermissions" className="text-[9px] text-gray-400">Skip permissions (auto-approve all tool calls)</label>
+              </div>
+              {/* Fixed Session ID */}
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[9px] text-gray-500">Bound Session ID {fixedSessionId ? '' : '(auto-detect on first start)'}</label>
+                <div className="flex items-center gap-1">
+                  <input value={fixedSessionId} onChange={e => setFixedSessionId(e.target.value)}
+                    placeholder="auto-detect"
+                    className="flex-1 text-[10px] bg-[#161b22] border border-[#30363d] rounded px-2 py-0.5 text-gray-400 font-mono focus:outline-none focus:border-[#58a6ff] placeholder-gray-700" />
+                  {fixedSessionId && (
+                    <button onClick={() => setFixedSessionId('')}
+                      className="text-[8px] px-1.5 py-0.5 rounded text-gray-600 hover:text-red-400 hover:bg-red-600/10">clear</button>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
@@ -806,6 +823,7 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
               requiresApproval: requiresApproval || undefined,
               persistentSession: isPrimary ? true : (persistentSession || undefined),
               skipPermissions: persistentSession ? (skipPermissions ? undefined : false) : undefined,
+              fixedSessionId: fixedSessionId.trim() || undefined,
               watch: watchEnabled && watchTargets.length > 0 ? {
                 enabled: true,
                 interval: Math.max(10, parseInt(watchInterval) || 60),

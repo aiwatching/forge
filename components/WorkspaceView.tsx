@@ -681,29 +681,38 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
             <label htmlFor="requiresApproval" className="text-[9px] text-gray-400">Require approval before processing inbox messages</label>
           </div>
 
-          {/* Persistent Session */}
-          <div className="flex items-center gap-2">
-            <input type="checkbox" id="persistentSession" checked={persistentSession} onChange={e => !isPrimary && setPersistentSession(e.target.checked)}
-              disabled={isPrimary}
-              className={`accent-[#3fb950] ${isPrimary ? 'opacity-50 cursor-not-allowed' : ''}`} />
-            <label htmlFor="persistentSession" className={`text-[9px] text-gray-400 ${isPrimary ? 'opacity-50' : ''}`}>
-              Terminal mode {isPrimary ? '(required for primary)' : '— run in terminal instead of headless (claude -p)'}
-            </label>
-          </div>
-          {persistentSession && (
-            <div className="flex flex-col gap-1.5 ml-4">
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="skipPermissions" checked={skipPermissions} onChange={e => setSkipPermissions(e.target.checked)}
-                  className="accent-[#f0883e]" />
-                <label htmlFor="skipPermissions" className="text-[9px] text-gray-400">Skip permissions (auto-approve all tool calls)</label>
-              </div>
-              {agentId !== 'claude' && !availableAgents.find(a => a.id === agentId && (a as any).backendType !== 'cli')?.isProfile && (
-                <div className="text-[8px] text-yellow-400/80 bg-yellow-400/10 px-2 py-1 rounded">
-                  ⚠ Terminal mode with {agentId} has limited status detection. Headless mode recommended.
+          {/* Persistent Session — only for claude-code based agents */}
+          {(() => {
+            // Check if selected agent supports terminal mode (claude-code or its profiles)
+            const selectedAgent = availableAgents.find(a => a.id === agentId);
+            const isClaude = agentId === 'claude' || (selectedAgent as any)?.base === 'claude' || !selectedAgent;
+            const canTerminal = isClaude || isPrimary;
+            return canTerminal ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" id="persistentSession" checked={persistentSession} onChange={e => !isPrimary && setPersistentSession(e.target.checked)}
+                    disabled={isPrimary}
+                    className={`accent-[#3fb950] ${isPrimary ? 'opacity-50 cursor-not-allowed' : ''}`} />
+                  <label htmlFor="persistentSession" className={`text-[9px] text-gray-400 ${isPrimary ? 'opacity-50' : ''}`}>
+                    Terminal mode {isPrimary ? '(required for primary)' : '— run in terminal instead of headless'}
+                  </label>
                 </div>
-              )}
-            </div>
-          )}
+                {persistentSession && (
+                  <div className="flex flex-col gap-1.5 ml-4">
+                    <div className="flex items-center gap-2">
+                      <input type="checkbox" id="skipPermissions" checked={skipPermissions} onChange={e => setSkipPermissions(e.target.checked)}
+                        className="accent-[#f0883e]" />
+                      <label htmlFor="skipPermissions" className="text-[9px] text-gray-400">Skip permissions (auto-approve all tool calls)</label>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-[8px] text-gray-500 bg-gray-500/10 px-2 py-1 rounded">
+                Headless mode only — {agentId} does not support terminal mode
+              </div>
+            );
+          })()}
 
           {/* Steps */}
           <div className="flex flex-col gap-1">

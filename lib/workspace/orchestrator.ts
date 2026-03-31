@@ -1171,10 +1171,14 @@ export class WorkspaceOrchestrator extends EventEmitter {
       if (msg.type === 'ack' || msg.from === '_forge') continue;
       if (this.forgeActedMessages.has(msg.id)) continue;
 
-      // Case 1: Message done but no reply from target → ask target to send summary
+      // Case 1: Message done but no reply from target → ask target to send summary (once per pair)
       if (msg.status === 'done') {
         const age = now - msg.timestamp;
-        if (age < 30_000) continue; // give 30s grace period
+        if (age < 30_000) continue;
+
+        // Dedup by target→sender pair (only nudge once per relationship)
+        const nudgeKey = `nudge-${msg.to}->${msg.from}`;
+        if (this.forgeActedMessages.has(nudgeKey)) { this.forgeActedMessages.add(msg.id); continue; }
 
         const hasReply = log.some(r =>
           r.from === msg.to && r.to === msg.from &&
@@ -1189,7 +1193,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
               content: `[IMPORTANT] You finished a task requested by ${senderLabel} but did not send them the results. You MUST call the MCP tool "send_message" (NOT the forge-send skill) with to="${senderLabel}" and include a summary of what you did and the outcome. Do not do any other work until you have sent this reply.`,
             });
             this.forgeActedMessages.add(msg.id);
-            console.log(`[forge-agent] Nudged ${targetEntry.config.label} to reply to ${senderLabel}`);
+            this.forgeActedMessages.add(nudgeKey);
+            console.log(`[forge-agent] Nudged ${targetEntry.config.label} to reply to ${senderLabel} (once)`);
           }
         }
       }
@@ -1755,12 +1760,24 @@ export class WorkspaceOrchestrator extends EventEmitter {
       ? `${completedLabel} completed: ${files.length} files changed. ${summary.slice(0, 200)}`
       : `${completedLabel} completed. ${summary.slice(0, 300) || 'Check upstream outputs for updates.'}`;
 
-    // Find all downstream agents that depend on this one
+    // Find all downstream agents — skip if already sent upstream_complete recently (60s)
+    const now = Date.now();
     let sent = 0;
     for (const [id, entry] of this.agents) {
       if (id === completedAgentId) continue;
       if (entry.config.type === 'input') continue;
       if (!entry.config.dependsOn.includes(completedAgentId)) continue;
+
+      // Dedup: skip if upstream_complete was sent to this target within last 60s
+      const recentDup = this.bus.getLog().some(m =>
+        m.from === completedAgentId && m.to === id &&
+        m.payload?.action === 'upstream_complete' &&
+        now - m.timestamp < 60_000
+      );
+      if (recentDup) {
+        console.log(`[bus] ${completedLabel} → ${entry.config.label}: upstream_complete skipped (sent <60s ago)`);
+        continue;
+      }
 
       this.bus.send(completedAgentId, id, 'notify', {
         action: 'upstream_complete',
@@ -2209,8 +2226,27 @@ export class WorkspaceOrchestrator extends EventEmitter {
       // requiresApproval is handled at message arrival time (routeMessageToAgent),
       // not in the message loop. Approved messages come through as normal 'pending'.
 
+      // Auto-complete upstream_complete notifications (info only, no execution needed)
+      const allRaw = this.bus.getPendingMessagesFor(agentId).filter(m => m.from !== agentId && m.type !== 'ack');
+      for (const m of allRaw) {
+        if (m.payload?.action === 'upstream_complete') {
+          m.status = 'done' as any;
+          this.emit('event', { type: 'bus_message_status', messageId: m.id, status: 'done' } as any);
+        }
+      }
+
       // Find next pending message, applying causedBy rules
-      const allPending = this.bus.getPendingMessagesFor(agentId).filter(m => m.from !== agentId && m.type !== 'ack');
+      // Dedup: if multiple pending messages have same from+action, keep only latest
+      const allPending = allRaw.filter(m => m.status === 'pending');
+      const seen = new Set<string>();
+      for (let i = allPending.length - 1; i >= 0; i--) {
+        const key = `${allPending[i].from}:${allPending[i].payload?.action || ''}`;
+        if (seen.has(key)) {
+          allPending[i].status = 'done' as any; // auto-complete duplicate
+          this.emit('event', { type: 'bus_message_status', messageId: allPending[i].id, status: 'done' } as any);
+        }
+        seen.add(key);
+      }
       const pending = allPending.filter(m => {
         // Tickets: accepted but check retry limit
         if (m.category === 'ticket') {

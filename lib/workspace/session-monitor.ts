@@ -39,8 +39,8 @@ export class SessionFileMonitor extends EventEmitter {
   private lastStableTime = new Map<string, number>();
   private currentState = new Map<string, SessionMonitorState>();
   private tmuxSessions = new Map<string, string>();
-  // Heartbeat probe tracking: agentId → { probeCount, lastProbeTime }
-  private probeState = new Map<string, { count: number; lastTime: number }>();
+  // Heartbeat probe tracking
+  private probeState = new Map<string, { count: number; lastTime: number; waitingResponse: boolean }>();
 
   /**
    * Start monitoring a session file for an agent.
@@ -129,10 +129,22 @@ export class SessionFileMonitor extends EventEmitter {
       this.lastMtime.set(agentId, mtime);
       this.lastSize.set(agentId, size);
 
-      // File changed (mtime or size different) → running
+      // File changed (mtime or size different)
       if (mtime !== prevMtime || size !== prevSize) {
         this.lastStableTime.set(agentId, now);
-        this.probeState.delete(agentId); // reset heartbeat probes
+
+        // If we sent a heartbeat and file changed → agent responded → done
+        const probe = this.probeState.get(agentId);
+        if (probe?.waitingResponse) {
+          // Check if response contains FORGE_DONE marker
+          if (this.checkForHeartbeatResponse(filePath)) {
+            this.probeState.delete(agentId);
+            this.setState(agentId, 'done', filePath, 'heartbeat confirmed done');
+            return;
+          }
+        }
+
+        this.probeState.delete(agentId); // reset probes on any activity
         if (prevState !== 'running') {
           this.setState(agentId, 'running', filePath);
         }
@@ -171,7 +183,7 @@ export class SessionFileMonitor extends EventEmitter {
 
             if (timeSinceProbe >= interval) {
               this.sendHeartbeatProbe(agentId, tmux, probe.count);
-              this.probeState.set(agentId, { count: probe.count + 1, lastTime: Date.now() });
+              this.probeState.set(agentId, { count: probe.count + 1, lastTime: Date.now(), waitingResponse: true });
             }
             // Don't mark done — wait for file activity or no-tmux fallback
             return;
@@ -199,8 +211,8 @@ export class SessionFileMonitor extends EventEmitter {
   private sendHeartbeatProbe(agentId: string, tmuxSession: string, probeCount: number): void {
     try {
       const msg = probeCount === 0
-        ? '[Forge heartbeat] Are you done with your current task? If yes, reply with a brief status. If you received multiple of these, only respond to one and ignore the rest.'
-        : '[Forge heartbeat] Status check — respond only if idle.';
+        ? '[Forge heartbeat] If you have completed your current task, reply exactly: FORGE_DONE. If you are still busy or waiting for a response, do nothing. Ignore duplicate heartbeats.'
+        : '[Forge heartbeat] Reply FORGE_DONE if idle. Ignore if busy.';
       const tmpFile = `/tmp/forge-probe-${Date.now()}.txt`;
       writeFileSync(tmpFile, msg);
       execSync(`tmux load-buffer ${tmpFile} 2>/dev/null`, { timeout: 3000 });
@@ -210,6 +222,23 @@ export class SessionFileMonitor extends EventEmitter {
       console.log(`[session-monitor] ${agentId}: heartbeat probe #${probeCount + 1} sent`);
     } catch (err: any) {
       console.log(`[session-monitor] ${agentId}: heartbeat probe failed — ${err.message}`);
+    }
+  }
+
+  /**
+   * Check if the session file contains a FORGE_DONE response from the agent.
+   */
+  private checkForHeartbeatResponse(filePath: string): boolean {
+    try {
+      const stat = statSync(filePath);
+      const readSize = Math.min(4096, stat.size);
+      const fd = require('node:fs').openSync(filePath, 'r');
+      const buf = Buffer.alloc(readSize);
+      require('node:fs').readSync(fd, buf, 0, readSize, Math.max(0, stat.size - readSize));
+      require('node:fs').closeSync(fd);
+      return buf.toString('utf-8').includes('FORGE_DONE');
+    } catch {
+      return false;
     }
   }
 

@@ -148,14 +148,9 @@ export class SessionFileMonitor extends EventEmitter {
           }
         }
         if (stableFor >= STABLE_THRESHOLD) {
-          // Before forcing done, check if CLI process is still alive in tmux
-          // (protects against false done during long API calls)
-          const tmux = this.tmuxSessions.get(agentId);
-          if (tmux && this.isCliProcessAlive(tmux)) {
-            // Process still running (e.g., waiting for API response) — don't mark done
-            return;
-          }
-          this.setState(agentId, 'done', filePath, tmux ? 'process exited' : 'stable timeout');
+          // For terminal mode: session file stable + result entry check is sufficient.
+          // Claude process stays alive (interactive) — can't use process check for done.
+          this.setState(agentId, 'done', filePath, 'stable timeout');
           return;
         }
       }

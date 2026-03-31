@@ -782,6 +782,7 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
                       <option value="agent_log">Agent Log</option>
                       <option value="session">Session Output</option>
                       <option value="command">Command</option>
+                      <option value="agent_status">Agent Status</option>
                     </select>
                     {t.type === 'directory' && (
                       <select value={t.path || ''} onChange={e => {
@@ -793,6 +794,29 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
                         {projectDirs.map(d => <option key={d} value={d + '/'}>{d}/</option>)}
                       </select>
                     )}
+                    {t.type === 'agent_status' && (<>
+                      <select value={t.path || ''} onChange={e => {
+                        const next = [...watchTargets];
+                        next[i] = { ...t, path: e.target.value };
+                        setWatchTargets(next);
+                      }} className="text-[10px] bg-[#161b22] border border-[#30363d] rounded px-1 py-0.5 text-white flex-1">
+                        <option value="">Select agent...</option>
+                        {existingAgents.filter(a => a.id !== initial.id).map(a =>
+                          <option key={a.id} value={a.id}>{a.icon} {a.label}</option>
+                        )}
+                      </select>
+                      <select value={t.pattern || ''} onChange={e => {
+                        const next = [...watchTargets];
+                        next[i] = { ...t, pattern: e.target.value };
+                        setWatchTargets(next);
+                      }} className="text-[10px] bg-[#161b22] border border-[#30363d] rounded px-1 py-0.5 text-white w-20">
+                        <option value="">Any change</option>
+                        <option value="done">done</option>
+                        <option value="failed">failed</option>
+                        <option value="running">running</option>
+                        <option value="idle">idle</option>
+                      </select>
+                    </>)}
                     {t.type === 'agent_output' && (
                       <select value={t.path || ''} onChange={e => {
                         const next = [...watchTargets];

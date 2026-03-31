@@ -96,16 +96,23 @@ export class SessionFileMonitor extends EventEmitter {
     return join(homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
   }
 
-  private debugged = new Set<string>();
+  private initialized = new Set<string>();
   private checkFile(agentId: string, filePath: string): void {
     try {
       const stat = statSync(filePath);
       const mtime = stat.mtimeMs;
       const size = stat.size;
-      if (!this.debugged.has(agentId)) {
-        this.debugged.add(agentId);
-        console.log(`[session-monitor] ${agentId}: first check — mtime=${mtime} size=${size} file=${filePath}`);
+
+      // First poll: just record baseline, don't trigger state change
+      if (!this.initialized.has(agentId)) {
+        this.initialized.add(agentId);
+        this.lastMtime.set(agentId, mtime);
+        this.lastSize.set(agentId, size);
+        this.lastStableTime.set(agentId, Date.now());
+        console.log(`[session-monitor] ${agentId}: baseline mtime=${mtime} size=${size}`);
+        return;
       }
+
       const prevMtime = this.lastMtime.get(agentId) || 0;
       const prevSize = this.lastSize.get(agentId) || 0;
       const prevState = this.currentState.get(agentId) || 'idle';
@@ -142,8 +149,8 @@ export class SessionFileMonitor extends EventEmitter {
         }
       }
     } catch (err: any) {
-      if (!this.debugged.has(`err-${agentId}`)) {
-        this.debugged.add(`err-${agentId}`);
+      if (!this.initialized.has(`err-${agentId}`)) {
+        this.initialized.add(`err-${agentId}`);
         console.log(`[session-monitor] ${agentId}: checkFile error — ${err.message}`);
       }
     }

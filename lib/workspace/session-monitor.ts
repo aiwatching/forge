@@ -27,9 +27,9 @@ export interface SessionMonitorEvent {
   detail?: string; // e.g., result summary
 }
 
-const POLL_INTERVAL = 3000;    // check every 3s
-const IDLE_THRESHOLD = 15000;  // 15s of no file change → check for done
-const STABLE_THRESHOLD = 30000; // 30s of no change → force done
+const POLL_INTERVAL = 1000;    // check every 1s (need to catch short executions)
+const IDLE_THRESHOLD = 10000;  // 10s of no file change → check for done
+const STABLE_THRESHOLD = 20000; // 20s of no change → force done
 
 export class SessionFileMonitor extends EventEmitter {
   private timers = new Map<string, NodeJS.Timeout>();
@@ -96,11 +96,16 @@ export class SessionFileMonitor extends EventEmitter {
     return join(homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
   }
 
+  private debugged = new Set<string>();
   private checkFile(agentId: string, filePath: string): void {
     try {
       const stat = statSync(filePath);
       const mtime = stat.mtimeMs;
       const size = stat.size;
+      if (!this.debugged.has(agentId)) {
+        this.debugged.add(agentId);
+        console.log(`[session-monitor] ${agentId}: first check — mtime=${mtime} size=${size} file=${filePath}`);
+      }
       const prevMtime = this.lastMtime.get(agentId) || 0;
       const prevSize = this.lastSize.get(agentId) || 0;
       const prevState = this.currentState.get(agentId) || 'idle';

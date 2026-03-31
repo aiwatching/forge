@@ -922,6 +922,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
       }
     }
 
+    // Ensure CLAUDE.md has FORGE_DONE instruction for session detection
+    this.ensureForgeClaudeMdHint();
+
     // Start watch loops for agents with watch config
     this.watchManager.start();
 
@@ -1192,6 +1195,34 @@ export class WorkspaceOrchestrator extends EventEmitter {
     const entry = this.agents.get(agentId);
     const tmuxSession = config.persistentSession ? entry?.state.tmuxSession : undefined;
     this.sessionMonitor.startMonitoring(agentId, filePath, tmuxSession);
+  }
+
+  // ─── CLAUDE.md Forge Hint ─────────────────────────────
+
+  /** Ensure CLAUDE.md in project root has the FORGE_DONE instruction */
+  private ensureForgeClaudeMdHint(): void {
+    const FORGE_HINT = '\n\n<!-- FORGE:BEGIN -->\n## Forge Workspace Integration\nWhen you finish processing a task or message from Forge, end your final response with the marker: [FORGE_DONE]\nThis helps Forge detect task completion. Do not include this marker if you are still working.\n<!-- FORGE:END -->\n';
+
+    try {
+      const claudeMdPath = join(this.projectPath, 'CLAUDE.md');
+      let content = '';
+      if (existsSync(claudeMdPath)) {
+        content = readFileSync(claudeMdPath, 'utf-8');
+      }
+      // Check if hint already exists
+      if (content.includes('<!-- FORGE:BEGIN -->')) {
+        // Verify it's still intact (not corrupted)
+        if (content.includes('<!-- FORGE:END -->') && content.includes('[FORGE_DONE]')) {
+          return; // already there and intact
+        }
+        // Remove corrupted hint and re-add
+        content = content.replace(/\n?\n?<!-- FORGE:BEGIN -->[\s\S]*?<!-- FORGE:END -->\n?/g, '');
+      }
+      writeFileSync(claudeMdPath, content + FORGE_HINT);
+      console.log(`[daemon] Added FORGE_DONE hint to CLAUDE.md`);
+    } catch (err: any) {
+      console.log(`[daemon] Could not update CLAUDE.md: ${err.message}`);
+    }
   }
 
   // ─── Health Check — auto-heal agents ─────────────────

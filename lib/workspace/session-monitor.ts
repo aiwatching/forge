@@ -174,9 +174,15 @@ export class SessionFileMonitor extends EventEmitter {
       require('node:fs').closeSync(fd);
 
       const tail = buf.toString('utf-8');
+
+      // Priority 1: Check for FORGE_DONE marker (from CLAUDE.md instruction)
+      if (tail.includes('FORGE_DONE') || tail.includes('[FORGE_DONE]')) {
+        return 'FORGE_DONE marker detected';
+      }
+
       const lines = tail.split('\n').filter(l => l.trim());
 
-      // Scan last lines for result entry
+      // Priority 2: Check for result entry or assistant stop
       for (let i = lines.length - 1; i >= Math.max(0, lines.length - 10); i--) {
         try {
           const entry = JSON.parse(lines[i]);

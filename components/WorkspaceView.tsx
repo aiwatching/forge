@@ -1779,7 +1779,7 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
   return <div ref={containerRef} className="w-full h-full" style={{ background: '#0d1117' }} />;
 }
 
-function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, skipPermissions, persistentSession, boundSessionId, onSessionReady, onClose }: {
+function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, skipPermissions, persistentSession, boundSessionId, initialPos, onSessionReady, onClose }: {
   agentLabel: string;
   agentIcon: string;
   projectPath: string;
@@ -1796,14 +1796,20 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
   skipPermissions?: boolean;
   persistentSession?: boolean;
   boundSessionId?: string;
+  initialPos?: { x: number; y: number };
   onSessionReady?: (name: string) => void;
   onClose: (killSession: boolean) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const sessionNameRef = useRef('');
-  const [pos, setPos] = useState({ x: 80, y: 60 });
-  const [size, setSize] = useState({ w: 750, h: 450 });
+  const [pos, setPos] = useState(initialPos || { x: 80, y: 60 });
+  const [userDragged, setUserDragged] = useState(false);
+  // Follow node position unless user manually dragged the terminal
+  useEffect(() => {
+    if (initialPos && !userDragged) setPos(initialPos);
+  }, [initialPos?.x, initialPos?.y]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [size, setSize] = useState({ w: 500, h: 300 });
   const [showCloseDialog, setShowCloseDialog] = useState(false);
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const resizeRef = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null);
@@ -1821,7 +1827,7 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
       if (disposed) return;
 
       const term = new Terminal({
-        cursorBlink: true, fontSize: 13,
+        cursorBlink: true, fontSize: 10,
         fontFamily: 'Menlo, Monaco, "Courier New", monospace',
         scrollback: 5000,
         theme: { background: '#0d1117', foreground: '#c9d1d9', cursor: '#58a6ff' },
@@ -1831,7 +1837,15 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
       term.open(el);
       setTimeout(() => { try { fitAddon.fit(); } catch {} }, 100);
 
-      const ro = new ResizeObserver(() => { try { fitAddon.fit(); } catch {} });
+      // Scale font: min 10 at small size, max 13 at large size
+      const ro = new ResizeObserver(() => {
+        try {
+          const w = el.clientWidth;
+          const newSize = Math.min(13, Math.max(10, Math.floor(w / 60)));
+          if (term.options.fontSize !== newSize) term.options.fontSize = newSize;
+          fitAddon.fit();
+        } catch {}
+      });
       ro.observe(el);
 
       // Connect WebSocket — attach to existing or create new
@@ -1956,6 +1970,7 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
         onMouseDown={(e) => {
           e.preventDefault();
           dragRef.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y };
+          setUserDragged(true);
           const onMove = (ev: MouseEvent) => {
             if (!dragRef.current) return;
             setPos({ x: Math.max(0, dragRef.current.origX + ev.clientX - dragRef.current.startX), y: Math.max(0, dragRef.current.origY + ev.clientY - dragRef.current.startY) });
@@ -2113,6 +2128,8 @@ interface AgentNodeData {
   state: AgentState;
   colorIdx: number;
   previewLines: string[];
+  projectPath: string;
+  workspaceId: string | null;
   onRun: () => void;
   onPause: () => void;
   onStop: () => void;
@@ -2131,8 +2148,11 @@ interface AgentNodeData {
   [key: string]: unknown;
 }
 
+// PortalTerminal/NodeTerminal removed — xterm cannot render inside React Flow nodes
+// and createPortal causes event routing issues. Using FloatingTerminal instead.
+
 function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
-  const { config, state, colorIdx, previewLines, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory, onShowInbox, onOpenTerminal, onSwitchSession, inboxPending = 0, inboxFailed = 0 } = data;
+  const { config, state, colorIdx, previewLines, projectPath, workspaceId, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory, onShowInbox, onOpenTerminal, onSwitchSession, inboxPending = 0, inboxFailed = 0 } = data;
   const c = COLORS[colorIdx % COLORS.length];
   const smithStatus = state?.smithStatus || 'down';
   const taskStatus = state?.taskStatus || 'idle';
@@ -2141,7 +2161,7 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
   const taskInfo = TASK_STATUS[taskStatus] || TASK_STATUS.idle;
   const currentStep = state?.currentStep;
   const step = currentStep !== undefined ? config.steps[currentStep] : undefined;
-  const isApprovalPending = taskStatus === 'idle' && smithStatus === 'active'; // approximation, actual check would use approvalQueue
+  const isApprovalPending = taskStatus === 'idle' && smithStatus === 'active';
 
   return (
     <div className="w-52 flex flex-col rounded-lg select-none"
@@ -2242,7 +2262,8 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
         <div className="flex-1" />
         <span className="flex items-center">
             <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onOpenTerminal(); }}
-              className={`text-[9px] px-1 ${hasTmux && taskStatus === 'running' ? 'text-green-400 animate-pulse' : 'text-gray-600 hover:text-green-400'}`} title="Open terminal">⌨️</button>
+              className={`text-[9px] px-1 ${hasTmux && taskStatus === 'running' ? 'text-green-400 animate-pulse' : 'text-gray-600 hover:text-green-400'}`}
+              title="Open terminal">⌨️</button>
             {hasTmux && !config.primary && (
               <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onSwitchSession(); }}
                 className="text-[10px] text-gray-600 hover:text-yellow-400 px-0.5 py-0.5" title="Switch session">▾</button>
@@ -2287,8 +2308,8 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
   const [memoryTarget, setMemoryTarget] = useState<{ id: string; label: string } | null>(null);
   const [inboxTarget, setInboxTarget] = useState<{ id: string; label: string } | null>(null);
   const [showBusPanel, setShowBusPanel] = useState(false);
-  const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; cliCmd?: string; cliType?: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string>; isPrimary?: boolean; skipPermissions?: boolean; persistentSession?: boolean; boundSessionId?: string }[]>([]);
-  const [termLaunchDialog, setTermLaunchDialog] = useState<{ agent: AgentConfig; sessName: string; workDir?: string; sessions: string[]; supportsSession?: boolean } | null>(null);
+  const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; cliCmd?: string; cliType?: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string>; isPrimary?: boolean; skipPermissions?: boolean; persistentSession?: boolean; boundSessionId?: string; initialPos?: { x: number; y: number } }[]>([]);
+  const [termLaunchDialog, setTermLaunchDialog] = useState<{ agent: AgentConfig; sessName: string; workDir?: string; sessions: string[]; supportsSession?: boolean; initialPos?: { x: number; y: number } } | null>(null);
 
   // Expose focusAgent to parent
   useImperativeHandle(ref, () => ({
@@ -2367,6 +2388,8 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
             state: states[agent.id] || { smithStatus: 'down', taskStatus: 'idle', artifacts: [] },
             colorIdx: i,
             previewLines: logPreview[agent.id] || [],
+            projectPath,
+            workspaceId,
             onRun: () => {
               wsApi(workspaceId!, 'run', { agentId: agent.id });
             },
@@ -2393,6 +2416,13 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
               }
               // Close existing terminal (config may have changed)
               setFloatingTerminals(prev => prev.filter(t => t.agentId !== agent.id));
+
+              // Get node screen position for initial terminal placement
+              const nodeEl = document.querySelector(`[data-id="${agent.id}"]`);
+              const nodeRect = nodeEl?.getBoundingClientRect();
+              const initialPos = nodeRect
+                ? { x: nodeRect.left, y: nodeRect.bottom + 4 }
+                : { x: 80, y: 60 };
 
               const agentState = states[agent.id];
               const existingTmux = agentState?.tmuxSession;
@@ -2421,7 +2451,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                   agentId: agent.id, label: agent.label, icon: agent.icon,
                   cliId: agent.agentId || 'claude', ...launchInfo, workDir,
                   tmuxSession: existingTmux, sessionName: sessName,
-                  isPrimary: agent.primary, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: agent.boundSessionId,
+                  isPrimary: agent.primary, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: agent.boundSessionId, initialPos,
                 }]);
                 return;
               }
@@ -2433,7 +2463,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                   agentId: agent.id, label: agent.label, icon: agent.icon,
                   cliId: agent.agentId || 'claude', ...launchInfo, workDir,
                   tmuxSession: res?.tmuxSession || sessName, sessionName: sessName,
-                  isPrimary: true, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: agent.boundSessionId,
+                  isPrimary: true, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: agent.boundSessionId, initialPos,
                 }]);
                 return;
               }
@@ -2446,24 +2476,25 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                   cliId: agent.agentId || 'claude', ...launchInfo, workDir,
                   tmuxSession: res?.tmuxSession || sessName, sessionName: sessName,
                   resumeSessionId: agent.boundSessionId,
-                  isPrimary: false, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: agent.boundSessionId,
+                  isPrimary: false, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: agent.boundSessionId, initialPos,
                 }]);
                 return;
               }
               // No bound session → show launch dialog (New / Resume / Select)
-              setTermLaunchDialog({ agent, sessName, workDir, sessions: [], supportsSession: resolveRes?.supportsSession ?? true });
+              setTermLaunchDialog({ agent, sessName, workDir, sessions: [], supportsSession: resolveRes?.supportsSession ?? true, initialPos });
             },
             onSwitchSession: async () => {
               if (!workspaceId) return;
-              // Close existing terminal
               setFloatingTerminals(prev => prev.filter(t => t.agentId !== agent.id));
               if (agent.id) wsApi(workspaceId, 'close_terminal', { agentId: agent.id });
-              // Show launch dialog
+              const nodeEl = document.querySelector(`[data-id="${agent.id}"]`);
+              const nodeRect = nodeEl?.getBoundingClientRect();
+              const switchPos = nodeRect ? { x: nodeRect.left, y: nodeRect.bottom + 4 } : { x: 80, y: 60 };
               const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
               const sessName = `mw-forge-${safeName(projectName)}-${safeName(agent.label)}`;
               const workDir = agent.workDir && agent.workDir !== './' && agent.workDir !== '.' ? agent.workDir : undefined;
               const resolveRes = await wsApi(workspaceId, 'open_terminal', { agentId: agent.id, resolveOnly: true }).catch(() => ({})) as any;
-              setTermLaunchDialog({ agent, sessName, workDir, sessions: [], supportsSession: resolveRes?.supportsSession ?? true });
+              setTermLaunchDialog({ agent, sessName, workDir, sessions: [], supportsSession: resolveRes?.supportsSession ?? true, initialPos: switchPos });
             },
           } satisfies AgentNodeData,
         };
@@ -2716,6 +2747,22 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
             nodes={rfNodes}
             edges={rfEdges}
             onNodesChange={onNodesChange}
+            onNodeDragStop={() => {
+              // Reposition terminals to follow their nodes
+              setFloatingTerminals(prev => prev.map(ft => {
+                const nodeEl = document.querySelector(`[data-id="${ft.agentId}"]`);
+                const rect = nodeEl?.getBoundingClientRect();
+                return rect ? { ...ft, initialPos: { x: rect.left, y: rect.bottom + 4 } } : ft;
+              }));
+            }}
+            onMoveEnd={() => {
+              // Reposition after pan/zoom
+              setFloatingTerminals(prev => prev.map(ft => {
+                const nodeEl = document.querySelector(`[data-id="${ft.agentId}"]`);
+                const rect = nodeEl?.getBoundingClientRect();
+                return rect ? { ...ft, initialPos: { x: rect.left, y: rect.bottom + 4 } } : ft;
+              }));
+            }}
             nodeTypes={nodeTypes}
             fitView
             fitViewOptions={{ padding: 0.3 }}
@@ -2826,7 +2873,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
                 cliCmd: res.cliCmd || 'claude',
                 cliType: res.cliType || 'claude-code',
                 workDir,
-                sessionName: sessName, resumeMode, resumeSessionId: sessionId, isPrimary: false, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: sessionId || agent.boundSessionId,
+                sessionName: sessName, resumeMode, resumeSessionId: sessionId, isPrimary: false, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: sessionId || agent.boundSessionId, initialPos: termLaunchDialog.initialPos,
                 profileEnv: {
                   ...(res.env || {}),
                   ...(res.model ? { CLAUDE_MODEL: res.model } : {}),
@@ -2861,6 +2908,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           skipPermissions={ft.skipPermissions}
           persistentSession={ft.persistentSession}
           boundSessionId={ft.boundSessionId}
+          initialPos={ft.initialPos}
           onSessionReady={(name) => {
             if (workspaceId) wsApi(workspaceId, 'set_tmux_session', { agentId: ft.agentId, sessionName: name });
             setFloatingTerminals(prev => prev.map(t => t.agentId === ft.agentId ? { ...t, tmuxSession: name } : t));

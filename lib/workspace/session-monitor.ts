@@ -141,9 +141,11 @@ export class SessionFileMonitor extends EventEmitter {
           return;
         }
       }
-    } catch {
-      // File doesn't exist or can't be read — agent hasn't started yet
-      // Don't change state, stay at whatever it was
+    } catch (err: any) {
+      if (!this.debugged.has(`err-${agentId}`)) {
+        this.debugged.add(`err-${agentId}`);
+        console.log(`[session-monitor] ${agentId}: checkFile error — ${err.message}`);
+      }
     }
   }
 

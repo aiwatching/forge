@@ -23,7 +23,6 @@ sleep 1
 export PORT=${PORT:-8403}
 export TERMINAL_PORT=${TERMINAL_PORT:-8404}
 export WORKSPACE_PORT=${WORKSPACE_PORT:-8405}
-export NEXT_TELEMETRY_DISABLED=1
 
 if [ "$1" = "dev" ]; then
   pnpm dev

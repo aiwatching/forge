@@ -259,7 +259,6 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
       }
       case 'open_terminal': {
         if (!agentId) return jsonError(res, 'agentId required');
-        if (!orch.isDaemonActive()) return jsonError(res, 'Start daemon first before opening terminal');
         const agentState = orch.getAgentState(agentId);
         const agentConfig = orch.getSnapshot().agents.find(a => a.id === agentId);
         if (!agentState || !agentConfig) return jsonError(res, 'Agent not found', 404);

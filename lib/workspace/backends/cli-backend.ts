@@ -122,8 +122,7 @@ export class CliBackend implements AgentBackend {
     // Generate a session ID for headless execution so we can monitor the .jsonl file
     const isClaude = adapter.config.type === 'claude-code';
     if (isClaude && !this.sessionId) {
-      const { randomUUID } = require('node:crypto');
-      this.headlessSessionId = randomUUID();
+      this.headlessSessionId = crypto.randomUUID();
     }
 
     const spawnOpts = adapter.buildTaskSpawn({

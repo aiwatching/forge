@@ -211,8 +211,8 @@ export class SessionFileMonitor extends EventEmitter {
   private sendHeartbeatProbe(agentId: string, tmuxSession: string, probeCount: number): void {
     try {
       const msg = probeCount === 0
-        ? '[Forge heartbeat] If you have completed your current task, reply exactly: FORGE_DONE. If you are still busy or waiting for a response, do nothing. Ignore duplicate heartbeats.'
-        : '[Forge heartbeat] Reply FORGE_DONE if idle. Ignore if busy.';
+        ? '[Forge heartbeat] If you have completed your current task, reply with the word FORGE followed by underscore and DONE (no spaces). If busy or waiting, do nothing. Ignore duplicate heartbeats.'
+        : '[Forge heartbeat] Reply FORGE underscore DONE if idle. Ignore if busy.';
       const tmpFile = `/tmp/forge-probe-${Date.now()}.txt`;
       writeFileSync(tmpFile, msg);
       execSync(`tmux load-buffer ${tmpFile} 2>/dev/null`, { timeout: 3000 });

@@ -2019,27 +2019,29 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
         execSync(`tmux new-session -d -s "${sessionName}" -c "${workDir}"`, { timeout: 5000 });
 
-        // Reset profile env vars (unset any leftover from previous agent) then set new ones
+        // Build launch script to avoid tmux send-keys truncation
+        const scriptLines: string[] = ['#!/bin/bash'];
+
+        // Unset old profile vars
         const profileVarsToReset = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_SMALL_FAST_MODEL', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_TELEMETRY', 'DISABLE_ERROR_REPORTING', 'DISABLE_AUTOUPDATER', 'DISABLE_NON_ESSENTIAL_MODEL_CALLS', 'CLAUDE_MODEL'];
-        const unsetCmd = profileVarsToReset.map(v => `unset ${v}`).join(' && ');
-        execSync(`tmux send-keys -t "${sessionName}" '${unsetCmd}' Enter`, { timeout: 5000 });
+        for (const v of profileVarsToReset) scriptLines.push(`unset ${v}`);
 
-        // Set FORGE env vars (short, separate command)
-        execSync(`tmux send-keys -t "${sessionName}" 'export FORGE_WORKSPACE_ID="${this.workspaceId}" FORGE_AGENT_ID="${config.id}" FORGE_PORT="${Number(process.env.PORT) || 8403}"' Enter`, { timeout: 5000 });
+        // Set FORGE env vars
+        scriptLines.push(`export FORGE_WORKSPACE_ID="${this.workspaceId}"`);
+        scriptLines.push(`export FORGE_AGENT_ID="${config.id}"`);
+        scriptLines.push(`export FORGE_PORT="${Number(process.env.PORT) || 8403}"`);
 
-        // Set profile env vars if any (separate command to avoid truncation)
+        // Set profile env vars
         if (envExports) {
-          execSync(`tmux send-keys -t "${sessionName}" '${envExports.replace(/ && $/, '')}' Enter`, { timeout: 5000 });
+          for (const part of envExports.replace(/ && $/, '').split(' && ')) {
+            if (part.trim()) scriptLines.push(part.trim());
+          }
         }
 
-        // Build CLI start command
-        const parts: string[] = [];
+        // Build CLI command
         let cmd = cliCmd;
-
-        // Session resume: use bound session ID (primary from project-sessions, others from config)
         if (supportsSession) {
           let sessionId: string | undefined;
-
           if (config.primary) {
             try {
               const { getFixedSession } = await import('../project-sessions') as any;
@@ -2048,7 +2050,6 @@ export class WorkspaceOrchestrator extends EventEmitter {
           } else {
             sessionId = config.boundSessionId;
           }
-
           if (sessionId) {
             const sessionFile = join(this.getCliSessionDir(config.workDir), `${sessionId}.jsonl`);
             if (existsSync(sessionFile)) {
@@ -2057,15 +2058,17 @@ export class WorkspaceOrchestrator extends EventEmitter {
               console.log(`[daemon] ${config.label}: bound session ${sessionId} missing, starting fresh`);
             }
           }
-          // No bound session → start fresh (no -c, avoids "No conversation found")
         }
         if (modelFlag) cmd += modelFlag;
         if (config.skipPermissions !== false && skipPermissionsFlag) cmd += ` ${skipPermissionsFlag}`;
         if (mcpConfigFlag) cmd += mcpConfigFlag;
-        parts.push(cmd);
+        scriptLines.push(`cd "${workDir}"`);
+        scriptLines.push(`exec ${cmd}`);
 
-        const startCmd = parts.join(' && ');
-        execSync(`tmux send-keys -t "${sessionName}" '${startCmd}' Enter`, { timeout: 5000 });
+        // Write script and execute in tmux
+        const scriptPath = `/tmp/forge-launch-${config.id.replace(/[^a-z0-9-]/gi, '')}.sh`;
+        writeFileSync(scriptPath, scriptLines.join('\n') + '\n', { mode: 0o755 });
+        execSync(`tmux send-keys -t "${sessionName}" 'bash ${scriptPath}' Enter`, { timeout: 5000 });
 
         console.log(`[daemon] ${config.label}: persistent session created (${sessionName}) [${cliType}: ${cliCmd}]`);
 

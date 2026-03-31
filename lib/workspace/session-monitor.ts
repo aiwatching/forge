@@ -13,6 +13,7 @@
  */
 
 import { statSync, readFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
@@ -37,14 +38,17 @@ export class SessionFileMonitor extends EventEmitter {
   private lastSize = new Map<string, number>();
   private lastStableTime = new Map<string, number>();
   private currentState = new Map<string, SessionMonitorState>();
+  private tmuxSessions = new Map<string, string>(); // agentId → tmux session name
 
   /**
    * Start monitoring a session file for an agent.
    * @param agentId - Agent identifier
    * @param sessionFilePath - Full path to the .jsonl session file
+   * @param tmuxSession - Optional tmux session name (for process-alive check)
    */
-  startMonitoring(agentId: string, sessionFilePath: string): void {
+  startMonitoring(agentId: string, sessionFilePath: string, tmuxSession?: string): void {
     this.stopMonitoring(agentId);
+    if (tmuxSession) this.tmuxSessions.set(agentId, tmuxSession);
     this.currentState.set(agentId, 'idle');
     this.lastStableTime.set(agentId, Date.now());
 
@@ -143,8 +147,14 @@ export class SessionFileMonitor extends EventEmitter {
           }
         }
         if (stableFor >= STABLE_THRESHOLD) {
-          // Force done after 30s even without result entry
-          this.setState(agentId, 'done', filePath, 'stable timeout');
+          // Before forcing done, check if CLI process is still alive in tmux
+          // (protects against false done during long API calls)
+          const tmux = this.tmuxSessions.get(agentId);
+          if (tmux && this.isCliProcessAlive(tmux)) {
+            // Process still running (e.g., waiting for API response) — don't mark done
+            return;
+          }
+          this.setState(agentId, 'done', filePath, tmux ? 'process exited' : 'stable timeout');
           return;
         }
       }
@@ -153,6 +163,22 @@ export class SessionFileMonitor extends EventEmitter {
         this.initialized.add(`err-${agentId}`);
         console.log(`[session-monitor] ${agentId}: checkFile error — ${err.message}`);
       }
+    }
+  }
+
+  /**
+   * Check if a CLI process (claude/codex/node) is still running in a tmux pane.
+   * Only used for terminal mode — prevents false "done" during long API calls.
+   */
+  private isCliProcessAlive(tmuxSession: string): boolean {
+    try {
+      const panePid = execSync(`tmux display-message -t "${tmuxSession}" -p "#{pane_pid}" 2>/dev/null`, { timeout: 3000, encoding: 'utf-8' }).trim();
+      if (!panePid) return false;
+      // Check if the shell has any child processes (claude, codex, node, etc.)
+      const children = execSync(`ps -ef | awk -v ppid=${panePid} '$3==ppid{print $NF}'`, { timeout: 3000, encoding: 'utf-8' }).trim();
+      return children.length > 0; // any child = CLI still running
+    } catch {
+      return false; // can't check = assume not alive
     }
   }
 

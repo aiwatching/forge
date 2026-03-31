@@ -1363,7 +1363,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
         if (senderEntry && msg.from !== '_forge' && msg.from !== '_system') {
           this.bus.send('_forge', msg.from, 'notify', {
             action: 'update_notify',
-            content: `Your message to ${targetLabel} has failed. You may want to retry or take a different approach.`,
+            content: `Your message to ${targetLabel} has failed. You may retry or take a different approach. If you are currently busy, ignore this notification.`,
           });
           console.log(`[forge-agent] Notified ${senderEntry.config.label} that message to ${targetLabel} failed`);
         }
@@ -1883,7 +1883,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     const content = files.length > 0
       ? `${completedLabel} completed: ${files.length} files changed. ${summary.slice(0, 200)}`
-      : `${completedLabel} completed. ${summary.slice(0, 300) || 'Check upstream outputs for updates.'}`;
+      : `${completedLabel} completed. ${summary.slice(0, 300) || 'If you are currently processing a task, ignore this notification.'}`;
 
     // Find all downstream agents — skip if already sent upstream_complete recently (60s)
     const now = Date.now();

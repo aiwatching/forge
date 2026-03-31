@@ -91,6 +91,7 @@ function detectArtifacts(parsed: any): Artifact[] {
 export class CliBackend implements AgentBackend {
   private child: ChildProcess | null = null;
   private sessionId: string | undefined;
+  headlessSessionId: string | undefined; // exposed for session file monitoring
   /** Callback to persist sessionId back to agent state */
   onSessionId?: (id: string) => void;
 
@@ -118,6 +119,13 @@ export class CliBackend implements AgentBackend {
     // Note: if no sessionId, each execution starts a new session (no resume).
     // To maintain context, user can enable persistent terminal session per agent.
 
+    // Generate a session ID for headless execution so we can monitor the .jsonl file
+    const isClaude = adapter.config.type === 'claude-code';
+    if (isClaude && !this.sessionId) {
+      const { randomUUID } = require('node:crypto');
+      this.headlessSessionId = randomUUID();
+    }
+
     const spawnOpts = adapter.buildTaskSpawn({
       projectPath,
       prompt,
@@ -125,6 +133,7 @@ export class CliBackend implements AgentBackend {
       conversationId: this.sessionId,
       skipPermissions: true,
       outputFormat: adapter.config.capabilities?.supportsStreamJson ? 'stream-json' : undefined,
+      extraFlags: this.headlessSessionId && !this.sessionId ? ['--session-id', this.headlessSessionId] : undefined,
     });
 
     onLog?.({

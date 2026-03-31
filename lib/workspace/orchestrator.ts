@@ -61,6 +61,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
   private agents = new Map<string, { config: WorkspaceAgentConfig; worker: AgentWorker | null; state: AgentState }>();
   private bus: AgentBus;
   private watchManager: WatchManager;
+  private sessionMonitor: import('./session-monitor').SessionFileMonitor | null = null;
   private approvalQueue = new Set<string>();
   private daemonActive = false;
   private createdAt = Date.now();
@@ -912,6 +913,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
     // Start watch loops for agents with watch config
     this.watchManager.start();
 
+    // Start session file monitors for agents with known session IDs
+    this.startSessionMonitors();
+
     // Start health check — monitor all agents every 10s, auto-heal
     this.startHealthCheck();
 
@@ -1069,9 +1073,66 @@ export class WorkspaceOrchestrator extends EventEmitter {
     this.emitAgentsChanged();
     this.watchManager.stop();
     this.stopAllTerminalMonitors();
+    if (this.sessionMonitor) { this.sessionMonitor.stopAll(); this.sessionMonitor = null; }
     this.stopHealthCheck();
     this.forgeActedMessages.clear();
     console.log('[workspace] Daemon stopped');
+  }
+
+  // ─── Session File Monitor ──────────────────────────────
+
+  private async startSessionMonitors(): Promise<void> {
+    const { SessionFileMonitor } = await import('./session-monitor');
+    this.sessionMonitor = new SessionFileMonitor();
+
+    // Listen for state changes from session file monitor
+    this.sessionMonitor.on('stateChange', (event: any) => {
+      const entry = this.agents.get(event.agentId);
+      if (!entry) return;
+
+      if (event.state === 'running' && entry.state.taskStatus !== 'running') {
+        entry.state.taskStatus = 'running';
+        this.emit('event', { type: 'task_status', agentId: event.agentId, taskStatus: 'running' } as any);
+        this.emitAgentsChanged();
+      }
+
+      if (event.state === 'done' && entry.state.taskStatus === 'running') {
+        entry.state.taskStatus = 'done';
+        this.emit('event', { type: 'task_status', agentId: event.agentId, taskStatus: 'done' } as any);
+        this.emit('event', { type: 'log', agentId: event.agentId, entry: { type: 'system', subtype: 'session_done', content: `Session file idle: ${event.detail || 'turn completed'}`, timestamp: new Date().toISOString() } } as any);
+        this.handleAgentDone(event.agentId, entry, event.detail);
+        this.emitAgentsChanged();
+      }
+    });
+
+    // Start monitors for all agents with known session IDs
+    for (const [id, entry] of this.agents) {
+      if (entry.config.type === 'input') continue;
+      this.startAgentSessionMonitor(id, entry.config);
+    }
+  }
+
+  private startAgentSessionMonitor(agentId: string, config: WorkspaceAgentConfig): void {
+    if (!this.sessionMonitor) return;
+
+    // Determine session file path
+    let sessionId: string | undefined;
+
+    if (config.primary) {
+      // Primary: from project-sessions
+      try {
+        const { getFixedSession } = require('../project-sessions');
+        sessionId = getFixedSession(this.projectPath);
+      } catch {}
+    } else {
+      sessionId = config.boundSessionId;
+    }
+
+    if (!sessionId) return; // no session to monitor
+
+    const { SessionFileMonitor } = require('./session-monitor');
+    const filePath = SessionFileMonitor.resolveSessionPath(this.projectPath, config.workDir, sessionId);
+    this.sessionMonitor.startMonitoring(agentId, filePath);
   }
 
   // ─── Health Check — auto-heal agents ─────────────────

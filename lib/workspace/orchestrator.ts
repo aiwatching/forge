@@ -359,7 +359,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       const workerState = entry.worker?.getState();
       // Merge: worker state for task/smith, entry.state for mode (orchestrator controls mode)
       result[id] = workerState
-        ? { ...workerState, tmuxSession: entry.state.tmuxSession, currentMessageId: entry.state.currentMessageId }
+        ? { ...workerState, taskStatus: entry.state.taskStatus, tmuxSession: entry.state.tmuxSession, currentMessageId: entry.state.currentMessageId }
         : entry.state;
     }
     return result;

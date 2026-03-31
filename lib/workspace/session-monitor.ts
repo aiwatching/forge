@@ -12,7 +12,7 @@
  * Works for both terminal and headless modes — both write the same .jsonl format.
  */
 
-import { statSync, readFileSync } from 'node:fs';
+import { statSync, readFileSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -38,7 +38,9 @@ export class SessionFileMonitor extends EventEmitter {
   private lastSize = new Map<string, number>();
   private lastStableTime = new Map<string, number>();
   private currentState = new Map<string, SessionMonitorState>();
-  private tmuxSessions = new Map<string, string>(); // agentId → tmux session name
+  private tmuxSessions = new Map<string, string>();
+  // Heartbeat probe tracking: agentId → { probeCount, lastProbeTime }
+  private probeState = new Map<string, { count: number; lastTime: number }>();
 
   /**
    * Start monitoring a session file for an agent.
@@ -73,6 +75,7 @@ export class SessionFileMonitor extends EventEmitter {
     this.lastStableTime.delete(agentId);
     this.currentState.delete(agentId);
     this.tmuxSessions.delete(agentId);
+    this.probeState.delete(agentId);
   }
 
   /**
@@ -129,6 +132,7 @@ export class SessionFileMonitor extends EventEmitter {
       // File changed (mtime or size different) → running
       if (mtime !== prevMtime || size !== prevSize) {
         this.lastStableTime.set(agentId, now);
+        this.probeState.delete(agentId); // reset heartbeat probes
         if (prevState !== 'running') {
           this.setState(agentId, 'running', filePath);
         }
@@ -148,8 +152,25 @@ export class SessionFileMonitor extends EventEmitter {
           }
         }
         if (stableFor >= STABLE_THRESHOLD) {
-          // For terminal mode: session file stable + result entry check is sufficient.
-          // Claude process stays alive (interactive) — can't use process check for done.
+          // Instead of forcing done, send a heartbeat probe to the terminal.
+          // If the agent responds → file changes → back to running.
+          // If no response (still waiting for API) → probe again with increasing interval.
+          const tmux = this.tmuxSessions.get(agentId);
+          if (tmux) {
+            const probe = this.probeState.get(agentId) || { count: 0, lastTime: 0 };
+            // Increasing intervals: 10s, 20s, 30s, 60s, 60s, 60s...
+            const intervals = [10000, 20000, 30000, 60000];
+            const interval = intervals[Math.min(probe.count, intervals.length - 1)];
+            const timeSinceProbe = Date.now() - probe.lastTime;
+
+            if (timeSinceProbe >= interval) {
+              this.sendHeartbeatProbe(agentId, tmux, probe.count);
+              this.probeState.set(agentId, { count: probe.count + 1, lastTime: Date.now() });
+            }
+            // Don't mark done — wait for file activity or no-tmux fallback
+            return;
+          }
+          // No tmux (headless fallback) → use stable timeout
           this.setState(agentId, 'done', filePath, 'stable timeout');
           return;
         }
@@ -159,6 +180,30 @@ export class SessionFileMonitor extends EventEmitter {
         this.initialized.add(`err-${agentId}`);
         console.log(`[session-monitor] ${agentId}: checkFile error — ${err.message}`);
       }
+    }
+  }
+
+  /**
+   * Send a short heartbeat probe to the terminal to check if the agent is done.
+   * If the agent is idle (waiting for input), it will process this and the session
+   * file will update → detected as activity → done via result check.
+   * If the agent is busy (waiting for API), the probe queues and won't be processed
+   * until the current turn finishes.
+   */
+  private sendHeartbeatProbe(agentId: string, tmuxSession: string, probeCount: number): void {
+    try {
+      const msg = probeCount === 0
+        ? '[Forge heartbeat] Are you done with your current task? If yes, reply with a brief status. If you received multiple of these, only respond to one and ignore the rest.'
+        : '[Forge heartbeat] Status check — respond only if idle.';
+      const tmpFile = `/tmp/forge-probe-${Date.now()}.txt`;
+      writeFileSync(tmpFile, msg);
+      execSync(`tmux load-buffer ${tmpFile} 2>/dev/null`, { timeout: 3000 });
+      execSync(`tmux paste-buffer -t "${tmuxSession}" 2>/dev/null`, { timeout: 3000 });
+      execSync(`tmux send-keys -t "${tmuxSession}" Enter 2>/dev/null`, { timeout: 3000 });
+      try { require('node:fs').unlinkSync(tmpFile); } catch {}
+      console.log(`[session-monitor] ${agentId}: heartbeat probe #${probeCount + 1} sent`);
+    } catch (err: any) {
+      console.log(`[session-monitor] ${agentId}: heartbeat probe failed — ${err.message}`);
     }
   }
 

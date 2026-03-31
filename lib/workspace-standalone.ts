@@ -387,6 +387,15 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
         orch.emit('event', { type: 'bus_log_updated', log: orch.getBus().getLog() } as any);
         return json(res, { ok: true, deleted: ids.length });
       }
+      case 'message_done': {
+        const { messageId } = body;
+        if (!messageId) return jsonError(res, 'messageId required');
+        const msg = orch.getBus().getLog().find(m => m.id === messageId);
+        if (!msg) return jsonError(res, 'Message not found');
+        msg.status = 'done';
+        orch.emit('event', { type: 'bus_message_status', messageId, status: 'done' } as any);
+        return json(res, { ok: true });
+      }
       case 'start_daemon': {
         // Check active daemon count before starting
         const activeCount = Array.from(orchestrators.values()).filter(o => o.isDaemonActive()).length;

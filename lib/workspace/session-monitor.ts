@@ -38,6 +38,7 @@ export class SessionFileMonitor extends EventEmitter {
   private lastStableTime = new Map<string, number>();
   private currentState = new Map<string, SessionMonitorState>();
   private tmuxSessions = new Map<string, string>();
+  private stopped = false;
 
   /**
    * Start monitoring a session file for an agent.
@@ -78,6 +79,7 @@ export class SessionFileMonitor extends EventEmitter {
    * Stop all monitors.
    */
   stopAll(): void {
+    this.stopped = true;
     for (const [id] of this.timers) {
       this.stopMonitoring(id);
     }
@@ -163,11 +165,11 @@ export class SessionFileMonitor extends EventEmitter {
     }
   }
 
-  /** Quick check for FORGE_DONE marker in last 2KB of session file */
+  /** Quick check for FORGE_DONE marker in last 500 bytes of session file */
   private checkForForgeDone(filePath: string): boolean {
     try {
       const stat = statSync(filePath);
-      const readSize = Math.min(2048, stat.size);
+      const readSize = Math.min(500, stat.size);
       const fd = require('node:fs').openSync(filePath, 'r');
       const buf = Buffer.alloc(readSize);
       require('node:fs').readSync(fd, buf, 0, readSize, Math.max(0, stat.size - readSize));
@@ -221,6 +223,7 @@ export class SessionFileMonitor extends EventEmitter {
   }
 
   private setState(agentId: string, state: SessionMonitorState, filePath: string, detail?: string): void {
+    if (this.stopped) return;
     const prev = this.currentState.get(agentId);
     if (prev === state) return;
 

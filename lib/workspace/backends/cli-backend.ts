@@ -156,9 +156,10 @@ export class CliBackend implements AgentBackend {
       };
       delete env.CLAUDECODE;
 
-      // Check if agent needs TTY (same logic as task-manager)
+      // Check if agent needs TTY — use cliType not agentId
+      const cliType = (adapter.config as any).cliType || adapter.config.type;
       const needsTTY = adapter.config.capabilities?.requiresTTY
-        || agentId === 'codex' || (adapter.config as any).base === 'codex';
+        || cliType === 'codex';
 
       if (needsTTY) {
         this.executePTY(spawnOpts, projectPath, env, onLog, abortSignal, resolve, reject);

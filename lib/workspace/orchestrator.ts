@@ -2088,7 +2088,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
             if (entry) {
               entry.state.error = `Terminal failed: ${errorMsg}. Falling back to headless mode.`;
               entry.state.tmuxSession = undefined; // clear so message loop uses headless (claude -p)
-              this.emit('event', { type: 'log', agentId, entry: { type: 'system', subtype: 'error', content: `Terminal startup failed: ${errorMsg}. Auto-fallback to headless (claude -p).`, timestamp: new Date().toISOString() } } as any);
+              this.emit('event', { type: 'log', agentId, entry: { type: 'system', subtype: 'error', content: `Terminal startup failed: ${errorMsg}. Auto-fallback to headless.`, timestamp: new Date().toISOString() } } as any);
               this.emitAgentsChanged();
             }
             // Kill the failed tmux session

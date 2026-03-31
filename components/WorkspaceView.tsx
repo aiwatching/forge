@@ -826,7 +826,7 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
                     {t.type === 'session' && (
                       <SessionTargetSelector
                         target={t}
-                        agents={existingAgents.filter(a => a.id !== initial.id && (!a.agentId || a.agentId === 'claude'))}
+                        agents={existingAgents.filter(a => a.id !== initial.id)}
                         projectPath={projectPath}
                         onChange={(updated) => {
                           const next = [...watchTargets];

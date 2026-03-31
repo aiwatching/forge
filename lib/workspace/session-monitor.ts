@@ -72,6 +72,7 @@ export class SessionFileMonitor extends EventEmitter {
     this.lastSize.delete(agentId);
     this.lastStableTime.delete(agentId);
     this.currentState.delete(agentId);
+    this.tmuxSessions.delete(agentId);
   }
 
   /**

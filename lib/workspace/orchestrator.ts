@@ -1188,7 +1188,10 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     const { SessionFileMonitor } = await import('./session-monitor');
     const filePath = SessionFileMonitor.resolveSessionPath(this.projectPath, config.workDir, sessionId);
-    this.sessionMonitor.startMonitoring(agentId, filePath);
+    // Pass tmux session for terminal mode (enables process-alive check)
+    const entry = this.agents.get(agentId);
+    const tmuxSession = config.persistentSession ? entry?.state.tmuxSession : undefined;
+    this.sessionMonitor.startMonitoring(agentId, filePath, tmuxSession);
   }
 
   // ─── Health Check — auto-heal agents ─────────────────

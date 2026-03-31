@@ -1443,6 +1443,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       const message = prompt || summary;
 
       // Try to inject directly into an open terminal session
+      console.log(`[watch] ${entry.config.label} → ${targetEntry.config.label}: trying terminal inject (tmux=${targetEntry.state.tmuxSession || 'none'})`);
       // Verify stored session is alive, clear if dead
       if (targetEntry.state.tmuxSession) {
         try { execSync(`tmux has-session -t "${targetEntry.state.tmuxSession}" 2>/dev/null`, { timeout: 3000 }); }

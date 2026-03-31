@@ -21,6 +21,7 @@ interface WatchSnapshot {
   gitHash?: string;
   commandOutput?: string;
   logLineCount?: number;   // last known line count in agent's logs.jsonl
+  agentStatus?: string;    // last known taskStatus of monitored agent
   sessionFileSize?: number; // last known file size of session JSONL (bytes)
 }
 
@@ -452,6 +453,28 @@ export class WatchManager extends EventEmitter {
           const { changes, commandOutput } = detectCommandChanges(this.projectPath, target, prev.commandOutput);
           newSnapshot.commandOutput = commandOutput;
           if (changes) allChanges.push(changes);
+          break;
+        }
+        case 'agent_status': {
+          // Monitor another agent's task status (running → done/failed)
+          const targetAgentId = target.path; // path = agent ID to monitor
+          if (targetAgentId) {
+            const agents = this.getAgents();
+            const targetEntry = agents.get(targetAgentId);
+            if (targetEntry) {
+              const currentStatus = targetEntry.state.taskStatus;
+              const prevStatus = prev.agentStatus;
+              newSnapshot.agentStatus = currentStatus;
+              if (prevStatus && prevStatus !== currentStatus) {
+                const label = targetEntry.config.label;
+                // Match pattern if specified (e.g., "done" or "failed")
+                const pattern = target.pattern;
+                if (!pattern || currentStatus.match(new RegExp(pattern, 'i'))) {
+                  allChanges.push({ targetType: 'agent_status', description: `Agent ${label} status: ${prevStatus} → ${currentStatus}`, files: [] });
+                }
+              }
+            }
+          }
           break;
         }
       }

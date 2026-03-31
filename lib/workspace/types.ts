@@ -47,7 +47,7 @@ export interface WorkspaceAgentConfig {
 // ─── Watch Config ─────────────────────────────────────────
 
 export interface WatchTarget {
-  type: 'directory' | 'git' | 'agent_output' | 'agent_log' | 'session' | 'command';
+  type: 'directory' | 'git' | 'agent_output' | 'agent_log' | 'session' | 'command' | 'agent_status';
   path?: string;           // directory: relative path; agent_output/agent_log: agent ID
   pattern?: string;        // glob for directory, regex/keyword for agent_log, stdout pattern for command
   cmd?: string;            // shell command (type='command' only)

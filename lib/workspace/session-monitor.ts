@@ -39,22 +39,39 @@ export class SessionFileMonitor extends EventEmitter {
   private currentState = new Map<string, SessionMonitorState>();
 
   /**
-   * Start monitoring a session file for an agent.
+   * Start monitoring session files for an agent.
+   * Watches the session directory for the most recently modified .jsonl file,
+   * so it tracks whichever session is active (workspace or VibeCoding).
    * @param agentId - Agent identifier
-   * @param sessionFilePath - Full path to the .jsonl session file
+   * @param sessionFilePath - Full path to a .jsonl session file (used to derive directory)
    */
   startMonitoring(agentId: string, sessionFilePath: string): void {
     this.stopMonitoring(agentId);
     this.currentState.set(agentId, 'idle');
     this.lastStableTime.set(agentId, Date.now());
 
+    // Watch the directory, not just one file — track whichever session is active
+    const sessionDir = sessionFilePath.replace(/\/[^/]+\.jsonl$/, '');
+
     const timer = setInterval(() => {
-      this.checkFile(agentId, sessionFilePath);
+      // Find the most recently modified .jsonl in the directory
+      let latestFile = sessionFilePath;
+      try {
+        const { readdirSync, statSync: statS } = require('node:fs');
+        const files = readdirSync(sessionDir).filter((f: string) => f.endsWith('.jsonl'));
+        if (files.length > 0) {
+          const sorted = files
+            .map((f: string) => ({ path: join(sessionDir, f), mtime: statS(join(sessionDir, f)).mtimeMs }))
+            .sort((a: any, b: any) => b.mtime - a.mtime);
+          latestFile = sorted[0].path;
+        }
+      } catch {}
+      this.checkFile(agentId, latestFile);
     }, POLL_INTERVAL);
     timer.unref();
     this.timers.set(agentId, timer);
 
-    console.log(`[session-monitor] Started monitoring ${agentId}: ${sessionFilePath}`);
+    console.log(`[session-monitor] Started monitoring ${agentId}: dir=${sessionDir}`);
   }
 
   /**

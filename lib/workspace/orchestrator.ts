@@ -1129,7 +1129,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       if (event.state === 'done' && entry.state.taskStatus === 'running') {
         entry.state.taskStatus = 'done';
         this.emit('event', { type: 'task_status', agentId: event.agentId, taskStatus: 'done' } as any);
-        this.emit('event', { type: 'log', agentId: event.agentId, entry: { type: 'system', subtype: 'session_done', content: `Session file idle: ${event.detail || 'turn completed'}`, timestamp: new Date().toISOString() } } as any);
+        console.log(`[session-monitor] ${event.agentId}: done — ${event.detail || 'turn completed'}`);
         this.handleAgentDone(event.agentId, entry, event.detail);
         this.emitAgentsChanged();
       }

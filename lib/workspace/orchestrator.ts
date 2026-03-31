@@ -1097,6 +1097,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
       if (event.state === 'running' && entry.state.taskStatus !== 'running') {
         entry.state.taskStatus = 'running';
+        console.log(`[session-monitor] → emitting task_status=running for ${entry.config.label}`);
         this.emit('event', { type: 'task_status', agentId: event.agentId, taskStatus: 'running' } as any);
         this.emitAgentsChanged();
       }

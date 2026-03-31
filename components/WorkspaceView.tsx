@@ -446,13 +446,15 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
   const [role, setRole] = useState(initial.role || '');
   const [backend, setBackend] = useState<'api' | 'cli'>(initial.backend === 'api' ? 'api' : 'cli');
   const [agentId, setAgentId] = useState(initial.agentId || 'claude');
-  const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string; isProfile?: boolean; backendType?: string }[]>([]);
+  const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string; isProfile?: boolean; backendType?: string; base?: string; cliType?: string }[]>([]);
 
   useEffect(() => {
     fetch('/api/agents').then(r => r.json()).then(data => {
       const list = (data.agents || data || []).map((a: any) => ({
         id: a.id, name: a.name || a.id,
         isProfile: a.isProfile || a.base,
+        base: a.base,
+        cliType: a.cliType,
         backendType: a.backendType || 'cli',
       }));
       setAvailableAgents(list);
@@ -685,7 +687,7 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
           {(() => {
             // Check if selected agent supports terminal mode (claude-code or its profiles)
             const selectedAgent = availableAgents.find(a => a.id === agentId);
-            const isClaude = agentId === 'claude' || (selectedAgent as any)?.base === 'claude' || !selectedAgent;
+            const isClaude = agentId === 'claude' || selectedAgent?.base === 'claude' || selectedAgent?.cliType === 'claude-code' || !selectedAgent;
             const canTerminal = isClaude || isPrimary;
             return canTerminal ? (
               <>

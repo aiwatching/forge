@@ -2226,27 +2226,23 @@ export class WorkspaceOrchestrator extends EventEmitter {
       // requiresApproval is handled at message arrival time (routeMessageToAgent),
       // not in the message loop. Approved messages come through as normal 'pending'.
 
-      // Auto-complete upstream_complete notifications (info only, no execution needed)
+      // Dedup: if multiple upstream_complete from same sender are pending, keep only latest
       const allRaw = this.bus.getPendingMessagesFor(agentId).filter(m => m.from !== agentId && m.type !== 'ack');
-      for (const m of allRaw) {
+      const upstreamSeen = new Set<string>();
+      for (let i = allRaw.length - 1; i >= 0; i--) {
+        const m = allRaw[i];
         if (m.payload?.action === 'upstream_complete') {
-          m.status = 'done' as any;
-          this.emit('event', { type: 'bus_message_status', messageId: m.id, status: 'done' } as any);
+          const key = `upstream-${m.from}`;
+          if (upstreamSeen.has(key)) {
+            m.status = 'done' as any;
+            this.emit('event', { type: 'bus_message_status', messageId: m.id, status: 'done' } as any);
+          }
+          upstreamSeen.add(key);
         }
       }
 
       // Find next pending message, applying causedBy rules
-      // Dedup: if multiple pending messages have same from+action, keep only latest
       const allPending = allRaw.filter(m => m.status === 'pending');
-      const seen = new Set<string>();
-      for (let i = allPending.length - 1; i >= 0; i--) {
-        const key = `${allPending[i].from}:${allPending[i].payload?.action || ''}`;
-        if (seen.has(key)) {
-          allPending[i].status = 'done' as any; // auto-complete duplicate
-          this.emit('event', { type: 'bus_message_status', messageId: allPending[i].id, status: 'done' } as any);
-        }
-        seen.add(key);
-      }
       const pending = allPending.filter(m => {
         // Tickets: accepted but check retry limit
         if (m.category === 'ticket') {

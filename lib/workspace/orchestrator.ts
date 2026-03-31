@@ -67,6 +67,11 @@ export class WorkspaceOrchestrator extends EventEmitter {
   private createdAt = Date.now();
   private healthCheckTimer: NodeJS.Timeout | null = null;
 
+  /** Emit a log event (auto-persisted via constructor listener) */
+  emitLog(agentId: string, entry: any): void {
+    this.emit('event', { type: 'log', agentId, entry } as any);
+  }
+
   constructor(workspaceId: string, projectPath: string, projectName: string) {
     super();
     this.workspaceId = workspaceId;
@@ -74,6 +79,13 @@ export class WorkspaceOrchestrator extends EventEmitter {
     this.projectName = projectName;
     this.bus = new AgentBus();
     this.watchManager = new WatchManager(workspaceId, projectPath, () => this.agents as any);
+
+    // Auto-persist all log events to disk (so LogPanel can read them)
+    this.on('event', (event: any) => {
+      if (event.type === 'log' && event.agentId && event.entry) {
+        appendAgentLog(this.workspaceId, event.agentId, event.entry).catch(() => {});
+      }
+    });
     // Handle watch events
     this.watchManager.on('watch_alert', (event) => {
       this.emit('event', event);

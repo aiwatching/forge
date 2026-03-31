@@ -1759,10 +1759,17 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
               let mcpFlag = '';
               if (isClaude) { try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {} }
               const sf = skipPermissions ? (cliType === 'codex' ? ' --full-auto' : cliType === 'aider' ? ' --yes' : ' --dangerously-skip-permissions') : '';
-              const cmd = `${envExportsClean}${cdCmd} && ${cli}${resumeFlag}${modelFlag}${sf}${mcpFlag}\n`;
+              // Send env vars and CLI command separately to avoid truncation
+              let delay = 300;
+              if (envExportsClean) {
+                setTimeout(() => {
+                  if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: `${envExportsClean.replace(/ && $/, '')}\n` }));
+                }, delay);
+                delay += 300;
+              }
               setTimeout(() => {
-                if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: cmd }));
-              }, 300);
+                if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: `${cdCmd} && ${cli}${resumeFlag}${modelFlag}${sf}${mcpFlag}\n` }));
+              }, delay);
             }
           }
         } catch {}
@@ -1938,11 +1945,18 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
             const resumeFlag = isClaude && resumeId ? ` --resume ${resumeId}` : '';
             let mcpFlag = '';
             if (isClaude) { try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {} }
-            const sf = skipPermissions ? ' --dangerously-skip-permissions' : '';
-            const cmd = `${envExportsClean}${cdCmd} && ${cli}${resumeFlag}${modelFlag}${sf}${mcpFlag}\n`;
+            const sf = skipPermissions ? (cliType === 'codex' ? ' --full-auto' : cliType === 'aider' ? ' --yes' : ' --dangerously-skip-permissions') : '';
+            // Send env vars and CLI command separately to avoid truncation
+            let delay = 300;
+            if (envExportsClean) {
+              setTimeout(() => {
+                if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: `${envExportsClean.replace(/ && $/, '')}\n` }));
+              }, delay);
+              delay += 300;
+            }
             setTimeout(() => {
-              if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: cmd }));
-            }, 300);
+              if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: `${cdCmd} && ${cli}${resumeFlag}${modelFlag}${sf}${mcpFlag}\n` }));
+            }, delay);
           }
         } catch {}
       };

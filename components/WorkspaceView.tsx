@@ -1741,13 +1741,18 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
               const envWithoutModel = profileEnv ? Object.fromEntries(
                 Object.entries(profileEnv).filter(([k]) => k !== 'CLAUDE_MODEL')
               ) : {};
-              // Unset old profile vars + set new ones
+              // Build commands as separate short lines
+              const commands: string[] = [];
               const profileVarsToReset = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_SMALL_FAST_MODEL', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_TELEMETRY', 'DISABLE_ERROR_REPORTING', 'DISABLE_AUTOUPDATER', 'DISABLE_NON_ESSENTIAL_MODEL_CALLS', 'CLAUDE_MODEL'];
-              const unsetPrefix = profileVarsToReset.map(v => `unset ${v}`).join(' && ') + ' && ';
-              const envExportsClean = unsetPrefix + (Object.keys(envWithoutModel).length > 0
-                ? Object.entries(envWithoutModel).map(([k, v]) => `export ${k}="${v}"`).join(' && ') + ' && '
-                : '');
-              // Resolve session: explicit > boundSessionId > fixedSession (primary) > fresh
+              commands.push(profileVarsToReset.map(v => `unset ${v}`).join('; '));
+              const envWithoutForge = Object.entries(envWithoutModel).filter(([k]) => !k.startsWith('FORGE_'));
+              if (envWithoutForge.length > 0) {
+                commands.push(envWithoutForge.map(([k, v]) => `export ${k}="${v}"`).join('; '));
+              }
+              const forgeVars = Object.entries(envWithoutModel).filter(([k]) => k.startsWith('FORGE_'));
+              if (forgeVars.length > 0) {
+                commands.push(forgeVars.map(([k, v]) => `export ${k}="${v}"`).join('; '));
+              }
               let resumeId = resumeSessionId || boundSessionId;
               if (isClaude && !resumeId && isPrimary) {
                 try {
@@ -1759,17 +1764,12 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
               let mcpFlag = '';
               if (isClaude) { try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {} }
               const sf = skipPermissions ? (cliType === 'codex' ? ' --full-auto' : cliType === 'aider' ? ' --yes' : ' --dangerously-skip-permissions') : '';
-              // Send env vars and CLI command separately to avoid truncation
-              let delay = 300;
-              if (envExportsClean) {
+              commands.push(`${cdCmd} && ${cli}${resumeFlag}${modelFlag}${sf}${mcpFlag}`);
+              commands.forEach((cmd, i) => {
                 setTimeout(() => {
-                  if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: `${envExportsClean.replace(/ && $/, '')}\n` }));
-                }, delay);
-                delay += 300;
-              }
-              setTimeout(() => {
-                if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: `${cdCmd} && ${cli}${resumeFlag}${modelFlag}${sf}${mcpFlag}\n` }));
-              }, delay);
+                  if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: cmd + '\n' }));
+                }, 300 + i * 300);
+              });
             }
           }
         } catch {}
@@ -1927,14 +1927,26 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
             const envWithoutModel = profileEnv ? Object.fromEntries(
               Object.entries(profileEnv).filter(([k]) => k !== 'CLAUDE_MODEL')
             ) : {};
-            // Unset old profile vars + set new ones (prevents leaking between agent switches)
+            // Build commands as separate short lines to avoid terminal truncation
+            const commands: string[] = [];
+
+            // 1. Unset old profile vars
             const profileVarsToReset = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_SMALL_FAST_MODEL', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_TELEMETRY', 'DISABLE_ERROR_REPORTING', 'DISABLE_AUTOUPDATER', 'DISABLE_NON_ESSENTIAL_MODEL_CALLS', 'CLAUDE_MODEL'];
-            const unsetPrefix = profileVarsToReset.map(v => `unset ${v}`).join(' && ') + ' && ';
-            const envExportsClean = unsetPrefix + (Object.keys(envWithoutModel).length > 0
-              ? Object.entries(envWithoutModel).map(([k, v]) => `export ${k}="${v}"`).join(' && ') + ' && '
-              : '');
-            // Primary: use fixed session. Non-primary: use explicit sessionId or -c
-            // Resolve session: explicit > boundSessionId > fixedSession (primary) > fresh
+            commands.push(profileVarsToReset.map(v => `unset ${v}`).join('; '));
+
+            // 2. Export new profile vars (if any)
+            const envWithoutForge = Object.entries(envWithoutModel).filter(([k]) => !k.startsWith('FORGE_'));
+            if (envWithoutForge.length > 0) {
+              commands.push(envWithoutForge.map(([k, v]) => `export ${k}="${v}"`).join('; '));
+            }
+
+            // 3. Export FORGE vars
+            const forgeVars = Object.entries(envWithoutModel).filter(([k]) => k.startsWith('FORGE_'));
+            if (forgeVars.length > 0) {
+              commands.push(forgeVars.map(([k, v]) => `export ${k}="${v}"`).join('; '));
+            }
+
+            // 4. CLI command
             let resumeId = resumeSessionId || boundSessionId;
             if (isClaude && !resumeId && isPrimary) {
               try {
@@ -1946,17 +1958,14 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
             let mcpFlag = '';
             if (isClaude) { try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {} }
             const sf = skipPermissions ? (cliType === 'codex' ? ' --full-auto' : cliType === 'aider' ? ' --yes' : ' --dangerously-skip-permissions') : '';
-            // Send env vars and CLI command separately to avoid truncation
-            let delay = 300;
-            if (envExportsClean) {
+            commands.push(`${cdCmd} && ${cli}${resumeFlag}${modelFlag}${sf}${mcpFlag}`);
+
+            // Send each command with delay between them
+            commands.forEach((cmd, i) => {
               setTimeout(() => {
-                if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: `${envExportsClean.replace(/ && $/, '')}\n` }));
-              }, delay);
-              delay += 300;
-            }
-            setTimeout(() => {
-              if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: `${cdCmd} && ${cli}${resumeFlag}${modelFlag}${sf}${mcpFlag}\n` }));
-            }, delay);
+                if (!disposed && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: cmd + '\n' }));
+              }, 300 + i * 300);
+            });
           }
         } catch {}
       };

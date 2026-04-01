@@ -1878,8 +1878,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
       .slice(-1)[0]?.content || '';
 
     const content = files.length > 0
-      ? `${completedLabel} completed: ${files.length} files changed. ${summary.slice(0, 200)}`
-      : `${completedLabel} completed. ${summary.slice(0, 300) || 'Check upstream outputs for updates.'}`;
+      ? `${completedLabel} completed: ${files.length} files changed. ${summary.slice(0, 200)}. If you are currently processing a task or have seen this before, ignore this notification.`
+      : `${completedLabel} completed. ${summary.slice(0, 300) || 'If you are currently processing a task or have seen this before, ignore this notification.'}`;
 
     // Find all downstream agents — skip if already sent upstream_complete recently (60s)
     const now = Date.now();

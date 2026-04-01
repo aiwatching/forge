@@ -27,7 +27,7 @@ export interface SessionMonitorEvent {
   detail?: string; // e.g., result summary
 }
 
-const POLL_INTERVAL = 6000;      // check every 6s
+const POLL_INTERVAL = 3000;      // check every 3s
 const IDLE_THRESHOLD = 3540000;  // 59min of no file change → check for result entry
 const STABLE_THRESHOLD = 3600000; // 60min of no change → force done (fallback if hook missed)
 
@@ -110,20 +110,21 @@ export class SessionFileMonitor extends EventEmitter {
     return join(homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
   }
 
-  private initialized = new Set<string>();
+  private warmupCount = new Map<string, number>();
   private checkFile(agentId: string, filePath: string): void {
     try {
       const stat = statSync(filePath);
       const mtime = stat.mtimeMs;
       const size = stat.size;
 
-      // First poll: just record baseline, don't trigger state change
-      if (!this.initialized.has(agentId)) {
-        this.initialized.add(agentId);
+      // Warmup: skip first 4 polls (~12s) to avoid false running during startup
+      const count = (this.warmupCount.get(agentId) || 0) + 1;
+      this.warmupCount.set(agentId, count);
+      if (count <= 4) {
         this.lastMtime.set(agentId, mtime);
         this.lastSize.set(agentId, size);
         this.lastStableTime.set(agentId, Date.now());
-        console.log(`[session-monitor] ${agentId}: baseline mtime=${mtime} size=${size}`);
+        if (count === 1) console.log(`[session-monitor] ${agentId}: warmup (${count}/4)`);
         return;
       }
 
@@ -163,8 +164,8 @@ export class SessionFileMonitor extends EventEmitter {
         }
       }
     } catch (err: any) {
-      if (!this.initialized.has(`err-${agentId}`)) {
-        this.initialized.add(`err-${agentId}`);
+      if ((this.warmupCount.get(`err-${agentId}`) || 0) === 0) {
+        this.warmupCount.set(`err-${agentId}`, 1);
         console.log(`[session-monitor] ${agentId}: checkFile error — ${err.message}`);
       }
     }

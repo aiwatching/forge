@@ -2151,12 +2151,16 @@ export class WorkspaceOrchestrator extends EventEmitter {
         if (supportsSession) {
           let sessionId: string | undefined;
           if (config.primary) {
+            // Read fixedSessionId directly from file (avoid dynamic import issues in production build)
             try {
-              const { getFixedSession } = await import('../project-sessions') as any;
-              sessionId = getFixedSession(this.projectPath);
+              const psPath = join(homedir(), '.forge', 'data', 'project-sessions.json');
+              if (existsSync(psPath)) {
+                const psData = JSON.parse(readFileSync(psPath, 'utf-8'));
+                sessionId = psData[this.projectPath];
+              }
               console.log(`[daemon] ${config.label}: fixedSession=${sessionId || 'NONE'} for ${this.projectPath}`);
             } catch (err: any) {
-              console.error(`[daemon] ${config.label}: failed to get fixedSession: ${err.message}`);
+              console.error(`[daemon] ${config.label}: failed to read fixedSession: ${err.message}`);
             }
           } else {
             sessionId = config.boundSessionId;

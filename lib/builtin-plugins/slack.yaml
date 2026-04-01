@@ -1,0 +1,26 @@
+id: slack
+name: Slack
+icon: 📢
+version: 1.0.0
+author: forge
+description: Send messages to Slack channels
+
+config:
+  webhook_url: { type: secret, label: "Webhook URL", required: true, description: "Slack Incoming Webhook URL" }
+
+params:
+  text: { type: string, label: "Message", required: true }
+  channel: { type: string, label: "Channel (optional)" }
+
+actions:
+  send:
+    run: http
+    method: POST
+    url: "{{config.webhook_url}}"
+    headers:
+      Content-Type: application/json
+    body: '{"text":"{{params.text}}"}'
+    output:
+      status: "$body"
+
+defaultAction: send

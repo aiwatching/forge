@@ -1,0 +1,61 @@
+id: jenkins
+name: Jenkins CI
+icon: 🔧
+version: 1.0.0
+author: forge
+description: Trigger and monitor Jenkins CI/CD jobs
+
+config:
+  url: { type: string, label: "Jenkins URL", required: true, description: "e.g., https://jenkins.example.com" }
+  token: { type: secret, label: "API Token", required: true }
+  user: { type: string, label: "Username", required: true }
+
+params:
+  job: { type: string, label: "Job Name", required: true }
+  parameters: { type: json, label: "Build Parameters" }
+
+actions:
+  trigger:
+    run: http
+    method: POST
+    url: "{{config.url}}/job/{{params.job}}/build"
+    headers:
+      Authorization: "Basic {{config.user}}:{{config.token}}"
+    body: "{{params.parameters | json}}"
+    output:
+      queue_url: "$.headers.location"
+
+  wait:
+    run: poll
+    url: "{{config.url}}/job/{{params.job}}/lastBuild/api/json"
+    headers:
+      Authorization: "Basic {{config.user}}:{{config.token}}"
+    interval: 30
+    until: "$.result != null"
+    timeout: 3600
+    output:
+      result: "$.result"
+      duration: "$.duration"
+      url: "$.url"
+
+  get_log:
+    run: http
+    method: GET
+    url: "{{config.url}}/job/{{params.job}}/lastBuild/consoleText"
+    headers:
+      Authorization: "Basic {{config.user}}:{{config.token}}"
+    output:
+      log: "$body"
+
+  status:
+    run: http
+    method: GET
+    url: "{{config.url}}/job/{{params.job}}/lastBuild/api/json"
+    headers:
+      Authorization: "Basic {{config.user}}:{{config.token}}"
+    output:
+      result: "$.result"
+      building: "$.building"
+      timestamp: "$.timestamp"
+
+defaultAction: trigger

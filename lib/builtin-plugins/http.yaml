@@ -1,0 +1,26 @@
+id: http
+name: HTTP Request
+icon: 🌐
+version: 1.0.0
+author: forge
+description: Make HTTP requests to any API endpoint
+
+config: {}
+
+params:
+  url: { type: string, label: "URL", required: true }
+  method: { type: select, label: "Method", options: ["GET", "POST", "PUT", "DELETE"], default: "GET" }
+  headers: { type: json, label: "Headers" }
+  body: { type: json, label: "Body" }
+
+actions:
+  request:
+    run: http
+    method: "{{params.method}}"
+    url: "{{params.url}}"
+    headers: "{{params.headers}}"
+    body: "{{params.body}}"
+    output:
+      result: "$body"
+
+defaultAction: request

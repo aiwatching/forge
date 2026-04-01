@@ -1,0 +1,29 @@
+id: webhook
+name: Webhook
+icon: 🪝
+version: 1.0.0
+author: forge
+description: Send webhook notifications to any URL
+
+config:
+  url: { type: string, label: "Webhook URL", required: true }
+  secret: { type: secret, label: "Secret (optional)" }
+
+params:
+  payload: { type: json, label: "Payload" }
+  event: { type: string, label: "Event Type", default: "forge.notification" }
+
+actions:
+  send:
+    run: http
+    method: POST
+    url: "{{config.url}}"
+    headers:
+      Content-Type: application/json
+      X-Forge-Event: "{{params.event}}"
+      X-Forge-Secret: "{{config.secret}}"
+    body: "{{params | json}}"
+    output:
+      status: "$.status"
+
+defaultAction: send

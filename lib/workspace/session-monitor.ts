@@ -97,8 +97,8 @@ export class SessionFileMonitor extends EventEmitter {
   resetState(agentId: string): void {
     this.currentState.set(agentId, 'idle');
     this.lastStableTime.set(agentId, Date.now());
-    this.warmupCount.set(agentId, 0); // re-warmup after reset
-    // Suppress state changes for 10s after manual reset
+    // Don't reset warmupCount here — warmup only on startMonitoring (fresh start/restart)
+    // 10s suppress is enough to prevent immediate flip-back after hook/button
     this.suppressUntil.set(agentId, Date.now() + 10_000);
   }
 

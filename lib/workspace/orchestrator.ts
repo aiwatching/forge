@@ -1175,11 +1175,14 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     if (config.primary) {
       try {
-        const mod = await import('../project-sessions');
-        sessionId = (mod as any).getFixedSession(this.projectPath);
+        const psPath = join(homedir(), '.forge', 'data', 'project-sessions.json');
+        if (existsSync(psPath)) {
+          const psData = JSON.parse(readFileSync(psPath, 'utf-8'));
+          sessionId = psData[this.projectPath];
+        }
         console.log(`[session-monitor] ${config.label}: primary fixedSession=${sessionId || 'NONE'}`);
       } catch (err: any) {
-        console.log(`[session-monitor] ${config.label}: failed to get fixedSession: ${err.message}`);
+        console.log(`[session-monitor] ${config.label}: failed to read fixedSession: ${err.message}`);
       }
     } else {
       sessionId = config.boundSessionId;

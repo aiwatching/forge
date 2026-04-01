@@ -49,6 +49,7 @@ function highlightLine(line: string): React.ReactNode {
 
 interface GitInfo {
   branch: string;
+  branches: { name: string; upstream: string; hash: string; current: boolean }[];
   changes: { status: string; path: string }[];
   remote: string;
   ahead: number;
@@ -72,6 +73,9 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [fileLanguage, setFileLanguage] = useState('');
   const [fileLoading, setFileLoading] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [changesExpanded, setChangesExpanded] = useState(false);
+  const [changesHeight, setChangesHeight] = useState(120);
+  const changesResizeRef = useRef<{ startY: number; origH: number } | null>(null);
   const [diffContent, setDiffContent] = useState<string | null>(null);
   const [diffFile, setDiffFile] = useState<string | null>(null);
   const [projectSkills, setProjectSkills] = useState<{ name: string; displayName: string; type: string; scope: string; version: string; installedVersion: string; hasUpdate: boolean; source: 'registry' | 'local' }[]>([]);
@@ -448,7 +452,25 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-[var(--text-primary)]">{projectName}</span>
           {gitInfo?.branch && (
-            <span className="text-[9px] text-[var(--accent)] bg-[var(--accent)]/10 px-1.5 py-0.5 rounded">{gitInfo.branch}</span>
+            <div className="relative">
+              <select
+                value={gitInfo.branch}
+                onChange={async (e) => {
+                  const branch = e.target.value;
+                  if (branch === gitInfo.branch) return;
+                  try {
+                    await fetch('/api/git', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'checkout', dir: projectPath, branch }) });
+                    fetchGitInfo(); fetchTree();
+                  } catch {}
+                }}
+                className="text-[9px] text-[var(--accent)] bg-[var(--accent)]/10 px-1.5 py-0.5 rounded border-none cursor-pointer appearance-none pr-4 focus:outline-none"
+                style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'8\' height=\'8\' viewBox=\'0 0 8 8\'%3E%3Cpath d=\'M0 2l4 4 4-4z\' fill=\'%2358a6ff\'/%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 4px center' }}
+              >
+                {(gitInfo.branches || []).map(b => (
+                  <option key={b.name} value={b.name}>{b.name}{b.current ? ' ●' : ''}</option>
+                ))}
+              </select>
+            </div>
           )}
           {gitInfo?.ahead ? <span className="text-[9px] text-green-400">↑{gitInfo.ahead}</span> : null}
           {gitInfo?.behind ? <span className="text-[9px] text-yellow-400">↓{gitInfo.behind}</span> : null}
@@ -1299,36 +1321,58 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
         <div className="border-t border-[var(--border)] shrink-0">
           {/* Changes list */}
           {gitInfo.changes.length > 0 && (
-            <div className="max-h-32 overflow-y-auto border-b border-[var(--border)]">
-              <div className="px-3 py-1 text-[9px] text-[var(--text-secondary)] bg-[var(--bg-tertiary)] sticky top-0">
-                {gitInfo.changes.length} changes
-              </div>
-              {gitInfo.changes.map(g => (
-                <div key={g.path} className="flex items-center px-3 py-0.5 text-xs hover:bg-[var(--bg-tertiary)] group">
-                  <span className={`text-[10px] font-mono w-4 shrink-0 ${
-                    g.status.includes('M') ? 'text-yellow-500' :
-                    g.status.includes('?') ? 'text-green-500' :
-                    g.status.includes('D') ? 'text-red-500' : 'text-[var(--text-secondary)]'
-                  }`}>
-                    {g.status.includes('?') ? '+' : g.status[0]}
-                  </span>
-                  <button
-                    onClick={() => openDiff(g.path)}
-                    className={`truncate flex-1 text-left ml-1 ${diffFile === g.path ? 'text-[var(--accent)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
-                    title="View diff"
-                  >
-                    {g.path}
-                  </button>
-                  <button
-                    onClick={() => openFile(g.path)}
-                    className="text-[8px] text-[var(--text-secondary)] hover:text-[var(--accent)] opacity-0 group-hover:opacity-100 shrink-0 ml-1"
-                    title="Open source file"
-                  >
-                    src
-                  </button>
+            <>
+              <div className="overflow-y-auto border-b border-[var(--border)]" style={{ height: changesHeight }}>
+                <div className="px-3 py-1 text-[9px] text-[var(--text-secondary)] bg-[var(--bg-tertiary)] sticky top-0 flex items-center gap-1 cursor-pointer z-10" onClick={() => {
+                  setChangesExpanded(!changesExpanded);
+                  setChangesHeight(changesExpanded ? 120 : Math.min(400, gitInfo.changes.length * 22 + 24));
+                }}>
+                  <span>{changesExpanded ? '▼' : '▶'}</span>
+                  <span>{gitInfo.changes.length} changes</span>
+                  <button onClick={(e) => { e.stopPropagation(); fetchGitInfo(); }} className="ml-auto text-[8px] hover:text-[var(--accent)]" title="Refresh">↻</button>
                 </div>
-              ))}
-            </div>
+                {gitInfo.changes.map(g => (
+                  <div key={g.path} className="flex items-center px-3 py-0.5 text-xs hover:bg-[var(--bg-tertiary)] group">
+                    <span className={`text-[10px] font-mono w-4 shrink-0 ${
+                      g.status.includes('M') ? 'text-yellow-500' :
+                      g.status.includes('?') ? 'text-green-500' :
+                      g.status.includes('D') ? 'text-red-500' : 'text-[var(--text-secondary)]'
+                    }`}>
+                      {g.status.includes('?') ? '+' : g.status[0]}
+                    </span>
+                    <button
+                      onClick={() => openDiff(g.path)}
+                      className={`truncate flex-1 text-left ml-1 ${diffFile === g.path ? 'text-[var(--accent)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+                      title="View diff"
+                    >
+                      {g.path}
+                    </button>
+                    <button
+                      onClick={() => openFile(g.path)}
+                      className="text-[8px] text-[var(--text-secondary)] hover:text-[var(--accent)] opacity-0 group-hover:opacity-100 shrink-0 ml-1"
+                      title="Open source file"
+                    >
+                      src
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {/* Drag handle to resize changes list */}
+              <div
+                className="h-1 cursor-ns-resize hover:bg-[var(--accent)]/30 border-b border-[var(--border)]"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  changesResizeRef.current = { startY: e.clientY, origH: changesHeight };
+                  const onMove = (ev: MouseEvent) => {
+                    if (!changesResizeRef.current) return;
+                    setChangesHeight(Math.max(60, Math.min(600, changesResizeRef.current.origH + ev.clientY - changesResizeRef.current.startY)));
+                  };
+                  const onUp = () => { changesResizeRef.current = null; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+                  window.addEventListener('mousemove', onMove);
+                  window.addEventListener('mouseup', onUp);
+                }}
+              />
+            </>
           )}
 
           {/* Git actions */}

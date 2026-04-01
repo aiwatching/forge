@@ -34,12 +34,13 @@ export async function GET(req: NextRequest) {
 
   try {
     // Run all git commands in parallel
-    const [branchOut, statusOut, remoteOut, lastCommitOut, logOut] = await Promise.all([
+    const [branchOut, statusOut, remoteOut, lastCommitOut, logOut, branchListOut] = await Promise.all([
       gitAsync('rev-parse --abbrev-ref HEAD', dir),
       gitAsync('status --porcelain -u', dir),
       gitAsync('remote get-url origin', dir),
       gitAsync('log -1 --format="%h %s"', dir),
-      gitAsync('log --format="%h||%s||%an||%ar" -10', dir),
+      gitAsync('log --format="%h||%s||%an||%ar" -20', dir),
+      gitAsync('branch --format="%(refname:short)||%(upstream:short)||%(objectname:short)"', dir),
     ]);
 
     const branch = branchOut;
@@ -59,7 +60,12 @@ export async function GET(req: NextRequest) {
       return { hash, message, author, date };
     }) : [];
 
-    return NextResponse.json({ branch, changes, remote: remoteOut, ahead, behind, lastCommit: lastCommitOut, log });
+    const branches = branchListOut ? branchListOut.split('\n').filter(Boolean).map(line => {
+      const [name, upstream, hash] = line.split('||');
+      return { name, upstream: upstream || '', hash: hash || '', current: name === branch };
+    }) : [];
+
+    return NextResponse.json({ branch, branches, changes, remote: remoteOut, ahead, behind, lastCommit: lastCommitOut, log });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
@@ -118,6 +124,13 @@ export async function POST(req: NextRequest) {
     if (action === 'pull') {
       const output = gitSync('pull', dir);
       return NextResponse.json({ ok: true, output });
+    }
+
+    if (action === 'checkout') {
+      const branch = body.branch;
+      if (!branch) return NextResponse.json({ error: 'branch required' }, { status: 400 });
+      const out = gitSync(`checkout ${branch}`, dir);
+      return NextResponse.json({ ok: true, output: out });
     }
 
     if (action === 'stage') {

@@ -98,9 +98,13 @@ export class SessionFileMonitor extends EventEmitter {
     this.currentState.set(agentId, 'idle');
     this.lastStableTime.set(agentId, Date.now());
     // Don't reset warmupCount here — warmup only on startMonitoring (fresh start/restart)
-    // 10s suppress is enough to prevent immediate flip-back after hook/button
+    // Suppress until file stops changing (reset suppress timer on each poll if file still changing)
     this.suppressUntil.set(agentId, Date.now() + 10_000);
+    this.suppressWaitForStable.add(agentId);
   }
+
+  // Track agents that need to wait for file stability before resuming detection
+  private suppressWaitForStable = new Set<string>();
 
   /**
    * Resolve session file path for a project + session ID.
@@ -139,6 +143,16 @@ export class SessionFileMonitor extends EventEmitter {
 
       this.lastMtime.set(agentId, mtime);
       this.lastSize.set(agentId, size);
+
+      // If waiting for stability after reset, extend suppress while file still changes
+      if (this.suppressWaitForStable.has(agentId) && (mtime !== prevMtime || size !== prevSize)) {
+        this.suppressUntil.set(agentId, Date.now() + 10_000);
+        return;
+      }
+      if (this.suppressWaitForStable.has(agentId) && mtime === prevMtime && size === prevSize) {
+        // File is stable now — stop waiting
+        this.suppressWaitForStable.delete(agentId);
+      }
 
       // File changed (mtime or size different) → running
       if (mtime !== prevMtime || size !== prevSize) {

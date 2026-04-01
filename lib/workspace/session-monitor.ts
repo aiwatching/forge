@@ -27,7 +27,7 @@ export interface SessionMonitorEvent {
   detail?: string; // e.g., result summary
 }
 
-const POLL_INTERVAL = 3000;      // check every 3s
+const POLL_INTERVAL = 6000;      // check every 6s
 const IDLE_THRESHOLD = 3540000;  // 59min of no file change → check for result entry
 const STABLE_THRESHOLD = 3600000; // 60min of no change → force done (fallback if hook missed)
 

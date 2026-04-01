@@ -2154,7 +2154,10 @@ export class WorkspaceOrchestrator extends EventEmitter {
             try {
               const { getFixedSession } = await import('../project-sessions') as any;
               sessionId = getFixedSession(this.projectPath);
-            } catch {}
+              console.log(`[daemon] ${config.label}: fixedSession=${sessionId || 'NONE'} for ${this.projectPath}`);
+            } catch (err: any) {
+              console.error(`[daemon] ${config.label}: failed to get fixedSession: ${err.message}`);
+            }
           } else {
             sessionId = config.boundSessionId;
           }

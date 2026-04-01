@@ -1,0 +1,24 @@
+id: shell-command
+name: Shell Command
+icon: 💻
+version: 1.0.0
+author: forge
+description: Run shell commands with structured output
+
+config: {}
+
+params:
+  command: { type: string, label: "Command", required: true }
+  cwd: { type: string, label: "Working Directory" }
+  timeout: { type: number, label: "Timeout (seconds)", default: 300 }
+
+actions:
+  run:
+    run: shell
+    command: "{{params.command}}"
+    cwd: "{{params.cwd}}"
+    timeout: 300
+    output:
+      stdout: "$stdout"
+
+defaultAction: run

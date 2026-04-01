@@ -19,7 +19,9 @@ import type { PluginDefinition, InstalledPlugin, PluginSource } from './types';
 const _filename = typeof __filename !== 'undefined' ? __filename : fileURLToPath(import.meta.url);
 const _dirname = typeof __dirname !== 'undefined' ? __dirname : dirname(_filename);
 
-const BUILTIN_DIR = join(_dirname, '..', 'builtin-plugins');
+const BUILTIN_DIR_COMPILED = join(_dirname, '..', 'builtin-plugins');
+const BUILTIN_DIR_SOURCE = join(process.cwd(), 'lib', 'builtin-plugins');
+const BUILTIN_DIR = existsSync(BUILTIN_DIR_COMPILED) ? BUILTIN_DIR_COMPILED : BUILTIN_DIR_SOURCE;
 const USER_PLUGINS_DIR = join(homedir(), '.forge', 'plugins');
 const CONFIGS_FILE = join(homedir(), '.forge', 'data', 'plugin-configs.json');
 

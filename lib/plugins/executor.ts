@@ -138,7 +138,8 @@ function evaluateCondition(data: any, expr: string): boolean {
 
 function executeShell(action: PluginAction, ctx: Record<string, any>): PluginActionResult {
   const command = resolveTemplate(action.command || '', ctx);
-  const cwd = action.cwd ? resolveTemplate(action.cwd, ctx) : undefined;
+  const rawCwd = action.cwd ? resolveTemplate(action.cwd, ctx) : '';
+  const cwd = rawCwd || undefined;  // empty string → undefined (use process cwd)
 
   const startTime = Date.now();
   try {

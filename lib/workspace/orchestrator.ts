@@ -922,9 +922,6 @@ export class WorkspaceOrchestrator extends EventEmitter {
       }
     }
 
-    // Ensure CLAUDE.md has FORGE_DONE instruction for session detection
-    this.ensureForgeClaudeMdHint();
-
     // Start watch loops for agents with watch config
     this.watchManager.start();
 
@@ -1097,15 +1094,12 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     // Mark running messages as failed
     this.bus.markAllRunningAsFailed();
+    this.emitAgentsChanged();
     this.watchManager.stop();
     this.stopAllTerminalMonitors();
     if (this.sessionMonitor) { this.sessionMonitor.stopAll(); this.sessionMonitor = null; }
     this.stopHealthCheck();
     this.forgeActedMessages.clear();
-    this.forgeAgentStartTime = 0;
-    // Force save AFTER all state changes, before emitting events
-    this.saveNow();
-    this.emitAgentsChanged();
     console.log('[workspace] Daemon stopped');
   }
 
@@ -1119,10 +1113,15 @@ export class WorkspaceOrchestrator extends EventEmitter {
     // Listen for state changes from session file monitor
     this.sessionMonitor.on('stateChange', (event: any) => {
       const entry = this.agents.get(event.agentId);
-      if (!entry) return;
+      if (!entry) {
+        console.log(`[session-monitor] stateChange: agent ${event.agentId} not found in map`);
+        return;
+      }
+      console.log(`[session-monitor] stateChange: ${entry.config.label} ${event.state} (current taskStatus=${entry.state.taskStatus})`);
 
       if (event.state === 'running' && entry.state.taskStatus !== 'running') {
         entry.state.taskStatus = 'running';
+        console.log(`[session-monitor] → emitting task_status=running for ${entry.config.label}`);
         this.emit('event', { type: 'task_status', agentId: event.agentId, taskStatus: 'running' } as any);
         this.emitAgentsChanged();
       }
@@ -1189,38 +1188,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     const { SessionFileMonitor } = await import('./session-monitor');
     const filePath = SessionFileMonitor.resolveSessionPath(this.projectPath, config.workDir, sessionId);
-    // Pass tmux session for terminal mode (enables process-alive check)
-    const entry = this.agents.get(agentId);
-    const tmuxSession = config.persistentSession ? entry?.state.tmuxSession : undefined;
-    this.sessionMonitor.startMonitoring(agentId, filePath, tmuxSession);
-  }
-
-  // ─── CLAUDE.md Forge Hint ─────────────────────────────
-
-  /** Ensure CLAUDE.md in project root has the FORGE_DONE instruction */
-  private ensureForgeClaudeMdHint(): void {
-    const FORGE_HINT = '\n\n<!-- FORGE:BEGIN -->\n## Forge Workspace Integration\nWhen you finish processing a task or message from Forge, end your final response with the marker: [FORGE_DONE]\nThis helps Forge detect task completion. Do not include this marker if you are still working.\n<!-- FORGE:END -->\n';
-
-    try {
-      const claudeMdPath = join(this.projectPath, 'CLAUDE.md');
-      let content = '';
-      if (existsSync(claudeMdPath)) {
-        content = readFileSync(claudeMdPath, 'utf-8');
-      }
-      // Check if hint already exists
-      if (content.includes('<!-- FORGE:BEGIN -->')) {
-        // Verify it's still intact (not corrupted)
-        if (content.includes('<!-- FORGE:END -->') && content.includes('[FORGE_DONE]')) {
-          return; // already there and intact
-        }
-        // Remove corrupted hint and re-add
-        content = content.replace(/\n?\n?<!-- FORGE:BEGIN -->[\s\S]*?<!-- FORGE:END -->\n?/g, '');
-      }
-      writeFileSync(claudeMdPath, content + FORGE_HINT);
-      console.log(`[daemon] Added FORGE_DONE hint to CLAUDE.md`);
-    } catch (err: any) {
-      console.log(`[daemon] Could not update CLAUDE.md: ${err.message}`);
-    }
+    this.sessionMonitor.startMonitoring(agentId, filePath);
   }
 
   // ─── Health Check — auto-heal agents ─────────────────
@@ -1392,7 +1360,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
         if (senderEntry && msg.from !== '_forge' && msg.from !== '_system') {
           this.bus.send('_forge', msg.from, 'notify', {
             action: 'update_notify',
-            content: `Your message to ${targetLabel} has failed. You may retry or take a different approach. If you are currently busy, ignore this notification.`,
+            content: `Your message to ${targetLabel} has failed. You may want to retry or take a different approach.`,
           });
           console.log(`[forge-agent] Notified ${senderEntry.config.label} that message to ${targetLabel} failed`);
         }
@@ -1475,7 +1443,6 @@ export class WorkspaceOrchestrator extends EventEmitter {
       const message = prompt || summary;
 
       // Try to inject directly into an open terminal session
-      console.log(`[watch] ${entry.config.label} → ${targetEntry.config.label}: trying terminal inject (tmux=${targetEntry.state.tmuxSession || 'none'})`);
       // Verify stored session is alive, clear if dead
       if (targetEntry.state.tmuxSession) {
         try { execSync(`tmux has-session -t "${targetEntry.state.tmuxSession}" 2>/dev/null`, { timeout: 3000 }); }
@@ -1912,7 +1879,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     const content = files.length > 0
       ? `${completedLabel} completed: ${files.length} files changed. ${summary.slice(0, 200)}`
-      : `${completedLabel} completed. ${summary.slice(0, 300) || 'If you are currently processing a task, ignore this notification.'}`;
+      : `${completedLabel} completed. ${summary.slice(0, 300) || 'Check upstream outputs for updates.'}`;
 
     // Find all downstream agents — skip if already sent upstream_complete recently (60s)
     const now = Date.now();
@@ -2048,29 +2015,27 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
         execSync(`tmux new-session -d -s "${sessionName}" -c "${workDir}"`, { timeout: 5000 });
 
-        // Build launch script to avoid tmux send-keys truncation
-        const scriptLines: string[] = ['#!/bin/bash'];
-
-        // Unset old profile vars
+        // Reset profile env vars (unset any leftover from previous agent) then set new ones
         const profileVarsToReset = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_SMALL_FAST_MODEL', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_TELEMETRY', 'DISABLE_ERROR_REPORTING', 'DISABLE_AUTOUPDATER', 'DISABLE_NON_ESSENTIAL_MODEL_CALLS', 'CLAUDE_MODEL'];
-        for (const v of profileVarsToReset) scriptLines.push(`unset ${v}`);
+        const unsetCmd = profileVarsToReset.map(v => `unset ${v}`).join(' && ');
+        execSync(`tmux send-keys -t "${sessionName}" '${unsetCmd}' Enter`, { timeout: 5000 });
 
-        // Set FORGE env vars
-        scriptLines.push(`export FORGE_WORKSPACE_ID="${this.workspaceId}"`);
-        scriptLines.push(`export FORGE_AGENT_ID="${config.id}"`);
-        scriptLines.push(`export FORGE_PORT="${Number(process.env.PORT) || 8403}"`);
+        // Set FORGE env vars (short, separate command)
+        execSync(`tmux send-keys -t "${sessionName}" 'export FORGE_WORKSPACE_ID="${this.workspaceId}" FORGE_AGENT_ID="${config.id}" FORGE_PORT="${Number(process.env.PORT) || 8403}"' Enter`, { timeout: 5000 });
 
-        // Set profile env vars
+        // Set profile env vars if any (separate command to avoid truncation)
         if (envExports) {
-          for (const part of envExports.replace(/ && $/, '').split(' && ')) {
-            if (part.trim()) scriptLines.push(part.trim());
-          }
+          execSync(`tmux send-keys -t "${sessionName}" '${envExports.replace(/ && $/, '')}' Enter`, { timeout: 5000 });
         }
 
-        // Build CLI command
+        // Build CLI start command
+        const parts: string[] = [];
         let cmd = cliCmd;
+
+        // Session resume: use bound session ID (primary from project-sessions, others from config)
         if (supportsSession) {
           let sessionId: string | undefined;
+
           if (config.primary) {
             try {
               const { getFixedSession } = await import('../project-sessions') as any;
@@ -2079,6 +2044,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
           } else {
             sessionId = config.boundSessionId;
           }
+
           if (sessionId) {
             const sessionFile = join(this.getCliSessionDir(config.workDir), `${sessionId}.jsonl`);
             if (existsSync(sessionFile)) {
@@ -2087,17 +2053,15 @@ export class WorkspaceOrchestrator extends EventEmitter {
               console.log(`[daemon] ${config.label}: bound session ${sessionId} missing, starting fresh`);
             }
           }
+          // No bound session → start fresh (no -c, avoids "No conversation found")
         }
         if (modelFlag) cmd += modelFlag;
         if (config.skipPermissions !== false && skipPermissionsFlag) cmd += ` ${skipPermissionsFlag}`;
         if (mcpConfigFlag) cmd += mcpConfigFlag;
-        scriptLines.push(`cd "${workDir}"`);
-        scriptLines.push(`exec ${cmd}`);
+        parts.push(cmd);
 
-        // Write script and execute in tmux
-        const scriptPath = `/tmp/forge-launch-${config.id.replace(/[^a-z0-9-]/gi, '')}.sh`;
-        writeFileSync(scriptPath, scriptLines.join('\n') + '\n', { mode: 0o755 });
-        execSync(`tmux send-keys -t "${sessionName}" 'bash ${scriptPath}' Enter`, { timeout: 5000 });
+        const startCmd = parts.join(' && ');
+        execSync(`tmux send-keys -t "${sessionName}" '${startCmd}' Enter`, { timeout: 5000 });
 
         console.log(`[daemon] ${config.label}: persistent session created (${sessionName}) [${cliType}: ${cliCmd}]`);
 

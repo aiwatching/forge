@@ -29,7 +29,7 @@ export interface SessionMonitorEvent {
 
 const POLL_INTERVAL = 1000;    // check every 1s (need to catch short executions)
 const IDLE_THRESHOLD = 10000;  // 10s of no file change → check for done
-const STABLE_THRESHOLD = 60000; // 60s of no change → force done
+const STABLE_THRESHOLD = 20000; // 20s of no change → force done
 
 export class SessionFileMonitor extends EventEmitter {
   private timers = new Map<string, NodeJS.Timeout>();
@@ -37,18 +37,14 @@ export class SessionFileMonitor extends EventEmitter {
   private lastSize = new Map<string, number>();
   private lastStableTime = new Map<string, number>();
   private currentState = new Map<string, SessionMonitorState>();
-  private tmuxSessions = new Map<string, string>();
-  private stopped = false;
 
   /**
    * Start monitoring a session file for an agent.
    * @param agentId - Agent identifier
    * @param sessionFilePath - Full path to the .jsonl session file
-   * @param tmuxSession - Optional tmux session name (for process-alive check)
    */
-  startMonitoring(agentId: string, sessionFilePath: string, tmuxSession?: string): void {
+  startMonitoring(agentId: string, sessionFilePath: string): void {
     this.stopMonitoring(agentId);
-    if (tmuxSession) this.tmuxSessions.set(agentId, tmuxSession);
     this.currentState.set(agentId, 'idle');
     this.lastStableTime.set(agentId, Date.now());
 
@@ -72,14 +68,12 @@ export class SessionFileMonitor extends EventEmitter {
     this.lastSize.delete(agentId);
     this.lastStableTime.delete(agentId);
     this.currentState.delete(agentId);
-    this.tmuxSessions.delete(agentId);
   }
 
   /**
    * Stop all monitors.
    */
   stopAll(): void {
-    this.stopped = true;
     for (const [id] of this.timers) {
       this.stopMonitoring(id);
     }
@@ -133,10 +127,6 @@ export class SessionFileMonitor extends EventEmitter {
         if (prevState !== 'running') {
           this.setState(agentId, 'running', filePath);
         }
-        // Check for FORGE_DONE on every file change (instant detection)
-        if (prevState === 'running' && this.checkForForgeDone(filePath)) {
-          this.setState(agentId, 'done', filePath, 'FORGE_DONE marker detected');
-        }
         return;
       }
 
@@ -153,6 +143,7 @@ export class SessionFileMonitor extends EventEmitter {
           }
         }
         if (stableFor >= STABLE_THRESHOLD) {
+          // Force done after 30s even without result entry
           this.setState(agentId, 'done', filePath, 'stable timeout');
           return;
         }
@@ -163,20 +154,6 @@ export class SessionFileMonitor extends EventEmitter {
         console.log(`[session-monitor] ${agentId}: checkFile error — ${err.message}`);
       }
     }
-  }
-
-  /** Quick check for FORGE_DONE marker in last 500 bytes of session file */
-  private checkForForgeDone(filePath: string): boolean {
-    try {
-      const stat = statSync(filePath);
-      const readSize = Math.min(500, stat.size);
-      const fd = require('node:fs').openSync(filePath, 'r');
-      const buf = Buffer.alloc(readSize);
-      require('node:fs').readSync(fd, buf, 0, readSize, Math.max(0, stat.size - readSize));
-      require('node:fs').closeSync(fd);
-      const tail = buf.toString('utf-8');
-      return tail.includes('FORGE_DONE') || tail.includes('[FORGE_DONE]');
-    } catch { return false; }
   }
 
   /**
@@ -194,10 +171,9 @@ export class SessionFileMonitor extends EventEmitter {
       require('node:fs').closeSync(fd);
 
       const tail = buf.toString('utf-8');
-
       const lines = tail.split('\n').filter(l => l.trim());
 
-      // Priority 2: Check for result entry or assistant stop
+      // Scan last lines for result entry
       for (let i = lines.length - 1; i >= Math.max(0, lines.length - 10); i--) {
         try {
           const entry = JSON.parse(lines[i]);
@@ -223,7 +199,6 @@ export class SessionFileMonitor extends EventEmitter {
   }
 
   private setState(agentId: string, state: SessionMonitorState, filePath: string, detail?: string): void {
-    if (this.stopped) return;
     const prev = this.currentState.get(agentId);
     if (prev === state) return;
 

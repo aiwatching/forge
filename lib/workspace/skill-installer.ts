@@ -174,7 +174,9 @@ const FORGE_HOOK_MARKER = '# forge-stop-hook';
  */
 function installForgeStopHook(forgePort: number): void {
   const settingsFile = join(homedir(), '.claude', 'settings.json');
-  const backupFile = join(homedir(), '.claude', 'settings.json.forge-backup');
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}-${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+  const backupFile = join(homedir(), '.claude', `settings.json.forge-backup-${dateStr}`);
   const daemonPort = forgePort + 2; // 8403 → 8405
 
   // Hook reads agent context from .forge/agent-context.json in the project dir.
@@ -191,9 +193,11 @@ function installForgeStopHook(forgePort: number): void {
       // Check if hook already installed
       // Remove old forge hook if present (will re-add with latest version)
       if (settings.hooks?.Stop) {
-        settings.hooks.Stop = settings.hooks.Stop.filter((h: any) =>
-          !h.command?.includes(FORGE_HOOK_MARKER) && !h.command?.includes('agent_done')
-        );
+        settings.hooks.Stop = settings.hooks.Stop.filter((h: any) => {
+          if (h.command?.includes(FORGE_HOOK_MARKER) || h.command?.includes('agent_done')) return false;
+          if (h.hooks?.some((sub: any) => sub.command?.includes(FORGE_HOOK_MARKER) || sub.command?.includes('agent_done'))) return false;
+          return true;
+        });
       }
 
       // Backup before modifying
@@ -203,10 +207,14 @@ function installForgeStopHook(forgePort: number): void {
     if (!settings.hooks) settings.hooks = {};
     if (!settings.hooks.Stop) settings.hooks.Stop = [];
 
-    // Add forge hook
+    // Add forge hook (Claude Code hooks schema: matcher + hooks array)
     settings.hooks.Stop.push({
-      command: hookCommand,
-      timeout: 5000,
+      matcher: '',
+      hooks: [{
+        type: 'command',
+        command: hookCommand,
+        timeout: 5000,
+      }],
     });
 
     mkdirSync(join(homedir(), '.claude'), { recursive: true });
@@ -227,9 +235,12 @@ export function removeForgeStopHook(): void {
     const settings = JSON.parse(readFileSync(settingsFile, 'utf-8'));
     if (!settings.hooks?.Stop) return;
 
-    settings.hooks.Stop = settings.hooks.Stop.filter((h: any) =>
-      !h.command?.includes(FORGE_HOOK_MARKER) && !h.command?.includes('agent_done')
-    );
+    settings.hooks.Stop = settings.hooks.Stop.filter((h: any) => {
+      // Remove entries matching either old flat format or new nested format
+      if (h.command?.includes(FORGE_HOOK_MARKER) || h.command?.includes('agent_done')) return false;
+      if (h.hooks?.some((sub: any) => sub.command?.includes(FORGE_HOOK_MARKER) || sub.command?.includes('agent_done'))) return false;
+      return true;
+    });
     if (settings.hooks.Stop.length === 0) delete settings.hooks.Stop;
     if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
 

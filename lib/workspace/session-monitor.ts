@@ -87,11 +87,17 @@ export class SessionFileMonitor extends EventEmitter {
   }
 
   /**
-   * Reset monitor state to idle (call when orchestrator manually changes taskStatus).
+   * Reset monitor state to idle and pause detection briefly.
+   * Call when orchestrator manually changes taskStatus (button/hook).
+   * Suppresses detection for 10s to avoid immediately flipping back.
    */
+  private suppressUntil = new Map<string, number>();
+
   resetState(agentId: string): void {
     this.currentState.set(agentId, 'idle');
     this.lastStableTime.set(agentId, Date.now());
+    // Suppress state changes for 10s after manual reset
+    this.suppressUntil.set(agentId, Date.now() + 10_000);
   }
 
   /**
@@ -209,6 +215,12 @@ export class SessionFileMonitor extends EventEmitter {
   private setState(agentId: string, state: SessionMonitorState, filePath: string, detail?: string): void {
     const prev = this.currentState.get(agentId);
     if (prev === state) return;
+
+    // Suppress state changes if recently reset by orchestrator
+    const suppressed = this.suppressUntil.get(agentId);
+    if (suppressed && Date.now() < suppressed) {
+      return;
+    }
 
     this.currentState.set(agentId, state);
     const event: SessionMonitorEvent = { agentId, state, sessionFile: filePath, detail };

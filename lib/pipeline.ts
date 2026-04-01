@@ -31,11 +31,16 @@ export interface WorkflowNode {
   id: string;
   project: string;
   prompt: string;
-  mode?: 'claude' | 'shell';  // default: 'claude' (agent -p), 'shell' runs raw shell command
+  mode?: 'claude' | 'shell' | 'plugin';  // default: 'claude', 'shell' runs command, 'plugin' runs plugin action
   agent?: string;              // agent ID (default: from settings)
   branch?: string;             // auto checkout this branch before running (supports templates)
+  // Plugin mode fields
+  plugin?: string;             // plugin ID (e.g., 'jenkins', 'docker')
+  pluginAction?: string;       // action name (e.g., 'trigger', 'build'), defaults to plugin's defaultAction
+  pluginParams?: Record<string, any>;  // per-use parameters
+  pluginWait?: boolean;        // auto-run 'wait' action after main action
   dependsOn: string[];
-  outputs: { name: string; extract: 'result' | 'git_diff' | 'stdout' }[];
+  outputs: { name: string; extract: 'result' | 'git_diff' | 'stdout' | 'plugin' }[];
   routes: { condition: string; next: string }[];
   maxIterations: number;
 }
@@ -302,9 +307,13 @@ function parseWorkflow(raw: string): Workflow {
       id,
       project: n.project || '',
       prompt: n.prompt || '',
-      mode: n.mode || 'claude',
+      mode: n.mode || (n.plugin ? 'plugin' : 'claude'),
       agent: n.agent || undefined,
       branch: n.branch || undefined,
+      plugin: n.plugin || undefined,
+      pluginAction: n.plugin_action || n.pluginAction || undefined,
+      pluginParams: n.plugin_params || n.pluginParams || n.params || undefined,
+      pluginWait: n.plugin_wait || n.pluginWait || n.wait || false,
       dependsOn: n.depends_on || n.dependsOn || [],
       outputs: (n.outputs || []).map((o: any) => ({
         name: o.name,
@@ -1024,7 +1033,7 @@ export function cancelPipeline(id: string): boolean {
 
 // ─── Node Scheduling ──────────────────────────────────────
 
-function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
+async function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
   const ctx = { input: pipeline.input, vars: pipeline.vars, nodes: pipeline.nodes };
 
   for (const nodeId of pipeline.nodeOrder) {
@@ -1089,7 +1098,55 @@ function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
       }
     }
 
-    // Create task — mode: 'shell' runs raw command, 'claude' runs claude -p
+    // ── Plugin mode: execute plugin action directly ──
+    if (nodeDef.mode === 'plugin' && nodeDef.plugin) {
+      nodeState.status = 'running';
+      nodeState.startedAt = new Date().toISOString();
+      savePipeline(pipeline);
+      notifyStep(pipeline, nodeId, 'running');
+
+      try {
+        const { getInstalledPlugin } = await import('./plugins/registry');
+        const { executePluginWithWait } = await import('./plugins/executor');
+
+        const inst = getInstalledPlugin(nodeDef.plugin);
+        if (!inst) throw new Error(`Plugin "${nodeDef.plugin}" not installed`);
+        if (!inst.enabled) throw new Error(`Plugin "${nodeDef.plugin}" is disabled`);
+
+        // Resolve template params
+        const resolvedParams: Record<string, any> = {};
+        for (const [k, v] of Object.entries(nodeDef.pluginParams || {})) {
+          resolvedParams[k] = typeof v === 'string' ? resolveTemplate(v, ctx) : v;
+        }
+
+        const actionName = nodeDef.pluginAction || inst.definition.defaultAction || Object.keys(inst.definition.actions)[0];
+        const result = await executePluginWithWait(inst, actionName, resolvedParams, nodeDef.pluginWait);
+
+        if (result.ok) {
+          nodeState.status = 'done';
+          nodeState.completedAt = new Date().toISOString();
+          // Store plugin outputs
+          for (const [name, value] of Object.entries(result.output)) {
+            nodeState.outputs[name] = typeof value === 'string' ? value : JSON.stringify(value);
+          }
+          savePipeline(pipeline);
+          notifyStep(pipeline, nodeId, 'done');
+          console.log(`[pipeline] Plugin ${nodeDef.plugin}.${actionName}: done (${result.duration}ms)`);
+        } else {
+          throw new Error(result.error || 'Plugin action failed');
+        }
+      } catch (err: any) {
+        nodeState.status = 'failed';
+        nodeState.error = err.message;
+        nodeState.completedAt = new Date().toISOString();
+        savePipeline(pipeline);
+        notifyStep(pipeline, nodeId, 'failed', err.message);
+        console.error(`[pipeline] Plugin ${nodeDef.plugin}: failed — ${err.message}`);
+      }
+      continue;
+    }
+
+    // ── Shell/Agent mode: create task ──
     const taskMode = nodeDef.mode === 'shell' ? 'shell' : 'prompt';
     const task = createTask({
       projectName: projectInfo.name,

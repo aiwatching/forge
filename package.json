@@ -10,9 +10,9 @@
     "forge": "npx tsx cli/mw.ts"
   },
   "bin": {
-    "forge": "./cli/mw.ts",
-    "forge-server": "./bin/forge-server.mjs",
-    "mw": "./cli/mw.ts"
+    "forge": "cli/mw.ts",
+    "forge-server": "bin/forge-server.mjs",
+    "mw": "cli/mw.ts"
   },
   "keywords": [
     "ai",

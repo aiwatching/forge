@@ -2264,8 +2264,10 @@ export class WorkspaceOrchestrator extends EventEmitter {
       this.emitAgentsChanged();
     }
 
-    // Always (re-)start session monitor with fresh warmup
-    this.startAgentSessionMonitor(agentId, config);
+    // Start session monitor only for newly created sessions (not existing ones)
+    if (!sessionAlreadyExists) {
+      this.startAgentSessionMonitor(agentId, config);
+    }
 
     // Ensure boundSessionId is set (required for session monitor + --resume)
     if (!config.primary && !config.boundSessionId) {

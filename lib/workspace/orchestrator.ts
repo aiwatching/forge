@@ -1996,13 +1996,17 @@ export class WorkspaceOrchestrator extends EventEmitter {
       const forgeDir = join(workDir, '.forge');
       const { mkdirSync: mkdirS } = require('node:fs');
       mkdirS(forgeDir, { recursive: true });
-      writeFileSync(join(forgeDir, 'agent-context.json'), JSON.stringify({
+      const ctxPath = join(forgeDir, 'agent-context.json');
+      writeFileSync(ctxPath, JSON.stringify({
         workspaceId: this.workspaceId,
         agentId: config.id,
         agentLabel: config.label,
         forgePort: Number(process.env.PORT) || 8403,
       }, null, 2));
-    } catch {}
+      console.log(`[daemon] ${config.label}: wrote agent-context.json to ${ctxPath}`);
+    } catch (err: any) {
+      console.error(`[daemon] ${config.label}: failed to write agent-context.json: ${err.message}`);
+    }
 
     // Check if tmux session already exists
     let sessionAlreadyExists = false;

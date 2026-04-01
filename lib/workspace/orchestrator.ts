@@ -1528,7 +1528,21 @@ export class WorkspaceOrchestrator extends EventEmitter {
   /** Stop a running agent */
   stopAgent(agentId: string): void {
     const entry = this.agents.get(agentId);
-    entry?.worker?.stop();
+    if (!entry) return;
+
+    if (entry.config.persistentSession) {
+      // Terminal mode: just reset task status, don't touch smith or worker
+      if (entry.state.taskStatus === 'running') {
+        entry.state.taskStatus = 'idle';
+        this.emit('event', { type: 'task_status', agentId, taskStatus: 'idle' } as any);
+        this.saveNow();
+        this.emitAgentsChanged();
+        console.log(`[workspace] ${entry.config.label}: stop → task idle (terminal stays active)`);
+      }
+    } else {
+      // Headless mode: stop worker process
+      entry.worker?.stop();
+    }
   }
 
   /** Retry a failed agent from its last checkpoint */

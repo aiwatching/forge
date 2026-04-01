@@ -27,9 +27,9 @@ export interface SessionMonitorEvent {
   detail?: string; // e.g., result summary
 }
 
-const POLL_INTERVAL = 1000;    // check every 1s (need to catch short executions)
-const IDLE_THRESHOLD = 10000;  // 10s of no file change → check for done
-const STABLE_THRESHOLD = 20000; // 20s of no change → force done
+const POLL_INTERVAL = 3000;     // check every 3s
+const IDLE_THRESHOLD = 240000;  // 4min of no file change → check for result entry
+const STABLE_THRESHOLD = 300000; // 5min of no change → force done (fallback if hook missed)
 
 export class SessionFileMonitor extends EventEmitter {
   private timers = new Map<string, NodeJS.Timeout>();

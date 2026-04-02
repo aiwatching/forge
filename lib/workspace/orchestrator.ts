@@ -2997,7 +2997,14 @@ Silently ingest this context. Do NOT respond — await an actual task.`;
           return true;
         }
 
-        // System messages (from _watch, _system, user) bypass causedBy rules
+        // System messages: _forge failure notifications are log-only (don't trigger agent execution)
+        if (m.from === '_forge' && m.payload?.action === 'update_notify') {
+          console.log(`[inbox] ${entry.config.label}: _forge notification logged, not executed`);
+          m.status = 'done' as any;
+          return false;
+        }
+
+        // Other system messages (from _watch, _system, user) bypass causedBy rules
         if (m.from.startsWith('_') || m.from === 'user') return true;
 
         // Notifications: check causedBy for loop prevention
@@ -3035,23 +3042,28 @@ Silently ingest this context. Do NOT respond — await an actual task.`;
         timestamp: new Date(nextMsg.timestamp).toISOString(),
       };
 
-      // Terminal mode → inject; headless → worker (claude -p)
+      // Terminal mode → notify (agent pulls via /forge-inbox); headless → worker (claude -p)
       if (isTerminalMode) {
-        // Check if role reminder needed (combats auto-compaction over long sessions)
-        let messageText = nextMsg.payload.content || nextMsg.payload.action;
+        // "You have mail" approach: inject a short notification, not the message content.
+        // The agent calls /forge-inbox to read the actual message when ready.
+        const pendingCount = pending.length;
+        let notification = pendingCount > 1
+          ? `You have ${pendingCount} new messages in your inbox (latest from ${fromLabel}). Use /forge-inbox to read them.`
+          : `You have a new message from ${fromLabel}. Use /forge-inbox to read it.`;
+        // Prepend role reminder if needed (combats auto-compaction over long sessions)
         if (this.needsRoleReminder(agentId) && entry.config.role?.trim()) {
-          messageText = this.buildRoleReminder(entry.config) + '\n\n' + messageText;
+          notification = this.buildRoleReminder(entry.config) + '\n\n' + notification;
           this.markRoleInjected(agentId);
           console.log(`[inbox] ${entry.config.label}: prepended role reminder`);
         } else {
           this.incrementMsgCount(agentId);
         }
-        const injected = this.injectIntoSession(agentId, messageText);
+        const injected = this.injectIntoSession(agentId, notification);
         if (injected) {
           entry.state.taskStatus = 'running';
           this.emit('event', { type: 'task_status', agentId, taskStatus: 'running' } as any);
-          this.emit('event', { type: 'log', agentId, entry: { type: 'system', subtype: 'execution_method', content: '📺 Injected into terminal, monitoring for completion...', timestamp: new Date().toISOString() } } as any);
-          console.log(`[inbox] ${entry.config.label}: injected into terminal, starting completion monitor`);
+          this.emit('event', { type: 'log', agentId, entry: { type: 'system', subtype: 'execution_method', content: `📬 Notified agent: ${notification}`, timestamp: new Date().toISOString() } } as any);
+          console.log(`[inbox] ${entry.config.label}: notified of message from ${fromLabel}, monitoring for completion`);
           entry.state.currentMessageId = nextMsg.id;
           this.monitorTerminalCompletion(agentId, nextMsg.id, entry.state.tmuxSession!);
         } else {
@@ -3066,6 +3078,9 @@ Silently ingest this context. Do NOT respond — await an actual task.`;
           this.emitAgentsChanged();
         }
       } else {
+        // Headless mode: mark running and push content directly
+        nextMsg.status = 'running' as any;
+        this.emit('event', { type: 'bus_message_status', messageId: nextMsg.id, status: 'running' } as any);
         entry.worker!.setProcessingMessage(nextMsg.id);
         entry.worker!.wake({ type: 'bus_message', messages: [logEntry] });
         this.emit('event', { type: 'log', agentId, entry: { type: 'system', subtype: 'execution_method', content: `⚡ Executed via headless (agent: ${entry.config.agentId || 'claude'})`, timestamp: new Date().toISOString() } } as any);

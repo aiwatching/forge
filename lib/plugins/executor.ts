@@ -4,7 +4,7 @@
  * Resolves templates ({{config.x}}, {{params.x}}) and executes the action.
  */
 
-import { execSync } from 'node:child_process';
+import { exec } from 'node:child_process';
 import type { PluginAction, PluginActionResult, InstalledPlugin } from './types';
 
 // ─── Template Resolution ─────────────────────────────────
@@ -136,35 +136,34 @@ function evaluateCondition(data: any, expr: string): boolean {
   }
 }
 
-function executeShell(action: PluginAction, ctx: Record<string, any>): PluginActionResult {
+async function executeShell(action: PluginAction, ctx: Record<string, any>): Promise<PluginActionResult> {
   const command = resolveTemplate(action.command || '', ctx);
   const rawCwd = action.cwd ? resolveTemplate(action.cwd, ctx) : '';
-  const cwd = rawCwd || undefined;  // empty string → undefined (use process cwd)
+  const cwd = rawCwd || undefined;
 
   const startTime = Date.now();
-  try {
-    const stdout = execSync(command, {
-      cwd,
-      encoding: 'utf-8',
-      timeout: (action.timeout || 300) * 1000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
+  const timeout = (action.timeout || 300) * 1000;
 
-    return {
-      ok: true,
-      output: extractOutputs(stdout, action.output),
-      rawResponse: stdout,
-      duration: Date.now() - startTime,
-    };
-  } catch (err: any) {
-    return {
-      ok: false,
-      output: {},
-      error: err.message,
-      rawResponse: err.stderr?.toString() || err.stdout?.toString() || '',
-      duration: Date.now() - startTime,
-    };
-  }
+  return new Promise((resolve) => {
+    const child = exec(command, { cwd, encoding: 'utf-8', timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) {
+        resolve({
+          ok: false,
+          output: {},
+          error: err.message,
+          rawResponse: stderr || stdout || '',
+          duration: Date.now() - startTime,
+        });
+      } else {
+        resolve({
+          ok: true,
+          output: extractOutputs(stdout.trim(), action.output),
+          rawResponse: stdout.trim(),
+          duration: Date.now() - startTime,
+        });
+      }
+    });
+  });
 }
 
 // ─── Public API ──────────────────────────────────────────

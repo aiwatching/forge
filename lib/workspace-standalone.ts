@@ -819,6 +819,10 @@ const server = createServer(async (req, res) => {
 
       if (!projectPath || !projectName) return jsonError(res, 'projectPath and projectName required');
 
+      // Guard against concurrent creates for the same project
+      const existing = findWorkspaceByProject(projectPath);
+      if (existing && !template) return json(res, existing);
+
       const state: import('./workspace/types').WorkspaceState = {
         id: id || require('node:crypto').randomUUID(),
         projectPath,

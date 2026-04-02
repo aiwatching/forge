@@ -25,6 +25,7 @@ export TERMINAL_PORT=${TERMINAL_PORT:-8404}
 export WORKSPACE_PORT=${WORKSPACE_PORT:-8405}
 
 if [ "$1" = "dev" ]; then
+  export FORGE_DEV=1
   pnpm dev
 else
   pnpm build && pnpm start

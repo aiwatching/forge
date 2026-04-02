@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 export function middleware(req: NextRequest) {
   // Skip auth entirely in dev mode
-  const isDev = process.env.NODE_ENV !== 'production';
+  const isDev = process.env.NODE_ENV !== 'production' || process.env.FORGE_DEV === '1';
   if (isDev) {
     return NextResponse.next();
   }

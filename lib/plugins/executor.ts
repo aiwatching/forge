@@ -180,7 +180,12 @@ export async function executePluginAction(
   actionName: string,
   params: Record<string, any> = {},
 ): Promise<PluginActionResult> {
-  const action = plugin.definition.actions[actionName];
+  // Auto-resolve action by config.mode prefix: "test" → "docker_test" if mode=docker
+  let action = plugin.definition.actions[actionName];
+  if (!action && plugin.config.mode) {
+    const modeAction = `${plugin.config.mode}_${actionName}`;
+    action = plugin.definition.actions[modeAction];
+  }
   if (!action) {
     return { ok: false, output: {}, error: `Action "${actionName}" not found in plugin "${plugin.id}"` };
   }

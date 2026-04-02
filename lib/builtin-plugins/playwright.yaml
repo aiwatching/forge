@@ -1,11 +1,11 @@
 id: playwright
 name: Playwright
 icon: "🎭"
-version: "0.2.0"
+version: "0.3.0"
 author: forge
 description: |
   Browser testing and screenshots via Playwright.
-  Create instances per environment: local, docker, or remote.
+  Create one instance per environment (local, docker, or remote).
   Forge does not install Playwright. Set up your own environment:
   - Local: https://playwright.dev/docs/intro
   - Docker: docker pull mcr.microsoft.com/playwright:v1.52.0-noble
@@ -51,39 +51,55 @@ params:
 defaultAction: test
 
 actions:
-  test:
+  # Local mode
+  local_test:
     run: shell
-    command: |
-      MODE="{{config.mode}}" && \
-      if [ "$MODE" = "docker" ]; then
-        docker run --rm -e BASE_URL="{{config.base_url}}" -v "{{config.project_dir}}":/app -w /app "{{config.docker_image}}" npx playwright test {{params.test_file}} {{params.args}} --reporter=line 2>&1
-      elif [ "$MODE" = "remote" ]; then
-        PW_TEST_CONNECT_WS_ENDPOINT="{{config.server_url}}" BASE_URL="{{config.base_url}}" npx playwright test {{params.test_file}} {{params.args}} --reporter=line 2>&1
-      else
-        BASE_URL="{{config.base_url}}" npx playwright test {{params.test_file}} {{params.args}} --reporter=line 2>&1
-      fi
+    command: "BASE_URL={{config.base_url}} npx playwright test {{params.test_file}} {{params.args}} --reporter=line 2>&1"
     timeout: 600
     output:
       result: "$stdout"
 
-  screenshot:
+  local_screenshot:
     run: shell
-    command: |
-      MODE="{{config.mode}}" && URL="{{params.url}}" && [ -z "$URL" ] && URL="{{config.base_url}}" && \
-      if [ "$MODE" = "docker" ]; then
-        docker run --rm "{{config.docker_image}}" npx playwright screenshot --wait-for-timeout=3000 "$URL" /tmp/screenshot.png 2>&1
-      elif [ "$MODE" = "remote" ]; then
-        PW_TEST_CONNECT_WS_ENDPOINT="{{config.server_url}}" npx playwright screenshot --wait-for-timeout=3000 "$URL" /tmp/forge-screenshot-$$.png 2>&1
-      else
-        npx playwright screenshot --wait-for-timeout=3000 "$URL" /tmp/forge-screenshot-$$.png 2>&1
-      fi
+    command: "npx playwright screenshot --wait-for-timeout=3000 {{config.base_url}} /tmp/forge-screenshot-$(date +%s).png 2>&1"
     timeout: 60
     output:
       result: "$stdout"
 
+  # Docker mode
+  docker_test:
+    run: shell
+    command: "docker run --rm -e BASE_URL={{config.base_url}} -v {{config.project_dir}}:/app -w /app {{config.docker_image}} npx playwright test {{params.test_file}} {{params.args}} --reporter=line 2>&1"
+    timeout: 600
+    output:
+      result: "$stdout"
+
+  docker_screenshot:
+    run: shell
+    command: "docker run --rm {{config.docker_image}} npx playwright screenshot --wait-for-timeout=3000 {{config.base_url}} /tmp/screenshot.png 2>&1"
+    timeout: 60
+    output:
+      result: "$stdout"
+
+  # Remote mode
+  remote_test:
+    run: shell
+    command: "PW_TEST_CONNECT_WS_ENDPOINT={{config.server_url}} BASE_URL={{config.base_url}} npx playwright test {{params.test_file}} {{params.args}} --reporter=line 2>&1"
+    timeout: 600
+    output:
+      result: "$stdout"
+
+  remote_screenshot:
+    run: shell
+    command: "PW_TEST_CONNECT_WS_ENDPOINT={{config.server_url}} npx playwright screenshot --wait-for-timeout=3000 {{config.base_url}} /tmp/forge-screenshot-$(date +%s).png 2>&1"
+    timeout: 60
+    output:
+      result: "$stdout"
+
+  # Common (all modes)
   check_url:
     run: shell
-    command: "URL=\"{{params.url}}\"; [ -z \"$URL\" ] && URL=\"{{config.base_url}}\"; curl -sf -o /dev/null -w '%{http_code}' \"$URL\""
+    command: "curl -sf -o /dev/null -w '%{http_code}' {{config.base_url}}"
     timeout: 10
     output:
       status_code: "$stdout"

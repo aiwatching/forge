@@ -145,24 +145,51 @@ async function executeShell(action: PluginAction, ctx: Record<string, any>): Pro
   const timeout = (action.timeout || 300) * 1000;
 
   return new Promise((resolve) => {
-    const child = exec(command, { cwd, encoding: 'utf-8', timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
+    try {
+      const child = exec(command, {
+        cwd,
+        encoding: 'utf-8',
+        timeout,
+        maxBuffer: 10 * 1024 * 1024,
+        env: { ...process.env, FORCE_COLOR: '0' },
+        killSignal: 'SIGTERM',
+      }, (err, stdout, stderr) => {
+        if (err) {
+          resolve({
+            ok: false,
+            output: {},
+            error: err.message,
+            rawResponse: (stderr || stdout || '').slice(0, 5000),
+            duration: Date.now() - startTime,
+          });
+        } else {
+          resolve({
+            ok: true,
+            output: extractOutputs((stdout || '').trim(), action.output),
+            rawResponse: (stdout || '').trim().slice(0, 5000),
+            duration: Date.now() - startTime,
+          });
+        }
+      });
+      // Prevent child from killing parent
+      child.on('error', (e) => {
         resolve({
           ok: false,
           output: {},
-          error: err.message,
-          rawResponse: stderr || stdout || '',
+          error: `Process error: ${e.message}`,
           duration: Date.now() - startTime,
         });
-      } else {
-        resolve({
-          ok: true,
-          output: extractOutputs(stdout.trim(), action.output),
-          rawResponse: stdout.trim(),
-          duration: Date.now() - startTime,
-        });
-      }
-    });
+      });
+      // Unref so child doesn't keep parent alive
+      child.unref();
+    } catch (e: any) {
+      resolve({
+        ok: false,
+        output: {},
+        error: `Failed to spawn: ${e.message}`,
+        duration: Date.now() - startTime,
+      });
+    }
   });
 }
 

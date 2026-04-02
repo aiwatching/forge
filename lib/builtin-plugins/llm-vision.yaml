@@ -1,0 +1,85 @@
+id: llm-vision
+name: LLM Vision
+icon: "👁"
+version: "0.1.0"
+author: forge
+description: |
+  Send images to vision-capable LLMs for evaluation.
+  Supports OpenAI (GPT-4o), Anthropic (Claude), Google (Gemini).
+  Create instances per model for multi-model evaluation.
+
+config:
+  provider:
+    type: select
+    label: Provider
+    options: ["openai", "anthropic", "google"]
+    required: true
+  api_key:
+    type: secret
+    label: API Key
+    required: true
+  model:
+    type: string
+    label: Model
+    description: "e.g., gpt-4o, claude-sonnet-4-6, gemini-2.0-flash"
+    default: "gpt-4o"
+  default_prompt:
+    type: string
+    label: Default Evaluation Prompt
+    description: "Default prompt if none provided per-call"
+
+params:
+  image:
+    type: string
+    label: Image file path
+    required: true
+    description: "Local path to image file"
+  prompt:
+    type: string
+    label: Evaluation prompt
+    description: "What to evaluate — overrides default_prompt"
+  max_tokens:
+    type: number
+    label: Max tokens
+    default: 1024
+
+defaultAction: evaluate
+
+actions:
+  evaluate:
+    run: shell
+    command: |
+      PROVIDER="{{config.provider}}"
+      IMAGE="{{params.image}}"
+      PROMPT="{{params.prompt}}"
+      MODEL="{{config.model}}"
+      MAX_TOKENS="{{params.max_tokens}}"
+      [ -z "$MAX_TOKENS" ] && MAX_TOKENS=1024
+      IMG_BASE64=$(base64 < "$IMAGE" | tr -d '\n')
+      MIME="image/png"
+      case "$IMAGE" in *.jpg|*.jpeg) MIME="image/jpeg";; *.webp) MIME="image/webp";; esac
+
+      if [ "$PROVIDER" = "openai" ]; then
+        curl -s https://api.openai.com/v1/chat/completions \
+          -H "Authorization: Bearer {{config.api_key}}" \
+          -H "Content-Type: application/json" \
+          -d "{\"model\":\"$MODEL\",\"max_tokens\":$MAX_TOKENS,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"$PROMPT\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:$MIME;base64,$IMG_BASE64\"}}]}]}" \
+          | python3 -c "import sys,json; print(json.load(sys.stdin)['choices'][0]['message']['content'])" 2>&1
+
+      elif [ "$PROVIDER" = "anthropic" ]; then
+        curl -s https://api.anthropic.com/v1/messages \
+          -H "x-api-key: {{config.api_key}}" \
+          -H "anthropic-version: 2023-06-01" \
+          -H "Content-Type: application/json" \
+          -d "{\"model\":\"$MODEL\",\"max_tokens\":$MAX_TOKENS,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"$PROMPT\"},{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"$MIME\",\"data\":\"$IMG_BASE64\"}}]}]}" \
+          | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['content'][0]['text'])" 2>&1
+
+      elif [ "$PROVIDER" = "google" ]; then
+        curl -s "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent?key={{config.api_key}}" \
+          -H "Content-Type: application/json" \
+          -d "{\"contents\":[{\"parts\":[{\"text\":\"$PROMPT\"},{\"inline_data\":{\"mime_type\":\"$MIME\",\"data\":\"$IMG_BASE64\"}}]}]}" \
+          | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['candidates'][0]['content']['parts'][0]['text'])" 2>&1
+      fi
+    timeout: 120
+    output:
+      result: "$stdout"

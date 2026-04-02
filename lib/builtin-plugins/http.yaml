@@ -1,17 +1,59 @@
 id: http
 name: HTTP Request
-icon: 🌐
-version: 1.0.0
+icon: "🌐"
+version: "1.1.0"
 author: forge
-description: Make HTTP requests to any API endpoint
+description: |
+  Make HTTP requests to any API endpoint.
+  Create instances for common API calls:
+  - "Health Check" → default_url: https://api.example.com/health, default_method: GET
+  - "Deploy Hook" → default_url: https://deploy.example.com/trigger, default_method: POST
+  - "Notify Slack" → default_url: https://hooks.slack.com/xxx, default_method: POST
 
-config: {}
+config:
+  default_url:
+    type: string
+    label: Default URL
+    description: "Pre-configured URL"
+  default_method:
+    type: select
+    label: Default Method
+    options: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+    default: "GET"
+  default_headers:
+    type: json
+    label: Default Headers
+    description: 'e.g., {"Authorization": "Bearer xxx"}'
+  default_body:
+    type: json
+    label: Default Body
+    description: "Default request body (for POST/PUT)"
+  expected_status:
+    type: string
+    label: Expected Status Code
+    description: "e.g., 200, 201 — used to validate response"
+  description:
+    type: string
+    label: Description
+    description: "What this request does (shown to agents)"
 
 params:
-  url: { type: string, label: "URL", required: true }
-  method: { type: select, label: "Method", options: ["GET", "POST", "PUT", "DELETE"], default: "GET" }
-  headers: { type: json, label: "Headers" }
-  body: { type: json, label: "Body" }
+  url:
+    type: string
+    label: URL
+    description: "Overrides default_url if set"
+  method:
+    type: select
+    label: Method
+    options: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+  headers:
+    type: json
+    label: Headers
+  body:
+    type: json
+    label: Body
+
+defaultAction: request
 
 actions:
   request:
@@ -22,5 +64,3 @@ actions:
     body: "{{params.body}}"
     output:
       result: "$body"
-
-defaultAction: request

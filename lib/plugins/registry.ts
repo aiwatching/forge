@@ -67,6 +67,10 @@ export function listPlugins(): PluginSource[] {
   const sources: PluginSource[] = [];
   const configs = loadConfigs();
 
+  // Check if any config entry references this plugin (base install or instance)
+  const isInstalledOrHasInstance = (id: string) =>
+    Object.entries(configs).some(([key, cfg]) => key === id || (cfg as any).source === id);
+
   // Built-in plugins
   if (existsSync(BUILTIN_DIR)) {
     for (const file of readdirSync(BUILTIN_DIR).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'))) {
@@ -80,7 +84,8 @@ export function listPlugins(): PluginSource[] {
           author: def.author || 'forge',
           description: def.description || '',
           source: 'builtin',
-          installed: !!configs[def.id],
+          installed: isInstalledOrHasInstance(def.id),
+          configCount: Object.keys(def.config).length,
         });
       }
     }
@@ -106,7 +111,8 @@ export function listPlugins(): PluginSource[] {
         author: def.author || 'local',
         description: def.description || '',
         source: 'local',
-        installed: !!configs[def.id],
+        installed: isInstalledOrHasInstance(def.id),
+        configCount: Object.keys(def.config).length,
       });
     }
   }
@@ -135,26 +141,31 @@ export function getPlugin(id: string): PluginDefinition | null {
 
 /** Get an installed plugin with its config */
 export function getInstalledPlugin(id: string): InstalledPlugin | null {
-  const def = getPlugin(id);
-  if (!def) return null;
   const configs = loadConfigs();
-  const cfg = configs[id];
+  const cfg = configs[id] as any;
   if (!cfg) return null;
+  // Resolve definition: use source field for instances, fallback to id
+  const sourceId = cfg.source || id;
+  const def = getPlugin(sourceId);
+  if (!def) return null;
   return {
     id,
     definition: def,
     config: cfg.config || {},
     installedAt: cfg.installedAt || new Date().toISOString(),
     enabled: cfg.enabled !== false,
+    instanceName: cfg.name,
+    source: sourceId !== id ? sourceId : undefined,
   };
 }
 
-/** List all installed plugins */
+/** List all installed plugins (including instances) */
 export function listInstalledPlugins(): InstalledPlugin[] {
   const configs = loadConfigs();
   const installed: InstalledPlugin[] = [];
   for (const [id, cfg] of Object.entries(configs)) {
-    const def = getPlugin(id);
+    const sourceId = (cfg as any).source || id;
+    const def = getPlugin(sourceId);
     if (def) {
       installed.push({
         id,
@@ -162,24 +173,33 @@ export function listInstalledPlugins(): InstalledPlugin[] {
         config: (cfg as any).config || {},
         installedAt: (cfg as any).installedAt || '',
         enabled: (cfg as any).enabled !== false,
+        instanceName: (cfg as any).name,
+        source: sourceId !== id ? sourceId : undefined,
       });
     }
   }
   return installed;
 }
 
-/** Install a plugin (save config) */
-export function installPlugin(id: string, config: Record<string, any>): boolean {
-  const def = getPlugin(id);
+/** Install a plugin or create an instance */
+export function installPlugin(id: string, config: Record<string, any>, opts?: { source?: string; name?: string }): boolean {
+  const sourceId = opts?.source || id;
+  const def = getPlugin(sourceId);
   if (!def) return false;
   const configs = loadConfigs();
-  configs[id] = { config, installedAt: new Date().toISOString(), enabled: true };
+  configs[id] = {
+    config,
+    installedAt: new Date().toISOString(),
+    enabled: true,
+    ...(opts?.source ? { source: opts.source } : {}),
+    ...(opts?.name ? { name: opts.name } : {}),
+  };
   saveConfigs(configs);
-  console.log(`[plugins] Installed: ${def.name} (${id})`);
+  console.log(`[plugins] Installed: ${opts?.name || def.name} (${id}${opts?.source ? ' ← ' + opts.source : ''})`);
   return true;
 }
 
-/** Uninstall a plugin (remove config, keep definition files) */
+/** Uninstall a plugin or instance */
 export function uninstallPlugin(id: string): boolean {
   const configs = loadConfigs();
   if (!configs[id]) return false;

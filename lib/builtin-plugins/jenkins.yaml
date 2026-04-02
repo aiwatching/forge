@@ -1,24 +1,55 @@
 id: jenkins
 name: Jenkins CI
-icon: 🔧
-version: 1.0.0
+icon: "🔧"
+version: "1.1.0"
 author: forge
-description: Trigger and monitor Jenkins CI/CD jobs
+description: |
+  Trigger and monitor Jenkins CI/CD jobs.
+  Create instances per job or per Jenkins server:
+  - "Build Backend" → default_job: backend-build
+  - "E2E Tests" → default_job: e2e-test-suite
+  - "Security Scan" → default_job: sonar-scan
 
 config:
-  url: { type: string, label: "Jenkins URL", required: true, description: "e.g., https://jenkins.example.com" }
-  token: { type: secret, label: "API Token", required: true }
-  user: { type: string, label: "Username", required: true }
+  url:
+    type: string
+    label: Jenkins URL
+    required: true
+    description: "e.g., https://jenkins.example.com"
+  user:
+    type: string
+    label: Username
+    required: true
+  token:
+    type: secret
+    label: API Token
+    required: true
+  default_job:
+    type: string
+    label: Default Job Name
+    description: "Pre-configured job — no need to pass job param each time"
 
 params:
-  job: { type: string, label: "Job Name", required: true }
-  parameters: { type: json, label: "Build Parameters" }
+  job:
+    type: string
+    label: Job Name
+    description: "Overrides default_job if set"
+  parameters:
+    type: json
+    label: Build Parameters
+    description: "JSON object of build parameters"
+  build_number:
+    type: string
+    label: Build Number
+    description: "Specific build number (for log/status). Defaults to lastBuild"
+
+defaultAction: trigger
 
 actions:
   trigger:
     run: http
     method: POST
-    url: "{{config.url}}/job/{{params.job}}/build"
+    url: "{{config.url}}/job/{{params.job}}/buildWithParameters"
     headers:
       Authorization: "Basic {{config.user}}:{{config.token}}"
     body: "{{params.parameters | json}}"
@@ -37,11 +68,12 @@ actions:
       result: "$.result"
       duration: "$.duration"
       url: "$.url"
+      build_number: "$.number"
 
   get_log:
     run: http
     method: GET
-    url: "{{config.url}}/job/{{params.job}}/lastBuild/consoleText"
+    url: "{{config.url}}/job/{{params.job}}/{{params.build_number}}/consoleText"
     headers:
       Authorization: "Basic {{config.user}}:{{config.token}}"
     output:
@@ -56,6 +88,5 @@ actions:
     output:
       result: "$.result"
       building: "$.building"
+      number: "$.number"
       timestamp: "$.timestamp"
-
-defaultAction: trigger

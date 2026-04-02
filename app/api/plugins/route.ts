@@ -9,10 +9,17 @@ export async function GET(req: Request) {
   const installed = url.searchParams.get('installed');
 
   if (id) {
+    // Try as plugin definition first, then as installed instance
     const plugin = getPlugin(id);
-    if (!plugin) return NextResponse.json({ error: 'Plugin not found' }, { status: 404 });
     const inst = getInstalledPlugin(id);
-    return NextResponse.json({ plugin, installed: !!inst, config: inst?.config });
+    if (!plugin && !inst) return NextResponse.json({ error: 'Plugin not found' }, { status: 404 });
+    return NextResponse.json({
+      plugin: inst?.definition || plugin,
+      installed: !!inst,
+      config: inst?.config,
+      instanceName: inst?.instanceName,
+      source: inst?.source,
+    });
   }
 
   if (installed === 'true') {
@@ -30,8 +37,20 @@ export async function POST(req: Request) {
   switch (action) {
     case 'install': {
       if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
-      const ok = installPlugin(id, config || {});
+      const ok = installPlugin(id, config || {}, body.source ? { source: body.source, name: body.name } : undefined);
       return NextResponse.json({ ok });
+    }
+    case 'create_instance': {
+      const { source, name, instanceId } = body;
+      if (!source || !name) return NextResponse.json({ error: 'source and name required' }, { status: 400 });
+      const iid = instanceId || name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      // Check for duplicate ID
+      const existing = getInstalledPlugin(iid);
+      if (existing) {
+        return NextResponse.json({ error: `Instance ID "${iid}" already exists (used by ${existing.instanceName || existing.definition.name}). Choose a different name.` }, { status: 409 });
+      }
+      const ok = installPlugin(iid, config || {}, { source, name });
+      return NextResponse.json({ ok, instanceId: iid });
     }
     case 'uninstall': {
       if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
@@ -44,7 +63,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok });
     }
     case 'test': {
-      // Test-run a plugin action
       if (!id || !actionName) return NextResponse.json({ error: 'id and actionName required' }, { status: 400 });
       const inst = getInstalledPlugin(id);
       if (!inst) return NextResponse.json({ error: 'Plugin not installed' }, { status: 400 });

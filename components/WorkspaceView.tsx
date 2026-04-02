@@ -27,6 +27,7 @@ interface AgentConfig {
   skipPermissions?: boolean;
   boundSessionId?: string;
   watch?: { enabled: boolean; interval: number; targets: any[]; action?: 'log' | 'analyze' | 'approve' | 'send_message'; prompt?: string; sendTo?: string };
+  plugins?: string[];  // plugin IDs to auto-install when agent is created
 }
 
 interface AgentState {
@@ -104,6 +105,7 @@ Rules:
   },
   {
     label: 'QA', icon: '🧪', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['tests/', 'docs/test-report.md'],
+    plugins: ['playwright', 'shell-command'],
     role: `QA Engineer — You ensure quality through comprehensive testing. You find bugs, you don't fix them.
 
 Rules:
@@ -114,11 +116,20 @@ Rules:
 - Run ALL tests (existing + new) and report results
 - Report format: what failed, expected vs actual, steps to reproduce
 - Check for security issues: injection, auth bypass, data leaks
-- Check for performance: N+1 queries, unbounded loops, memory leaks`,
+- Check for performance: N+1 queries, unbounded loops, memory leaks
+
+Available Forge MCP tools — use these for testing:
+- run_plugin({ plugin: "playwright", action: "test", params: { test_file: "tests/e2e/*.spec.ts" } }) — run Playwright E2E tests
+- run_plugin({ plugin: "playwright", action: "screenshot", params: { url: "http://localhost:3000" } }) — take page screenshots
+- run_plugin({ plugin: "playwright", action: "check_url", params: { url: "..." } }) — check if URL is reachable
+- run_plugin({ plugin: "shell-command", params: { command: "npm test" } }) — run any shell command
+- trigger_pipeline({ workflow: "..." }) — trigger a pipeline workflow
+- get_pipeline_status({ pipeline_id: "..." }) — check pipeline results
+- send_message({ to: "Engineer", content: "Bug found: ..." }) — report bugs to other agents`,
     steps: [
       { id: 'plan', label: 'Test Plan', prompt: 'Read the PRD (docs/prd.md) and the implementation. Create a test plan in docs/test-plan.md covering: unit tests, integration tests, edge cases, error scenarios, security checks, and performance concerns. Map each test to a PRD acceptance criterion.' },
       { id: 'write-tests', label: 'Write Tests', prompt: 'Implement all test cases from your test plan in the tests/ directory. Follow the project\'s existing test framework and conventions. Include setup/teardown, meaningful assertions, and descriptive test names.' },
-      { id: 'run-tests', label: 'Run & Report', prompt: 'Run ALL tests (both existing and new). Document results in docs/test-report.md: total tests, passed, failed, skipped. For each failure: test name, expected vs actual, steps to reproduce. Include a summary verdict: PASS (all green) or FAIL (with blocking issues listed).' },
+      { id: 'run-tests', label: 'Run & Report', prompt: 'Run ALL tests (both existing and new). Use run_plugin to execute tests and capture results. Document results in docs/test-report.md: total tests, passed, failed, skipped. For each failure: test name, expected vs actual, steps to reproduce. Include a summary verdict: PASS (all green) or FAIL (with blocking issues listed). Send bug reports to upstream agents via send_message.' },
     ],
   },
   {
@@ -143,21 +154,69 @@ Rules:
     ],
   },
   {
-    label: 'UI Designer', icon: '🎨', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['docs/ui-spec.md'],
-    role: `UI/UX Designer — You design user interfaces and experiences. You create specs that engineers can implement.
+    label: 'UI Designer', icon: '🎨', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['docs/ui-spec.md', 'src/'],
+    plugins: ['playwright', 'shell-command'],
+    role: `UI/UX Designer — You design and implement user interfaces. You write real UI code, preview it visually, and iterate until the quality meets your standards.
 
 Rules:
+- You WRITE CODE, not just specs. Implement the UI yourself.
+- After writing UI code, always preview your work: take a screenshot and review it visually.
+- Iterate: if the screenshot doesn't look right, fix the code and screenshot again. Aim for 3-5 review cycles.
 - Focus on user experience first, aesthetics second
 - Design for the existing tech stack (check project's UI framework)
 - Be specific: colors (hex), spacing (px/rem), typography, component hierarchy
 - Consider responsive design, accessibility (WCAG), dark/light mode
 - Include interaction states: hover, active, disabled, loading, error, empty
-- Provide component tree structure, not just mockups
-- Reference existing UI patterns in the codebase for consistency`,
+- Reference existing UI patterns in the codebase for consistency
+
+Visual review workflow:
+1. Write/modify UI code
+2. Start dev server if not running (e.g., npm run dev)
+3. Take screenshot: run_plugin({ plugin: "<playwright-instance>", action: "screenshot", params: { url: "http://localhost:3000/page" } })
+4. Read the screenshot file to visually evaluate your work
+5. Grade yourself: layout correctness, visual polish, consistency with existing UI, responsiveness
+6. If not satisfied, fix and repeat from step 2
+7. When satisfied, document the final design in docs/ui-spec.md
+
+If reference designs or mockups exist in the project (e.g., docs/designs/), study them before implementing.`,
     steps: [
-      { id: 'audit', label: 'UI Audit', prompt: 'Analyze the existing UI: framework used (React/Vue/etc), component library, design tokens (colors, spacing, fonts), layout patterns. Document the current design system.' },
-      { id: 'design', label: 'Design Spec', prompt: 'Based on the PRD, design the UI. Write docs/ui-spec.md with: component hierarchy, layout (flexbox/grid), colors, typography, spacing, responsive breakpoints. Include all states (loading, empty, error, success). Use ASCII wireframes or describe precisely.' },
-      { id: 'interactions', label: 'Interactions', prompt: 'Define all user interactions: click flows, form validation, transitions, animations, keyboard shortcuts, mobile gestures. Document accessibility requirements (aria labels, focus management, screen reader support).' },
+      { id: 'audit', label: 'UI Audit', prompt: 'Analyze the existing UI: framework used (React/Vue/etc), component library, design tokens (colors, spacing, fonts), layout patterns. Take screenshots of existing pages to understand the current look and feel. Document the current design system.' },
+      { id: 'implement', label: 'Implement UI', prompt: 'Based on the PRD, implement the UI. Write real component code. Start the dev server, take screenshots of your work, and iterate until the visual quality is high. Aim for at least 3 review cycles — screenshot, evaluate, improve.' },
+      { id: 'polish', label: 'Polish & Document', prompt: 'Final polish pass: check all states (loading, empty, error, hover, disabled), responsive breakpoints, dark/light mode. Take final screenshots. Write docs/ui-spec.md documenting: component hierarchy, design decisions, interaction patterns, and accessibility notes.' },
+    ],
+  },
+  {
+    label: 'Design Evaluator', icon: '🔍', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['docs/design-review.md'],
+    plugins: ['playwright', 'llm-vision'],
+    role: `Design Evaluator — You are a senior design critic. You evaluate UI implementations visually, not by reading code. You are deliberately skeptical and hold work to a high standard.
+
+You evaluate on 4 dimensions (each scored 1-10):
+1. **Design Quality** — Visual coherence, distinct identity, not generic/template-like
+2. **Originality** — Evidence of intentional design decisions vs default AI patterns
+3. **Craft** — Typography, spacing, color harmony, alignment, pixel-level polish
+4. **Functionality** — Usability, interaction clarity, error states, responsiveness
+
+Rules:
+- NEVER modify code — only evaluate and report
+- Always take screenshots and visually inspect before scoring
+- Use run_plugin with Playwright to screenshot every relevant page/state
+- If llm-vision instances are available, use them for cross-model evaluation
+- Be specific: "the spacing between header and content is 8px, should be 16px for breathing room"
+- A score of 7+ means "good enough to ship". Below 7 means "needs revision"
+- Send feedback to UI Designer via send_message with specific, actionable items
+- If overall score < 7, request changes. If >= 7, approve with minor suggestions.
+
+Workflow:
+1. Receive notification that UI Designer has completed work
+2. Take screenshots of all relevant pages and states (normal, loading, error, empty, mobile)
+3. Evaluate each screenshot against the 4 dimensions
+4. Optionally send screenshots to llm-vision instances for additional opinions
+5. Write docs/design-review.md with scores, specific feedback, and verdict
+6. send_message to UI Designer: APPROVE or REQUEST_CHANGES with actionable feedback`,
+    steps: [
+      { id: 'screenshot', label: 'Visual Capture', prompt: 'Take screenshots of all pages and states the UI Designer worked on. Include: default view, loading state, error state, empty state, mobile viewport (375px), tablet viewport (768px). Save all screenshots to /tmp/ and list them.' },
+      { id: 'evaluate', label: 'Evaluate', prompt: 'Review each screenshot. Score each page on the 4 dimensions (Design Quality, Originality, Craft, Functionality). Be critical and specific. If llm-vision plugin instances are available, send key screenshots for additional evaluation and compare opinions.' },
+      { id: 'report', label: 'Report & Feedback', prompt: 'Write docs/design-review.md with: overall scores, per-page breakdown, specific issues with suggested fixes. Send verdict to UI Designer via send_message: APPROVE (score >= 7) or REQUEST_CHANGES (score < 7) with the top 3-5 actionable items.' },
     ],
   },
 ];
@@ -551,6 +610,9 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
   const [agentId, setAgentId] = useState(initial.agentId || 'claude');
   const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string; isProfile?: boolean; backendType?: string; base?: string; cliType?: string }[]>([]);
 
+  const [pluginInstances, setPluginInstances] = useState<{ id: string; name: string; icon: string; source?: string }[]>([]);
+  const [pluginDefs, setPluginDefs] = useState<{ id: string; name: string; icon: string }[]>([]);
+
   useEffect(() => {
     fetch('/api/agents').then(r => r.json()).then(data => {
       const list = (data.agents || data || []).map((a: any) => ({
@@ -561,6 +623,19 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
         backendType: a.backendType || 'cli',
       }));
       setAvailableAgents(list);
+    }).catch(() => {});
+    // Fetch both: plugin definitions + installed instances
+    Promise.all([
+      fetch('/api/plugins').then(r => r.json()),
+      fetch('/api/plugins?installed=true').then(r => r.json()),
+    ]).then(([defData, instData]) => {
+      setPluginDefs((defData.plugins || []).map((p: any) => ({ id: p.id, name: p.name, icon: p.icon })));
+      setPluginInstances((instData.plugins || []).map((p: any) => ({
+        id: p.id,
+        name: p.instanceName || p.definition?.name || p.id,
+        icon: p.definition?.icon || '🔌',
+        source: p.source,
+      })));
     }).catch(() => {});
   }, []);
   const [workDirVal, setWorkDirVal] = useState(initial.workDir || '');
@@ -579,6 +654,8 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
   const [watchAction, setWatchAction] = useState<'log' | 'analyze' | 'approve' | 'send_message'>(initial.watch?.action || 'log');
   const [watchPrompt, setWatchPrompt] = useState(initial.watch?.prompt || '');
   const [watchSendTo, setWatchSendTo] = useState(initial.watch?.sendTo || '');
+  const [selectedPlugins, setSelectedPlugins] = useState<string[]>(initial.plugins || []);
+  const [recommendedTypes, setRecommendedTypes] = useState<string[]>([]);
   const [watchDebounce, setWatchDebounce] = useState(String(initial.watch?.targets?.[0]?.debounce ?? 10));
   const [watchTargets, setWatchTargets] = useState<{ type: string; path?: string; cmd?: string; pattern?: string }[]>(
     initial.watch?.targets || []
@@ -613,6 +690,8 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
     setWorkDirVal(p.workDir || './');
     setOutputs(p.outputs.join(', '));
     setStepsText(p.steps.map(s => `${s.label}: ${s.prompt}`).join('\n'));
+    setRecommendedTypes(p.plugins || []);
+    setSelectedPlugins([]);
   };
 
   const toggleDep = (id: string) => {
@@ -722,8 +801,74 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
           {/* Role */}
           <div className="flex flex-col gap-1">
             <label className="text-[9px] text-gray-500 uppercase">Role / System Prompt</label>
-            <textarea value={role} onChange={e => setRole(e.target.value)} rows={2}
-              className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff] resize-none" />
+            <textarea value={role} onChange={e => setRole(e.target.value)} rows={5}
+              placeholder="Describe this agent's role, responsibilities, available tools, and decision criteria. This will be synced to CLAUDE.md in the agent's working directory."
+              className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff] resize-y" />
+          </div>
+
+          {/* Plugin Instances grouped by plugin */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[9px] text-gray-500 uppercase">Plugin Instances</label>
+            {(() => {
+              const withSource = pluginInstances.filter(i => i.source);
+              if (withSource.length === 0) return <span className="text-[8px] text-gray-600">No instances — create in Marketplace → Plugins</span>;
+              // Group by source plugin
+              const groups: Record<string, typeof withSource> = {};
+              for (const inst of withSource) {
+                const key = inst.source!;
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(inst);
+              }
+              // Show recommended types that have no instances yet
+              const missingRecommended = recommendedTypes.filter(rt =>
+                !withSource.some(i => i.source === rt)
+              );
+
+              return <>
+                {Object.entries(groups).map(([sourceId, insts]) => {
+                  const def = pluginDefs.find(d => d.id === sourceId);
+                  const isRecommended = recommendedTypes.includes(sourceId);
+                  return (
+                    <div key={sourceId} className="flex items-start gap-2">
+                      <span className={`text-[9px] shrink-0 w-20 pt-1 truncate ${isRecommended ? 'text-[#58a6ff]' : 'text-gray-500'}`} title={def?.name || sourceId}>
+                        {def?.icon || '🔌'} {def?.name || sourceId}
+                        {isRecommended && <span className="text-[7px] ml-0.5">★</span>}
+                      </span>
+                      <div className="flex flex-wrap gap-1 flex-1">
+                        {insts.map(inst => {
+                          const selected = selectedPlugins.includes(inst.id);
+                          return (
+                            <button key={inst.id}
+                              onClick={() => setSelectedPlugins(prev => selected ? prev.filter(x => x !== inst.id) : [...prev, inst.id])}
+                              className={`text-[9px] px-2 py-0.5 rounded border transition-colors ${
+                                selected
+                                  ? 'border-green-500/40 text-green-400 bg-green-500/10'
+                                  : isRecommended
+                                    ? 'border-[#58a6ff]/30 text-[#58a6ff]/70 hover:text-[#58a6ff]'
+                                    : 'border-[#30363d] text-gray-500 hover:text-gray-300'
+                              }`}>
+                              {inst.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+                {missingRecommended.length > 0 && missingRecommended.map(rt => {
+                  const def = pluginDefs.find(d => d.id === rt);
+                  return (
+                    <div key={rt} className="flex items-start gap-2">
+                      <span className="text-[9px] text-[#58a6ff] shrink-0 w-20 pt-1 truncate">
+                        {def?.icon || '🔌'} {def?.name || rt}<span className="text-[7px] ml-0.5">★</span>
+                      </span>
+                      <span className="text-[8px] text-[#58a6ff]/50 italic pt-1">No instances — create in Marketplace → Plugins</span>
+                    </div>
+                  );
+                })}
+              </>;
+
+            })()}
           </div>
 
           {/* Depends On — checkbox list of existing agents */}
@@ -1019,6 +1164,7 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
                 prompt: watchPrompt || undefined,
                 sendTo: watchSendTo || undefined,
               } : undefined,
+              plugins: selectedPlugins.length > 0 ? selectedPlugins : undefined,
             } as any);
           }} className="text-xs px-3 py-1.5 rounded bg-[#238636] text-white hover:bg-[#2ea043] disabled:opacity-40">
             {mode === 'add' ? 'Add' : 'Save'}
@@ -2714,6 +2860,17 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
   const handleAddAgent = async (cfg: Omit<AgentConfig, 'id'>) => {
     if (!workspaceId) return;
     const config: AgentConfig = { ...cfg, id: `${cfg.label.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}` };
+    // Auto-install base plugins if not already installed (for preset templates)
+    // User-selected instances are already installed, so this is a no-op for them
+    if (cfg.plugins?.length) {
+      for (const pluginId of cfg.plugins) {
+        fetch('/api/plugins', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'install', id: pluginId, config: {} }),
+        }).catch(() => {}); // silently skip if already installed
+      }
+    }
     // Optimistic update — show immediately
     setModal(null);
     await wsApi(workspaceId, 'add', { config });

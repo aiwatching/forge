@@ -710,6 +710,7 @@ export default function Dashboard({ user }: { user: any }) {
           </Suspense>
         )}
 
+
         {/* Usage */}
         {viewMode === 'usage' && (
           <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>

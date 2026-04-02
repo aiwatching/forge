@@ -71,11 +71,13 @@ export interface PluginDefinition {
 
 /** Installed plugin instance (definition + user config values) */
 export interface InstalledPlugin {
-  id: string;
+  id: string;                   // instance ID (e.g., 'jenkins-backend')
   definition: PluginDefinition;
   config: Record<string, any>;  // user-provided config values
   installedAt: string;
   enabled: boolean;
+  instanceName?: string;        // display name (e.g., 'Jenkins Backend')
+  source?: string;              // source plugin ID if this is an instance (e.g., 'jenkins')
 }
 
 /** Result of executing a plugin action */
@@ -97,4 +99,5 @@ export interface PluginSource {
   description: string;
   source: 'builtin' | 'local' | 'registry';
   installed: boolean;
+  configCount: number;  // number of config fields — 0 means no config needed
 }

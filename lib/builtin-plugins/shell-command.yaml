@@ -1,24 +1,60 @@
 id: shell-command
 name: Shell Command
-icon: 💻
-version: 1.0.0
+icon: "💻"
+version: "1.1.0"
 author: forge
-description: Run shell commands with structured output
+description: |
+  Run shell commands with structured output.
+  Create instances for common operations:
+  - "Run Tests" → default_command: npm test
+  - "Build" → default_command: npm run build
+  - "Deploy Staging" → default_command: ssh staging 'cd /app && git pull && pm2 restart'
 
-config: {}
+config:
+  default_command:
+    type: string
+    label: Default Command
+    description: "Pre-configured command to run if none provided"
+  default_cwd:
+    type: string
+    label: Working Directory
+    description: "Default working directory"
+  default_timeout:
+    type: number
+    label: Timeout (seconds)
+    default: 300
+  expected_output:
+    type: string
+    label: Expected Output Pattern
+    description: "Regex pattern to validate output (e.g., 'SUCCESS|PASSED')"
+  description:
+    type: string
+    label: Description
+    description: "What this command does (shown to agents)"
 
 params:
-  command: { type: string, label: "Command", required: true }
-  cwd: { type: string, label: "Working Directory" }
-  timeout: { type: number, label: "Timeout (seconds)", default: 300 }
+  command:
+    type: string
+    label: Command
+    description: "Overrides default_command if set"
+  cwd:
+    type: string
+    label: Working Directory
+  timeout:
+    type: number
+    label: Timeout (seconds)
+  args:
+    type: string
+    label: Extra Arguments
+    description: "Appended to the command"
+
+defaultAction: run
 
 actions:
   run:
     run: shell
-    command: "{{params.command}}"
+    command: "{{params.command}} {{params.args}}"
     cwd: "{{params.cwd}}"
     timeout: 300
     output:
       stdout: "$stdout"
-
-defaultAction: run

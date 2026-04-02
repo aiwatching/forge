@@ -11,7 +11,7 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { readFileSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -729,6 +729,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
         }
       }
     }
+
+    // Sync role → CLAUDE.md so CLI agents (Claude Code) see it as system instructions
+    this.syncRoleToClaudeMd(config);
 
     let upstreamContext = this.buildUpstreamContext(config);
     if (userInput) {
@@ -1825,6 +1828,72 @@ export class WorkspaceOrchestrator extends EventEmitter {
   }
 
   // ─── Private ───────────────────────────────────────────
+
+  /** Sync agent role description into CLAUDE.md so CLI agents read it natively */
+  private syncRoleToClaudeMd(config: WorkspaceAgentConfig): void {
+    if (!config.role?.trim()) return;
+    const workDir = join(this.projectPath, config.workDir || '');
+    const claudeMdPath = join(workDir, 'CLAUDE.md');
+
+    // Build plugin docs from agent's plugins
+    let pluginDocs = '';
+    if ((config as any).plugins?.length) {
+      try {
+        const { getInstalledPlugin, listInstalledPlugins } = require('../plugins/registry');
+        const installed = listInstalledPlugins();
+        const agentPlugins = (config as any).plugins as string[];
+        // Find all instances that match agent's plugin list (by source or direct id)
+        const relevant = installed.filter((p: any) =>
+          agentPlugins.includes(p.id) || agentPlugins.includes(p.source || p.id)
+        );
+        if (relevant.length > 0) {
+          pluginDocs = '\n\n## Available Plugins (via MCP run_plugin)\n';
+          for (const p of relevant) {
+            const def = p.definition;
+            const name = p.instanceName || def.name;
+            pluginDocs += `\n### ${def.icon} ${name} (id: "${p.id}")\n`;
+            if (def.description) pluginDocs += `${def.description}\n`;
+            pluginDocs += '\nActions:\n';
+            for (const [actionName, action] of Object.entries(def.actions) as any[]) {
+              pluginDocs += `- **${actionName}** (${action.run})`;
+              if (def.defaultAction === actionName) pluginDocs += ' [default]';
+              pluginDocs += '\n';
+            }
+            if (Object.keys(def.params).length > 0) {
+              pluginDocs += 'Params: ' + Object.entries(def.params).map(([k, v]: any) =>
+                `${k}${v.required ? '*' : ''} (${v.type})`
+              ).join(', ') + '\n';
+            }
+            pluginDocs += `\nUsage: run_plugin({ plugin: "${p.id}", action: "<action>", params: { ... } })\n`;
+          }
+        }
+      } catch {}
+    }
+
+    const MARKER_START = '<!-- forge:agent-role -->';
+    const MARKER_END = '<!-- /forge:agent-role -->';
+    const roleBlock = `${MARKER_START}\n## Agent Role (managed by Forge)\n\n${config.role.trim()}${pluginDocs}\n${MARKER_END}`;
+
+    try {
+      let content = '';
+      if (existsSync(claudeMdPath)) {
+        content = readFileSync(claudeMdPath, 'utf-8');
+        // Replace existing forge block
+        const regex = new RegExp(`${MARKER_START}[\\s\\S]*?${MARKER_END}`);
+        if (regex.test(content)) {
+          const updated = content.replace(regex, roleBlock);
+          if (updated !== content) writeFileSync(claudeMdPath, updated);
+          return;
+        }
+      }
+      // Append
+      mkdirSync(workDir, { recursive: true });
+      const separator = content && !content.endsWith('\n') ? '\n\n' : content ? '\n' : '';
+      writeFileSync(claudeMdPath, content + separator + roleBlock + '\n');
+    } catch (err) {
+      console.warn(`[workspace] Failed to sync role to CLAUDE.md for ${config.label}:`, err);
+    }
+  }
 
   private createBackend(config: WorkspaceAgentConfig, agentId?: string) {
     switch (config.backend) {

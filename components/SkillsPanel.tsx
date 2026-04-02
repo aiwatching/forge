@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
+
+const PluginsPanel = lazy(() => import('./PluginsPanel'));
 
 type ItemType = 'skill' | 'command';
 
@@ -131,7 +133,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
   const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [installTarget, setInstallTarget] = useState<{ skill: string; show: boolean }>({ skill: '', show: false });
-  const [typeFilter, setTypeFilter] = useState<'all' | 'skill' | 'command' | 'local' | 'rules'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'skill' | 'command' | 'local' | 'rules' | 'plugins'>('all');
   const [localItems, setLocalItems] = useState<{ name: string; type: string; scope: string; fileCount: number; projectPath?: string }[]>([]);
   // Rules (CLAUDE.md templates)
   const [rulesTemplates, setRulesTemplates] = useState<{ id: string; name: string; description: string; tags: string[]; builtin: boolean; isDefault: boolean; content: string }[]>([]);
@@ -363,7 +365,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-[var(--text-primary)]">Marketplace</span>
           <div className="flex items-center bg-[var(--bg-tertiary)] rounded p-0.5">
-            {([['all', `All (${skills.length})`], ['skill', `Skills (${skillCount})`], ['command', `Commands (${commandCount})`], ['local', `Local (${localCount})`], ['rules', 'Rules']] as const).map(([value, label]) => (
+            {([['all', `All (${skills.length})`], ['skill', `Skills (${skillCount})`], ['command', `Commands (${commandCount})`], ['local', `Local (${localCount})`], ['rules', 'Rules'], ['plugins', 'Plugins']] as const).map(([value, label]) => (
               <button
                 key={value}
                 onClick={() => setTypeFilter(value)}
@@ -388,7 +390,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
         </button>
       </div>
       {/* Search — hide on rules tab */}
-      {typeFilter !== 'rules' && <div className="px-3 py-1.5 border-b border-[var(--border)] shrink-0">
+      {typeFilter !== 'rules' && typeFilter !== 'plugins' && <div className="px-3 py-1.5 border-b border-[var(--border)] shrink-0">
         <input
           type="text"
           value={searchQuery}
@@ -398,7 +400,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
         />
       </div>}
 
-      {typeFilter === 'rules' ? null : skills.length === 0 ? (
+      {typeFilter === 'rules' || typeFilter === 'plugins' ? null : skills.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-2 text-[var(--text-secondary)]">
           <p className="text-xs">No skills yet</p>
           <button onClick={sync} className="text-xs px-3 py-1 bg-[var(--accent)] text-white rounded hover:opacity-90">
@@ -954,6 +956,13 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
             )}
           </div>
         </div>
+      )}
+
+      {/* Plugins — full-page view */}
+      {typeFilter === 'plugins' && (
+        <Suspense fallback={<div className="p-4 text-xs text-[var(--text-secondary)]">Loading...</div>}>
+          <PluginsPanel />
+        </Suspense>
       )}
     </div>
   );

@@ -288,6 +288,119 @@ function createForgeMcpServer(sessionId: string): McpServer {
     }
   );
 
+  // ── trigger_pipeline ──────────────────────────
+  server.tool(
+    'trigger_pipeline',
+    'Trigger a pipeline workflow. Lists available workflows if called without arguments.',
+    {
+      workflow: z.string().optional().describe('Workflow name to trigger. Omit to list available workflows.'),
+      input: z.record(z.string(), z.string()).optional().describe('Input variables for the pipeline (e.g., { project: "my-app" })'),
+    },
+    async (params) => {
+      try {
+        if (!params.workflow) {
+          // List available workflows
+          const { listWorkflows } = await import('./pipeline');
+          const workflows = listWorkflows();
+          if (workflows.length === 0) {
+            return { content: [{ type: 'text', text: 'No workflows found. Create .yaml files in ~/.forge/flows/' }] };
+          }
+          const list = workflows.map((w: any) => `• ${w.name}${w.description ? ' — ' + w.description : ''} (${Object.keys(w.nodes || {}).length} nodes)`).join('\n');
+          return { content: [{ type: 'text', text: `Available workflows:\n${list}` }] };
+        }
+
+        const { startPipeline } = await import('./pipeline');
+        const pipeline = startPipeline(params.workflow, (params.input || {}) as Record<string, string>);
+        return { content: [{ type: 'text', text: `Pipeline started: ${pipeline.id} (workflow: ${params.workflow}, status: ${pipeline.status})` }] };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── run_plugin ──────────────────────────────────
+  server.tool(
+    'run_plugin',
+    'Run an installed plugin action directly. Lists installed plugins if called without arguments.',
+    {
+      plugin: z.string().optional().describe('Plugin ID (e.g., "jenkins", "shell-command", "docker"). Omit to list installed plugins.'),
+      action: z.string().optional().describe('Action name (e.g., "trigger", "run", "build"). Uses default action if omitted.'),
+      params: z.record(z.string(), z.any()).optional().describe('Parameters for the action. Keys matching plugin config fields will override config values.'),
+      wait: z.boolean().optional().describe('Auto-run "wait" action after main action (for async operations like Jenkins builds)'),
+    },
+    async (params) => {
+      try {
+        const { listInstalledPlugins, getInstalledPlugin } = await import('./plugins/registry');
+
+        if (!params.plugin) {
+          const installed = listInstalledPlugins();
+          if (installed.length === 0) {
+            return { content: [{ type: 'text', text: 'No plugins installed. Install from the Plugins page.' }] };
+          }
+          const list = installed.map((p: any) => {
+            const actions = Object.keys(p.definition.actions).join(', ');
+            return `• ${p.definition.icon} ${p.id} — ${p.definition.description || p.definition.name}\n  actions: ${actions}`;
+          }).join('\n');
+          return { content: [{ type: 'text', text: `Installed plugins:\n${list}` }] };
+        }
+
+        const inst = getInstalledPlugin(params.plugin);
+        if (!inst) return { content: [{ type: 'text', text: `Plugin "${params.plugin}" not installed.` }] };
+        if (!inst.enabled) return { content: [{ type: 'text', text: `Plugin "${params.plugin}" is disabled.` }] };
+
+        const { executePluginWithWait } = await import('./plugins/executor');
+        const actionName = params.action || inst.definition.defaultAction || Object.keys(inst.definition.actions)[0];
+
+        if (!inst.definition.actions[actionName]) {
+          const available = Object.keys(inst.definition.actions).join(', ');
+          return { content: [{ type: 'text', text: `Action "${actionName}" not found. Available: ${available}` }] };
+        }
+
+        const result = await executePluginWithWait(inst, actionName, params.params || {}, params.wait || false);
+
+        const output = JSON.stringify(result.output, null, 2);
+        const status = result.ok ? 'OK' : 'FAILED';
+        const duration = result.duration ? ` (${result.duration}ms)` : '';
+        const error = result.error ? `\nError: ${result.error}` : '';
+
+        return { content: [{ type: 'text', text: `${status}${duration}${error}\n${output}` }] };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ── get_pipeline_status ────────────────────────
+  server.tool(
+    'get_pipeline_status',
+    'Check the status and results of a running or completed pipeline.',
+    {
+      pipeline_id: z.string().describe('Pipeline ID to check'),
+    },
+    async (params) => {
+      try {
+        const { getPipeline } = await import('./pipeline');
+        const pipeline = getPipeline(params.pipeline_id);
+        if (!pipeline) return { content: [{ type: 'text', text: `Pipeline "${params.pipeline_id}" not found.` }] };
+
+        const nodes = Object.entries(pipeline.nodes).map(([id, n]: [string, any]) => {
+          let line = `  ${id}: ${n.status}`;
+          if (n.error) line += ` — ${n.error}`;
+          if (n.outputs && Object.keys(n.outputs).length > 0) {
+            for (const [k, v] of Object.entries(n.outputs)) {
+              line += `\n    ${k}: ${String(v).slice(0, 200)}`;
+            }
+          }
+          return line;
+        }).join('\n');
+
+        return { content: [{ type: 'text', text: `Pipeline ${pipeline.id} [${pipeline.status}] (${pipeline.workflowName})\n${nodes}` }] };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
+      }
+    }
+  );
+
   return server;
 }
 

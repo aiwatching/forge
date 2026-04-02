@@ -37,8 +37,10 @@ function PipelineNode({ id, data }: NodeProps<Node<NodeData>>) {
 
       <div className="px-3 py-2 border-b border-[#3a3a5a] flex items-center gap-2">
         <span className={`text-[8px] px-1 py-0.5 rounded font-medium ${
-          (data as any).mode === 'shell' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-purple-500/20 text-purple-400'
-        }`}>{(data as any).mode === 'shell' ? 'shell' : ((data as any).agent || 'default')}</span>
+          (data as any).mode === 'shell' ? 'bg-yellow-500/20 text-yellow-400' :
+          (data as any).mode === 'plugin' ? 'bg-green-500/20 text-green-400' :
+          'bg-purple-500/20 text-purple-400'
+        }`}>{(data as any).mode === 'plugin' ? `🔌 ${(data as any).plugin || 'plugin'}` : (data as any).mode === 'shell' ? 'shell' : ((data as any).agent || 'default')}</span>
         <span className="text-xs font-semibold text-white">{data.label}</span>
         <div className="ml-auto flex gap-1">
           <button onClick={() => data.onEdit(id)} className="text-[9px] text-[var(--accent)] hover:text-white">edit</button>
@@ -66,10 +68,10 @@ const nodeTypes = { pipeline: PipelineNode };
 // ─── Node Edit Modal ──────────────────────────────────────
 
 function NodeEditModal({ node, projects, agents, onSave, onClose }: {
-  node: { id: string; project: string; prompt: string; agent?: string; mode?: string; outputs: { name: string; extract: string }[] };
+  node: { id: string; project: string; prompt: string; agent?: string; mode?: string; plugin?: string; pluginAction?: string; pluginParams?: Record<string, any>; pluginWait?: boolean; outputs: { name: string; extract: string }[] };
   projects: { name: string; root: string }[];
   agents: { id: string; name: string }[];
-  onSave: (data: { id: string; project: string; prompt: string; agent?: string; mode?: string; outputs: { name: string; extract: string }[] }) => void;
+  onSave: (data: any) => void;
   onClose: () => void;
 }) {
   const [id, setId] = useState(node.id);
@@ -77,6 +79,32 @@ function NodeEditModal({ node, projects, agents, onSave, onClose }: {
   const [prompt, setPrompt] = useState(node.prompt);
   const [agent, setAgent] = useState(node.agent || '');
   const [mode, setMode] = useState(node.mode || 'claude');
+  // Plugin fields
+  const [pluginId, setPluginId] = useState(node.plugin || '');
+  const [pluginAction, setPluginAction] = useState(node.pluginAction || '');
+  const [pluginParams, setPluginParams] = useState(JSON.stringify(node.pluginParams || {}, null, 2));
+  const [pluginWait, setPluginWait] = useState(node.pluginWait || false);
+  const [availablePlugins, setAvailablePlugins] = useState<{ id: string; name: string; icon: string; installed: boolean; actions?: Record<string, any> }[]>([]);
+  const [selectedPluginDef, setSelectedPluginDef] = useState<any>(null);
+
+  // Fetch installed plugins
+  useEffect(() => {
+    fetch('/api/plugins?installed=true')
+      .then(r => r.json())
+      .then(d => {
+        const plugins = (d.plugins || []).map((p: any) => ({
+          id: p.id, name: p.definition?.name || p.id, icon: p.definition?.icon || '🔌',
+          installed: true, actions: p.definition?.actions || {},
+          params: p.definition?.params || {},
+        }));
+        setAvailablePlugins(plugins);
+        if (pluginId) {
+          const sel = plugins.find((p: any) => p.id === pluginId);
+          if (sel) setSelectedPluginDef(sel);
+        }
+      })
+      .catch(() => {});
+  }, []);
   const [outputs, setOutputs] = useState(node.outputs);
 
   return (
@@ -116,11 +144,12 @@ function NodeEditModal({ node, projects, agents, onSave, onClose }: {
               <label className="text-[10px] text-gray-400 block mb-1">Mode</label>
               <select
                 value={mode}
-                onChange={e => setMode(e.target.value)}
+                onChange={e => { setMode(e.target.value); if (e.target.value !== 'plugin') { setPluginId(''); setSelectedPluginDef(null); } }}
                 className="w-full text-xs bg-[#12122a] border border-[#3a3a5a] rounded px-2 py-1.5 text-white"
               >
                 <option value="claude">Agent</option>
                 <option value="shell">Shell</option>
+                <option value="plugin">Plugin</option>
               </select>
             </div>
             {mode !== 'shell' && (
@@ -139,8 +168,71 @@ function NodeEditModal({ node, projects, agents, onSave, onClose }: {
               </div>
             )}
           </div>
+          {/* Plugin config */}
+          {mode === 'plugin' && (
+            <div className="space-y-2 p-2 bg-[#12122a] rounded border border-[#3a3a5a]">
+              <div>
+                <label className="text-[10px] text-gray-400 block mb-1">Plugin</label>
+                <select
+                  value={pluginId}
+                  onChange={e => {
+                    setPluginId(e.target.value);
+                    const sel = availablePlugins.find(p => p.id === e.target.value);
+                    setSelectedPluginDef(sel || null);
+                    setPluginAction('');
+                  }}
+                  className="w-full text-xs bg-[#1e1e3a] border border-[#3a3a5a] rounded px-2 py-1.5 text-white"
+                >
+                  <option value="">Select plugin...</option>
+                  {availablePlugins.map(p => (
+                    <option key={p.id} value={p.id}>{p.icon} {p.name}</option>
+                  ))}
+                </select>
+                {availablePlugins.length === 0 && (
+                  <div className="text-[9px] text-yellow-400 mt-1">No plugins installed. Install from Settings → Plugins.</div>
+                )}
+              </div>
+              {selectedPluginDef && (
+                <>
+                  <div>
+                    <label className="text-[10px] text-gray-400 block mb-1">Action</label>
+                    <select
+                      value={pluginAction}
+                      onChange={e => setPluginAction(e.target.value)}
+                      className="w-full text-xs bg-[#1e1e3a] border border-[#3a3a5a] rounded px-2 py-1.5 text-white"
+                    >
+                      <option value="">Default</option>
+                      {Object.keys(selectedPluginDef.actions || {}).map((a: string) => (
+                        <option key={a} value={a}>{a}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-400 block mb-1">Parameters (JSON)</label>
+                    <textarea
+                      value={pluginParams}
+                      onChange={e => setPluginParams(e.target.value)}
+                      rows={4}
+                      className="w-full text-xs bg-[#1e1e3a] border border-[#3a3a5a] rounded px-2 py-1.5 text-white font-mono resize-y"
+                      placeholder='{ "key": "value" }'
+                    />
+                    {selectedPluginDef.params && Object.keys(selectedPluginDef.params).length > 0 && (
+                      <div className="text-[8px] text-gray-500 mt-0.5">
+                        Available: {Object.entries(selectedPluginDef.params).map(([k, v]: [string, any]) => `${k}${v.required ? '*' : ''}`).join(', ')}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="pluginWait" checked={pluginWait} onChange={e => setPluginWait(e.target.checked)} className="accent-[var(--accent)]" />
+                    <label htmlFor="pluginWait" className="text-[10px] text-gray-400">Wait for completion (poll)</label>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           <div>
-            <label className="text-[10px] text-gray-400 block mb-1">Prompt</label>
+            <label className="text-[10px] text-gray-400 block mb-1">{mode === 'plugin' ? 'Notes (optional)' : 'Prompt'}</label>
             <textarea
               value={prompt}
               onChange={e => setPrompt(e.target.value)}
@@ -181,7 +273,18 @@ function NodeEditModal({ node, projects, agents, onSave, onClose }: {
         <div className="px-4 py-3 border-t border-[#3a3a5a] flex gap-2 justify-end">
           <button onClick={onClose} className="text-xs px-3 py-1 text-gray-400 hover:text-white">Cancel</button>
           <button
-            onClick={() => onSave({ id, project, prompt, agent: agent || undefined, mode, outputs: outputs.filter(o => o.name) })}
+            onClick={() => {
+              let parsedParams: Record<string, any> = {};
+              try { parsedParams = JSON.parse(pluginParams || '{}'); } catch {}
+              onSave({
+                id, project, prompt, agent: agent || undefined, mode,
+                plugin: mode === 'plugin' ? pluginId : undefined,
+                pluginAction: mode === 'plugin' ? pluginAction || undefined : undefined,
+                pluginParams: mode === 'plugin' ? parsedParams : undefined,
+                pluginWait: mode === 'plugin' ? pluginWait : undefined,
+                outputs: outputs.filter(o => o.name),
+              });
+            }}
             className="text-xs px-3 py-1 bg-[var(--accent)] text-white rounded hover:opacity-90"
           >
             Save
@@ -201,7 +304,7 @@ export default function PipelineEditor({ onSave, onClose, initialYaml }: {
 }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<NodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [editingNode, setEditingNode] = useState<{ id: string; project: string; prompt: string; agent?: string; mode?: string; outputs: { name: string; extract: string }[] } | null>(null);
+  const [editingNode, setEditingNode] = useState<{ id: string; project: string; prompt: string; agent?: string; mode?: string; plugin?: string; pluginAction?: string; pluginParams?: Record<string, any>; pluginWait?: boolean; outputs: { name: string; extract: string }[] } | null>(null);
   const [workflowName, setWorkflowName] = useState('');
   const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string }[]>([]);
   const [workflowDesc, setWorkflowDesc] = useState('');
@@ -240,6 +343,12 @@ export default function PipelineEditor({ onSave, onClose, initialYaml }: {
             label: id,
             project: def.project || '',
             prompt: def.prompt || '',
+            agent: def.agent,
+            mode: def.mode || (def.plugin ? 'plugin' : undefined),
+            plugin: def.plugin,
+            pluginAction: def.plugin_action,
+            pluginParams: def.params,
+            pluginWait: def.wait,
             outputs: (def.outputs || []).map((o: any) => ({ name: o.name, extract: o.extract || 'result' })),
             onEdit: (nid: string) => handleEditNode(nid),
             onDelete: (nid: string) => handleDeleteNode(nid),
@@ -297,6 +406,12 @@ export default function PipelineEditor({ onSave, onClose, initialYaml }: {
           id: node.id,
           project: node.data.project,
           prompt: node.data.prompt,
+          agent: (node.data as any).agent,
+          mode: (node.data as any).mode,
+          plugin: (node.data as any).plugin,
+          pluginAction: (node.data as any).pluginAction,
+          pluginParams: (node.data as any).pluginParams,
+          pluginWait: (node.data as any).pluginWait,
           outputs: node.data.outputs,
         });
       }
@@ -309,7 +424,7 @@ export default function PipelineEditor({ onSave, onClose, initialYaml }: {
     setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
   }, [setNodes, setEdges]);
 
-  const handleSaveNode = useCallback((data: { id: string; project: string; prompt: string; agent?: string; mode?: string; outputs: { name: string; extract: string }[] }) => {
+  const handleSaveNode = useCallback((data: { id: string; project: string; prompt: string; agent?: string; mode?: string; plugin?: string; pluginAction?: string; pluginParams?: Record<string, any>; pluginWait?: boolean; outputs: { name: string; extract: string }[] }) => {
     setNodes(nds => nds.map(n => {
       if (n.id === editingNode?.id) {
         return {
@@ -322,6 +437,10 @@ export default function PipelineEditor({ onSave, onClose, initialYaml }: {
             prompt: data.prompt,
             agent: data.agent,
             mode: data.mode,
+            plugin: data.plugin,
+            pluginAction: data.pluginAction,
+            pluginParams: data.pluginParams,
+            pluginWait: data.pluginWait,
             outputs: data.outputs,
           },
         };
@@ -356,6 +475,13 @@ export default function PipelineEditor({ onSave, onClose, initialYaml }: {
         prompt: node.data.prompt,
       };
       if ((node.data as any).mode === 'shell') nodeDef.mode = 'shell';
+      if ((node.data as any).mode === 'plugin') {
+        nodeDef.mode = 'plugin';
+        nodeDef.plugin = (node.data as any).plugin;
+        if ((node.data as any).pluginAction) nodeDef.plugin_action = (node.data as any).pluginAction;
+        if ((node.data as any).pluginParams && Object.keys((node.data as any).pluginParams).length > 0) nodeDef.params = (node.data as any).pluginParams;
+        if ((node.data as any).pluginWait) nodeDef.wait = true;
+      }
       if ((node.data as any).agent) nodeDef.agent = (node.data as any).agent;
       if (deps.length > 0) nodeDef.depends_on = deps;
       if (node.data.outputs.length > 0) nodeDef.outputs = node.data.outputs;

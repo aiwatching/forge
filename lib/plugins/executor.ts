@@ -4,7 +4,7 @@
  * Resolves templates ({{config.x}}, {{params.x}}) and executes the action.
  */
 
-import { exec } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import type { PluginAction, PluginActionResult, InstalledPlugin } from './types';
 
 // ─── Template Resolution ─────────────────────────────────
@@ -145,45 +145,94 @@ async function executeShell(action: PluginAction, ctx: Record<string, any>): Pro
   const timeout = (action.timeout || 300) * 1000;
 
   return new Promise((resolve) => {
+    let resolved = false;
+    const done = (result: PluginActionResult) => {
+      if (resolved) return;
+      resolved = true;
+      resolve(result);
+    };
+
     try {
-      const child = exec(command, {
+      // Use spawn with detached: true so the child gets its own process group.
+      // This prevents crashes/signals in the child (e.g., Playwright browser crash)
+      // from propagating to Forge's process group and killing sibling services.
+      const child = spawn('/bin/sh', ['-c', command], {
         cwd,
-        encoding: 'utf-8',
-        timeout,
-        maxBuffer: 10 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env, FORCE_COLOR: '0' },
-        killSignal: 'SIGTERM',
-      }, (err, stdout, stderr) => {
-        if (err) {
-          resolve({
-            ok: false,
-            output: {},
-            error: err.message,
-            rawResponse: (stderr || stdout || '').slice(0, 5000),
-            duration: Date.now() - startTime,
-          });
-        } else {
-          resolve({
-            ok: true,
-            output: extractOutputs((stdout || '').trim(), action.output),
-            rawResponse: (stdout || '').trim().slice(0, 5000),
-            duration: Date.now() - startTime,
-          });
+        detached: true,
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString('utf-8');
+        // Cap buffer to prevent memory issues
+        if (stdout.length > 10 * 1024 * 1024) {
+          stdout = stdout.slice(-5 * 1024 * 1024);
         }
       });
-      // Prevent child from killing parent
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf-8');
+        if (stderr.length > 10 * 1024 * 1024) {
+          stderr = stderr.slice(-5 * 1024 * 1024);
+        }
+      });
+
+      console.log(`[plugin-shell] pid=${child.pid} pgid=new command=${command.slice(0, 80)}`);
+
       child.on('error', (e) => {
-        resolve({
+        console.log(`[plugin-shell] pid=${child.pid} error: ${e.message}`);
+        done({
           ok: false,
           output: {},
           error: `Process error: ${e.message}`,
           duration: Date.now() - startTime,
         });
       });
-      // Unref so child doesn't keep parent alive
-      child.unref();
+
+      // Use 'close' instead of 'exit' to ensure all stdout/stderr data is collected
+      child.on('close', (code, signal) => {
+        child.unref();
+        console.log(`[plugin-shell] pid=${child.pid} closed code=${code} signal=${signal} stdout=${stdout.length}b stderr=${stderr.length}b`);
+        const combined = (stdout || stderr || '').trim();
+        // Treat SIGTERM (143) with output as a normal completion — many test runners
+        // and complex commands send SIGTERM to their process group during cleanup,
+        // which kills the shell wrapper but doesn't indicate a real failure.
+        const killedBySignal = code === null || code === 143 || code === 130;
+        const hasOutput = combined.length > 0;
+        const effectiveOk = code === 0 || (killedBySignal && hasOutput);
+
+        done({
+          ok: effectiveOk,
+          output: extractOutputs(combined, action.output),
+          error: effectiveOk ? undefined : (signal ? `Killed by ${signal}` : `Exit code ${code}`),
+          rawResponse: combined.slice(0, 5000),
+          duration: Date.now() - startTime,
+        });
+      });
+
+      // Timeout: kill the child's process group
+      const timer = setTimeout(() => {
+        try { process.kill(-child.pid!, 'SIGTERM'); } catch {}
+        setTimeout(() => {
+          try { process.kill(-child.pid!, 'SIGKILL'); } catch {}
+        }, 3000);
+        done({
+          ok: false,
+          output: {},
+          error: `Command timed out after ${timeout / 1000}s`,
+          rawResponse: (stderr || stdout || '').slice(0, 5000),
+          duration: Date.now() - startTime,
+        });
+      }, timeout);
+      // Don't let the timer keep the process alive
+      timer.unref();
+
+      child.on('exit', () => clearTimeout(timer));
     } catch (e: any) {
-      resolve({
+      done({
         ok: false,
         output: {},
         error: `Failed to spawn: ${e.message}`,

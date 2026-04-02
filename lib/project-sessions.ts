@@ -13,13 +13,18 @@ function getFilePath(): string {
   return join(dir, 'project-sessions.json');
 }
 
+let cache: Record<string, string> | null = null;
+
 function loadAll(): Record<string, string> {
+  if (cache !== null) return cache;
   const fp = getFilePath();
-  if (!existsSync(fp)) return {};
-  try { return JSON.parse(readFileSync(fp, 'utf-8')); } catch { return {}; }
+  if (!existsSync(fp)) { cache = {}; return cache; }
+  try { cache = JSON.parse(readFileSync(fp, 'utf-8')) as Record<string, string>; } catch { cache = {}; }
+  return cache;
 }
 
 function saveAll(data: Record<string, string>): void {
+  cache = data;
   writeFileSync(getFilePath(), JSON.stringify(data, null, 2));
 }
 

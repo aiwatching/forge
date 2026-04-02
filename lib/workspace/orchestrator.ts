@@ -11,7 +11,7 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { readFileSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, unlinkSync, mkdirSync, statSync, readdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -39,6 +39,7 @@ import {
   loadMemory, saveMemory, createMemory, formatMemoryForPrompt,
   addObservation, addSessionSummary, parseStepToObservations, buildSessionSummary,
 } from './smith-memory';
+import { getFixedSession } from '../project-sessions';
 
 // ─── Orchestrator Events ─────────────────────────────────
 
@@ -66,6 +67,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
   private daemonActive = false;
   private createdAt = Date.now();
   private healthCheckTimer: NodeJS.Timeout | null = null;
+  private settingsValidCache = new Map<string, number>(); // filePath → mtime (validated ok)
+  private agentRunningMsg = new Map<string, string>(); // agentId → messageId currently being processed
+  private reconcileTick = 0; // counts health check ticks for 60s reconcile
 
   /** Emit a log event (auto-persisted via constructor listener) */
   emitLog(agentId: string, entry: any): void {
@@ -819,6 +823,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
         this.handleAgentDone(agentId, entry, event.summary);
       }
       if (event.type === 'error') {
+        this.agentRunningMsg.delete(agentId);
         this.bus.notifyError(agentId, event.error);
         this.emitWorkspaceStatus();
       }
@@ -842,6 +847,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
     // Execute in daemon mode (non-blocking)
     worker.executeDaemon(0, upstreamContext).catch(err => {
       if (entry.state.taskStatus !== 'failed') {
+        this.agentRunningMsg.delete(agentId);
         entry.state.taskStatus = 'failed';
         entry.state.error = err?.message || String(err);
         this.emit('event', { type: 'error', agentId, error: entry.state.error! } satisfies WorkerEvent);
@@ -1036,6 +1042,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
         this.handleAgentDone(agentId, entry, event.summary);
       }
       if (event.type === 'error') {
+        this.agentRunningMsg.delete(agentId);
         this.bus.notifyError(agentId, event.error);
       }
     });
@@ -1103,6 +1110,10 @@ export class WorkspaceOrchestrator extends EventEmitter {
     if (this.sessionMonitor) { this.sessionMonitor.stopAll(); this.sessionMonitor = null; }
     this.stopHealthCheck();
     this.forgeActedMessages.clear();
+    this.busMarkerScanned.clear();
+    this.forgeAgentStartTime = 0;
+    this.agentRunningMsg.clear();
+    this.reconcileTick = 0;
     console.log('[workspace] Daemon stopped');
   }
 
@@ -1171,16 +1182,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
     let sessionId: string | undefined;
 
     if (config.primary) {
-      try {
-        const psPath = join(homedir(), '.forge', 'data', 'project-sessions.json');
-        if (existsSync(psPath)) {
-          const psData = JSON.parse(readFileSync(psPath, 'utf-8'));
-          sessionId = psData[this.projectPath];
-        }
-        console.log(`[session-monitor] ${config.label}: primary fixedSession=${sessionId || 'NONE'}`);
-      } catch (err: any) {
-        console.log(`[session-monitor] ${config.label}: failed to read fixedSession: ${err.message}`);
-      }
+      sessionId = getFixedSession(this.projectPath);
+      console.log(`[session-monitor] ${config.label}: primary fixedSession=${sessionId || 'NONE'}`);
     } else {
       sessionId = config.boundSessionId;
       console.log(`[session-monitor] ${config.label}: boundSession=${sessionId || 'NONE'}`);
@@ -1188,23 +1191,12 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     if (!sessionId) {
       // Try to auto-bind from session files on disk
-      try {
-        const sessionDir = this.getCliSessionDir(config.workDir);
-        if (existsSync(sessionDir)) {
-          const files = require('node:fs').readdirSync(sessionDir).filter((f: string) => f.endsWith('.jsonl'));
-          if (files.length > 0) {
-            const sorted = files
-              .map((f: string) => ({ name: f, mtime: require('node:fs').statSync(join(sessionDir, f)).mtimeMs }))
-              .sort((a: any, b: any) => b.mtime - a.mtime);
-            sessionId = sorted[0].name.replace('.jsonl', '');
-            if (!config.primary) {
-              config.boundSessionId = sessionId;
-              this.saveNow();
-              console.log(`[session-monitor] ${config.label}: auto-bound to ${sessionId}`);
-            }
-          }
-        }
-      } catch {}
+      sessionId = this.getLatestSessionId(config.workDir);
+      if (sessionId && !config.primary) {
+        config.boundSessionId = sessionId;
+        this.saveNow();
+        console.log(`[session-monitor] ${config.label}: auto-bound to ${sessionId}`);
+      }
       if (!sessionId) {
         console.log(`[session-monitor] ${config.label}: no sessionId, skipping`);
         return;
@@ -1233,6 +1225,20 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
   private runHealthCheck(): void {
     if (!this.daemonActive) return;
+
+    // Every 60s (6 ticks × 10s): reconcile agentRunningMsg cache with actual bus log
+    this.reconcileTick++;
+    if (this.reconcileTick >= 6) {
+      this.reconcileTick = 0;
+      const log = this.bus.getLog();
+      for (const [agentId, messageId] of this.agentRunningMsg) {
+        const msg = log.find(m => m.id === messageId);
+        if (!msg || msg.status !== 'running') {
+          console.log(`[health] reconcile: clearing stale agentRunningMsg for ${agentId} (msg=${messageId.slice(0, 8)}, status=${msg?.status || 'not found'})`);
+          this.agentRunningMsg.delete(agentId);
+        }
+      }
+    }
 
     for (const [id, entry] of this.agents) {
       if (entry.config.type === 'input') continue;
@@ -1275,7 +1281,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       // Check 5: Pending messages but agent idle — try wake
       if (entry.state.taskStatus !== 'running') {
         const pending = this.bus.getPendingMessagesFor(id).filter(m => m.from !== id && m.type !== 'ack');
-        if (pending.length > 0 && entry.worker.isListening()) {
+        if (pending.length > 0 && entry.worker?.isListening()) {
           // Message loop should handle this, but if it didn't, log it
           const age = Date.now() - pending[0].timestamp;
           if (age > 30_000) { // stuck for 30+ seconds
@@ -1307,6 +1313,16 @@ export class WorkspaceOrchestrator extends EventEmitter {
     const log = this.bus.getLog();
     const now = Date.now();
 
+    // Pre-build reply index: "from→to" → latest non-ack message timestamp (only after daemon start)
+    // Used for O(1) hasReply lookups instead of O(n) log.some() per message
+    const replyIndex = new Map<string, number>();
+    for (const r of log) {
+      if (r.timestamp < this.forgeAgentStartTime) continue;
+      if (r.type === 'ack') continue;
+      const key = `${r.from}→${r.to}`;
+      if ((replyIndex.get(key) || 0) < r.timestamp) replyIndex.set(key, r.timestamp);
+    }
+
     // Only scan messages from after daemon start (skip all history)
     for (const msg of log) {
       if (msg.timestamp < this.forgeAgentStartTime) continue;
@@ -1326,10 +1342,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
         const nudgeKey = `nudge-${msg.to}->${msg.from}`;
         if (this.forgeActedMessages.has(nudgeKey)) { this.forgeActedMessages.add(msg.id); continue; }
 
-        const hasReply = log.some(r =>
-          r.from === msg.to && r.to === msg.from &&
-          r.timestamp > msg.timestamp && r.type !== 'ack'
-        );
+        const hasReply = (replyIndex.get(`${msg.to}→${msg.from}`) || 0) > msg.timestamp;
         if (!hasReply) {
           const senderLabel = this.agents.get(msg.from)?.config.label || msg.from;
           const targetEntry = this.agents.get(msg.to);
@@ -1815,6 +1828,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
   /** Stop all agents, save final state, and clean up */
   shutdown(): void {
+    this.daemonActive = false;
+    this.stopHealthCheck();
     this.stopAllMessageLoops();
     stopAutoSave(this.workspaceId);
     // Sync save — must complete before process exits
@@ -1837,11 +1852,11 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     // Build plugin docs from agent's plugins
     let pluginDocs = '';
-    if ((config as any).plugins?.length) {
+    if (config.plugins?.length) {
       try {
         const { getInstalledPlugin, listInstalledPlugins } = require('../plugins/registry');
         const installed = listInstalledPlugins();
-        const agentPlugins = (config as any).plugins as string[];
+        const agentPlugins = config.plugins;
         // Find all instances that match agent's plugin list (by source or direct id)
         const relevant = installed.filter((p: any) =>
           agentPlugins.includes(p.id) || agentPlugins.includes(p.source || p.id)
@@ -2001,6 +2016,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
   /** Unified done handler: broadcast downstream or reply to sender based on message source */
   private handleAgentDone(agentId: string, entry: { config: WorkspaceAgentConfig; worker: AgentWorker | null; state: AgentState }, summary?: string): void {
+    this.agentRunningMsg.delete(agentId);
     const files = entry.state.artifacts.filter(a => a.path).map(a => a.path!);
     console.log(`[workspace] Agent "${entry.config.label}" (${agentId}) completed. Artifacts: ${files.length}.`);
 
@@ -2034,6 +2050,16 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     // Find all downstream agents — skip if already sent upstream_complete recently (60s)
     const now = Date.now();
+
+    // Pre-scan log once: build dedup set and pending-to-complete list
+    const recentSentTo = new Set<string>(); // agentIds that received upstream_complete within 60s
+    const pendingToComplete: { m: any; to: string }[] = [];
+    for (const m of this.bus.getLog()) {
+      if (m.from !== completedAgentId || m.payload?.action !== 'upstream_complete') continue;
+      if (now - m.timestamp < 60_000) recentSentTo.add(m.to);
+      if (m.status === 'pending') pendingToComplete.push({ m, to: m.to });
+    }
+
     let sent = 0;
     for (const [id, entry] of this.agents) {
       if (id === completedAgentId) continue;
@@ -2041,19 +2067,14 @@ export class WorkspaceOrchestrator extends EventEmitter {
       if (!entry.config.dependsOn.includes(completedAgentId)) continue;
 
       // Dedup: skip if upstream_complete was sent to this target within last 60s
-      const recentDup = this.bus.getLog().some(m =>
-        m.from === completedAgentId && m.to === id &&
-        m.payload?.action === 'upstream_complete' &&
-        now - m.timestamp < 60_000
-      );
-      if (recentDup) {
+      if (recentSentTo.has(id)) {
         console.log(`[bus] ${completedLabel} → ${entry.config.label}: upstream_complete skipped (sent <60s ago)`);
         continue;
       }
 
-      // Merge: auto-complete older pending upstream_complete from same sender
-      for (const m of this.bus.getLog()) {
-        if (m.from === completedAgentId && m.to === id && m.status === 'pending' && m.payload?.action === 'upstream_complete') {
+      // Merge: auto-complete older pending upstream_complete from same sender to this target
+      for (const { m, to } of pendingToComplete) {
+        if (to === id) {
           m.status = 'done' as any;
           this.emit('event', { type: 'bus_message_status', messageId: m.id, status: 'done' } as any);
         }
@@ -2086,20 +2107,41 @@ export class WorkspaceOrchestrator extends EventEmitter {
     return join(homedir(), '.claude', 'projects', encoded);
   }
 
+  /** Return the latest session ID (by mtime) from the CLI session dir, or undefined if none */
+  private getLatestSessionId(workDir?: string): string | undefined {
+    try {
+      const sessionDir = this.getCliSessionDir(workDir);
+      if (!existsSync(sessionDir)) return undefined;
+      const files = readdirSync(sessionDir).filter(f => f.endsWith('.jsonl'));
+      if (files.length === 0) return undefined;
+      const latest = files
+        .map(f => ({ name: f, mtime: statSync(join(sessionDir, f)).mtimeMs }))
+        .sort((a, b) => b.mtime - a.mtime)[0];
+      return latest.name.replace('.jsonl', '');
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Create a persistent tmux session with the CLI agent */
   private async ensurePersistentSession(agentId: string, config: WorkspaceAgentConfig): Promise<void> {
     const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
     const sessionName = `mw-forge-${safeName(this.projectName)}-${safeName(config.label)}`;
 
-    // Pre-flight: check project's .claude/settings.json is valid
+    // Pre-flight: check project's .claude/settings.json is valid (cached by mtime)
     const workDir = config.workDir && config.workDir !== './' && config.workDir !== '.'
       ? `${this.projectPath}/${config.workDir}` : this.projectPath;
     const projectSettingsFile = join(workDir, '.claude', 'settings.json');
     if (existsSync(projectSettingsFile)) {
       try {
-        const raw = readFileSync(projectSettingsFile, 'utf-8');
-        JSON.parse(raw);
+        const mtime = statSync(projectSettingsFile).mtimeMs;
+        if (this.settingsValidCache.get(projectSettingsFile) !== mtime) {
+          const raw = readFileSync(projectSettingsFile, 'utf-8');
+          JSON.parse(raw);
+          this.settingsValidCache.set(projectSettingsFile, mtime);
+        }
       } catch (err: any) {
+        this.settingsValidCache.delete(projectSettingsFile);
         const errorMsg = `Invalid .claude/settings.json: ${err.message}`;
         console.error(`[daemon] ${config.label}: ${errorMsg}`);
         const entry = this.agents.get(agentId);
@@ -2131,22 +2173,42 @@ export class WorkspaceOrchestrator extends EventEmitter {
       console.error(`[daemon] ${config.label}: failed to write agent-context.json: ${err.message}`);
     }
 
-    // Check if tmux session already exists
+    // Check if tmux session already exists and Claude is still alive inside
     let sessionAlreadyExists = false;
+    let tmuxSessionExists = false;
     try {
       execSync(`tmux has-session -t "${sessionName}" 2>/dev/null`, { timeout: 3000 });
-      sessionAlreadyExists = true;
-      console.log(`[daemon] ${config.label}: persistent session already exists (${sessionName})`);
-      // Ensure FORGE env vars are set in the tmux session environment
-      // (for hooks that read them — set-environment makes them available to new processes in this session)
+      tmuxSessionExists = true;
+    } catch {}
+
+    if (tmuxSessionExists) {
+      // Check if Claude process is still alive inside the tmux pane
+      let claudeAlive = true;
       try {
-        execSync(`tmux set-environment -t "${sessionName}" FORGE_WORKSPACE_ID "${this.workspaceId}"`, { timeout: 3000 });
-        execSync(`tmux set-environment -t "${sessionName}" FORGE_AGENT_ID "${config.id}"`, { timeout: 3000 });
-        execSync(`tmux set-environment -t "${sessionName}" FORGE_PORT "${Number(process.env.PORT) || 8403}"`, { timeout: 3000 });
-      } catch {}
-      // Note: set-environment affects new processes in this tmux session.
-      // Claude Code hooks run as child processes of the shell, which inherits tmux environment.
-    } catch {
+        const paneContent = execSync(`tmux capture-pane -t "${sessionName}" -p -S -5`, { timeout: 3000, encoding: 'utf-8' });
+        const exitedPatterns = [/^\$\s*$/, /\$ $/m, /Process exited/i, /command not found/i];
+        if (exitedPatterns.some(p => p.test(paneContent))) {
+          console.log(`[daemon] ${config.label}: Claude appears to have exited, recreating session`);
+          try { execSync(`tmux kill-session -t "${sessionName}" 2>/dev/null`, { timeout: 3000 }); } catch {}
+          claudeAlive = false;
+        }
+      } catch {
+        // pane capture failed — assume alive
+      }
+
+      if (claudeAlive) {
+        sessionAlreadyExists = true;
+        console.log(`[daemon] ${config.label}: persistent session alive (${sessionName})`);
+        // Ensure FORGE env vars are set in the tmux session environment
+        try {
+          execSync(`tmux set-environment -t "${sessionName}" FORGE_WORKSPACE_ID "${this.workspaceId}"`, { timeout: 3000 });
+          execSync(`tmux set-environment -t "${sessionName}" FORGE_AGENT_ID "${config.id}"`, { timeout: 3000 });
+          execSync(`tmux set-environment -t "${sessionName}" FORGE_PORT "${Number(process.env.PORT) || 8403}"`, { timeout: 3000 });
+        } catch {}
+      }
+    }
+
+    if (!sessionAlreadyExists) {
       // Create new tmux session and start the CLI agent
       try {
         // Resolve agent launch info
@@ -2219,17 +2281,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
         if (supportsSession) {
           let sessionId: string | undefined;
           if (config.primary) {
-            // Read fixedSessionId directly from file (avoid dynamic import issues in production build)
-            try {
-              const psPath = join(homedir(), '.forge', 'data', 'project-sessions.json');
-              if (existsSync(psPath)) {
-                const psData = JSON.parse(readFileSync(psPath, 'utf-8'));
-                sessionId = psData[this.projectPath];
-              }
-              console.log(`[daemon] ${config.label}: fixedSession=${sessionId || 'NONE'} for ${this.projectPath}`);
-            } catch (err: any) {
-              console.error(`[daemon] ${config.label}: failed to read fixedSession: ${err.message}`);
-            }
+            sessionId = getFixedSession(this.projectPath);
+            console.log(`[daemon] ${config.label}: fixedSession=${sessionId || 'NONE'} for ${this.projectPath}`);
           } else {
             sessionId = config.boundSessionId;
           }
@@ -2289,26 +2342,6 @@ export class WorkspaceOrchestrator extends EventEmitter {
             return;
           }
         } catch {}
-        // Auto-bind session: if no boundSessionId, detect new session file after 5s
-        if (!config.primary && !config.boundSessionId && supportsSession) {
-          setTimeout(() => {
-            try {
-              const sessionDir = this.getCliSessionDir(config.workDir);
-              if (existsSync(sessionDir)) {
-                const { readdirSync, statSync: statS } = require('node:fs');
-                const files = readdirSync(sessionDir).filter((f: string) => f.endsWith('.jsonl'));
-                if (files.length > 0) {
-                  const latest = files
-                    .map((f: string) => ({ name: f, mtime: statS(join(sessionDir, f)).mtimeMs }))
-                    .sort((a: any, b: any) => b.mtime - a.mtime)[0];
-                  config.boundSessionId = latest.name.replace('.jsonl', '');
-                  this.saveNow();
-                  console.log(`[daemon] ${config.label}: auto-bound to session ${config.boundSessionId}`);
-                }
-              }
-            } catch {}
-          }, 5000);
-        }
       } catch (err: any) {
         console.error(`[daemon] ${config.label}: failed to create persistent session: ${err.message}`);
         const entry = this.agents.get(agentId);
@@ -2330,34 +2363,43 @@ export class WorkspaceOrchestrator extends EventEmitter {
       this.emitAgentsChanged();
     }
 
-    // Start session monitor only for newly created sessions (not existing ones)
-    if (!sessionAlreadyExists) {
-      this.startAgentSessionMonitor(agentId, config);
+    // Ensure boundSessionId is set before returning (required for session monitor + --resume)
+    // Also re-bind if existing boundSessionId points to a deleted session file
+    if (!config.primary && config.boundSessionId) {
+      const boundFile = join(this.getCliSessionDir(config.workDir), `${config.boundSessionId}.jsonl`);
+      if (!existsSync(boundFile)) {
+        console.log(`[daemon] ${config.label}: boundSession ${config.boundSessionId} file missing, re-binding`);
+        config.boundSessionId = undefined;
+      }
     }
-
-    // Ensure boundSessionId is set (required for session monitor + --resume)
     if (!config.primary && !config.boundSessionId) {
-      const bindDelay = sessionAlreadyExists ? 500 : 5000;
-      setTimeout(() => {
-        try {
-          const sessionDir = this.getCliSessionDir(config.workDir);
-          if (existsSync(sessionDir)) {
-            const { readdirSync, statSync: statS } = require('node:fs');
-            const files = readdirSync(sessionDir).filter((f: string) => f.endsWith('.jsonl'));
-            if (files.length > 0) {
-              const latest = files
-                .map((f: string) => ({ name: f, mtime: statS(join(sessionDir, f)).mtimeMs }))
-                .sort((a: any, b: any) => b.mtime - a.mtime)[0];
-              config.boundSessionId = latest.name.replace('.jsonl', '');
-              this.saveNow();
-              console.log(`[daemon] ${config.label}: bound to session ${config.boundSessionId}`);
-              this.startAgentSessionMonitor(agentId, config);
-            } else {
-              console.log(`[daemon] ${config.label}: no session files yet, will bind on next check`);
-            }
+      const pollStart = Date.now();
+      const pollDelay = sessionAlreadyExists ? 500 : 2000;
+      await new Promise<void>(resolve => {
+        const attempt = () => {
+          if (!this.daemonActive) { resolve(); return; }
+          const sessionId = this.getLatestSessionId(config.workDir);
+          if (sessionId) {
+            config.boundSessionId = sessionId;
+            this.saveNow();
+            console.log(`[daemon] ${config.label}: bound to session ${config.boundSessionId}`);
+            return resolve();
           }
-        } catch {}
-      }, bindDelay);
+          if (Date.now() - pollStart < 10_000) {
+            setTimeout(attempt, 1000);
+          } else {
+            console.log(`[daemon] ${config.label}: no session file after 10s, skipping bind`);
+            const entry = this.agents.get(agentId);
+            if (entry) {
+              entry.state.error = 'Terminal session not ready — click "Open Terminal" to start it manually';
+              this.emit('event', { type: 'smith_status', agentId, smithStatus: entry.state.smithStatus } as any);
+              this.emitAgentsChanged();
+            }
+            resolve();
+          }
+        };
+        setTimeout(attempt, pollDelay);
+      });
     }
   }
 
@@ -2534,9 +2576,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
       // Skip if already busy
       if (entry.state.taskStatus === 'running') return;
 
-      // Skip if any message is already running for this agent
-      const hasRunning = this.bus.getLog().some(m => m.to === agentId && m.status === 'running' && m.type !== 'ack');
-      if (hasRunning) return;
+      // Skip if any message is already running for this agent (O(1) cache lookup)
+      if (this.agentRunningMsg.has(agentId)) return;
 
       // Execution path determined by config, not runtime tmux state
       const isTerminalMode = entry.config.persistentSession;
@@ -2627,6 +2668,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
       // Mark message as running (being processed)
       nextMsg.status = 'running' as any;
+      this.agentRunningMsg.set(agentId, nextMsg.id);
       this.emit('event', { type: 'bus_message_status', messageId: nextMsg.id, status: 'running' } as any);
 
       const logEntry = {
@@ -2640,6 +2682,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
       if (isTerminalMode) {
         const injected = this.injectIntoSession(agentId, nextMsg.payload.content || nextMsg.payload.action);
         if (injected) {
+          entry.state.taskStatus = 'running';
+          this.emit('event', { type: 'task_status', agentId, taskStatus: 'running' } as any);
           this.emit('event', { type: 'log', agentId, entry: { type: 'system', subtype: 'execution_method', content: '📺 Injected into terminal, monitoring for completion...', timestamp: new Date().toISOString() } } as any);
           console.log(`[inbox] ${entry.config.label}: injected into terminal, starting completion monitor`);
           entry.state.currentMessageId = nextMsg.id;
@@ -2649,6 +2693,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
           // Health check will auto-restart the terminal session
           entry.state.tmuxSession = undefined;
           nextMsg.status = 'pending' as any; // revert to pending for retry
+          this.agentRunningMsg.delete(agentId);
           this.emit('event', { type: 'bus_message_status', messageId: nextMsg.id, status: 'pending' } as any);
           this.emit('event', { type: 'log', agentId, entry: { type: 'system', subtype: 'warning', content: '⚠️ Terminal session down — waiting for auto-restart, message will retry', timestamp: new Date().toISOString() } } as any);
           console.log(`[inbox] ${entry.config.label}: terminal inject failed, cleared session — waiting for health check restart`);
@@ -2737,6 +2782,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
           if (promptCount >= CONFIRM_CHECKS) {
             clearInterval(timer);
             this.terminalMonitors.delete(agentId);
+            this.agentRunningMsg.delete(agentId);
 
             // Extract output summary (skip prompt lines)
             const contentLines = lines.filter(l => !PROMPT_PATTERNS.some(p => p.test(l)));
@@ -2767,6 +2813,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
         // Session died
         clearInterval(timer);
         this.terminalMonitors.delete(agentId);
+        this.agentRunningMsg.delete(agentId);
         const msg = this.bus.getLog().find(m => m.id === messageId);
         if (msg && msg.status !== 'done' && msg.status !== 'failed') {
           msg.status = 'failed' as any;

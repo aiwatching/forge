@@ -40,6 +40,8 @@ export interface WorkspaceAgentConfig {
   boundSessionId?: string;
   // Skip dangerous permissions check (default true when persistentSession is enabled)
   skipPermissions?: boolean;
+  // Plugins: list of plugin IDs (or source IDs) this agent can use via MCP run_plugin
+  plugins?: string[];
   // Watch: autonomous periodic monitoring
   watch?: WatchConfig;
 }

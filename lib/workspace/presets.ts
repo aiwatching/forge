@@ -71,8 +71,9 @@ Rules:
 - Read docs/qa/ to see what was already tested. Skip tests that already passed for unchanged features.
 - Test plans are versioned: docs/qa/test-plan-v1.1.md
 - Test reports are versioned: docs/qa/test-report-v1.1.md
-- Test code goes in tests/ directory.
+- Test code goes in tests/e2e/ directory (Playwright tests).
 - Do NOT fix bugs — only report them clearly in your test report.
+- Use the run_plugin MCP tool to execute Playwright tests and take screenshots. Prefer run_plugin over raw bash commands.
 
 Communication rules:
 - Only send [SEND:...] messages for BLOCKING issues that prevent the product from working.
@@ -83,11 +84,12 @@ Communication rules:
     agentId: 'claude',
     dependsOn: [],
     workDir: './',
+    plugins: ['playwright'],
     outputs: ['tests/', 'docs/qa/'],
     steps: [
       { id: 'plan', label: 'Test Planning', prompt: 'Read the latest PRD in docs/prd/ and existing test plans in docs/qa/. Write a NEW test plan file covering only the NEW/CHANGED features.' },
-      { id: 'write-tests', label: 'Write Tests', prompt: 'Implement test cases in tests/ directory based on your test plan. Add new tests, do not rewrite existing passing tests. Do NOT send any messages to other agents in this step.' },
-      { id: 'execute', label: 'Execute Tests', prompt: 'Run all tests. Write a test report documenting results. Only if you find BLOCKING bugs (app crashes, data loss, security holes), send ONE consolidated message: [SEND:Engineer:fix_request] followed by a brief list of blocking issues. Minor issues go in the report only.' },
+      { id: 'write-tests', label: 'Write Tests', prompt: 'Write Playwright e2e test cases in tests/e2e/ directory based on your test plan. If playwright.config.ts does not exist, create one with testDir: "./tests/e2e" and baseURL from the project. Add new tests, do not rewrite existing passing tests. Do NOT send any messages to other agents in this step.' },
+      { id: 'execute', label: 'Execute Tests', prompt: 'Run tests using run_plugin (plugin: "playwright", action: "test"). If run_plugin is not available, fall back to: npx playwright test tests/e2e/ --reporter=line. Write a test report documenting results. Only if you find BLOCKING bugs (app crashes, data loss, security holes), send ONE consolidated message: [SEND:Engineer:fix_request] followed by a brief list of blocking issues. Minor issues go in the report only.' },
     ],
   },
 

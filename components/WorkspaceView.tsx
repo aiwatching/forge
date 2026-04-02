@@ -124,12 +124,15 @@ Test setup (do this automatically if not already present):
 - Detect the app's dev server command and base URL from package.json or project config
 - Ensure the dev server is running before testing (start it if needed)
 
-Available Forge MCP tools — use these for testing:
-- run_plugin({ plugin: "<playwright-instance>", action: "test", params: { test_file: "tests/e2e/" } }) — run Playwright E2E tests
-- run_plugin({ plugin: "<playwright-instance>", action: "screenshot", params: { url: "http://localhost:3000/page" } }) — take page screenshots
-- run_plugin({ plugin: "<playwright-instance>", action: "check_url" }) — check if app URL is reachable
-- run_plugin({ plugin: "<shell-instance>", params: { command: "npm test" } }) — run any shell command
-- send_message({ to: "Engineer", content: "Bug found: ..." }) — report bugs to other agents`,
+How to run Playwright tests:
+- Run tests: npx playwright test tests/e2e/ --reporter=line
+- Run headed (visible browser): npx playwright test tests/e2e/ --headed --reporter=line
+- Screenshot: npx playwright screenshot http://localhost:3000 /tmp/screenshot.png
+- Check URL: curl -sf -o /dev/null -w '%{http_code}' http://localhost:3000
+- Run project tests: npm test
+
+If Forge MCP tools are available (run_plugin, send_message), prefer those.
+Otherwise use bash commands directly — you have full terminal access.`,
     steps: [
       { id: 'setup', label: 'Setup', prompt: 'Check the project structure. If playwright.config.ts does not exist, create one with testDir: "./tests/e2e" and baseURL from the project config. Create tests/e2e/ directory if missing. Check if the dev server is running (use check_url), start it if not.' },
       { id: 'plan', label: 'Test Plan', prompt: 'Read the source code and any PRD/docs. Understand what pages and features exist. Create a test plan in docs/test-plan.md covering: E2E user flows, edge cases, error states, responsive behavior. Map each test to a feature.' },

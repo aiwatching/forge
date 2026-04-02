@@ -118,18 +118,23 @@ Rules:
 - Check for security issues: injection, auth bypass, data leaks
 - Check for performance: N+1 queries, unbounded loops, memory leaks
 
+Test setup (do this automatically if not already present):
+- If no playwright.config.ts exists, create one based on the project's framework and structure
+- If no tests/e2e/ directory exists, create it
+- Detect the app's dev server command and base URL from package.json or project config
+- Ensure the dev server is running before testing (start it if needed)
+
 Available Forge MCP tools — use these for testing:
-- run_plugin({ plugin: "playwright", action: "test", params: { test_file: "tests/e2e/*.spec.ts" } }) — run Playwright E2E tests
-- run_plugin({ plugin: "playwright", action: "screenshot", params: { url: "http://localhost:3000" } }) — take page screenshots
-- run_plugin({ plugin: "playwright", action: "check_url", params: { url: "..." } }) — check if URL is reachable
-- run_plugin({ plugin: "shell-command", params: { command: "npm test" } }) — run any shell command
-- trigger_pipeline({ workflow: "..." }) — trigger a pipeline workflow
-- get_pipeline_status({ pipeline_id: "..." }) — check pipeline results
+- run_plugin({ plugin: "<playwright-instance>", action: "test", params: { test_file: "tests/e2e/" } }) — run Playwright E2E tests
+- run_plugin({ plugin: "<playwright-instance>", action: "screenshot", params: { url: "http://localhost:3000/page" } }) — take page screenshots
+- run_plugin({ plugin: "<playwright-instance>", action: "check_url" }) — check if app URL is reachable
+- run_plugin({ plugin: "<shell-instance>", params: { command: "npm test" } }) — run any shell command
 - send_message({ to: "Engineer", content: "Bug found: ..." }) — report bugs to other agents`,
     steps: [
-      { id: 'plan', label: 'Test Plan', prompt: 'Read the PRD (docs/prd.md) and the implementation. Create a test plan in docs/test-plan.md covering: unit tests, integration tests, edge cases, error scenarios, security checks, and performance concerns. Map each test to a PRD acceptance criterion.' },
-      { id: 'write-tests', label: 'Write Tests', prompt: 'Implement all test cases from your test plan in the tests/ directory. Follow the project\'s existing test framework and conventions. Include setup/teardown, meaningful assertions, and descriptive test names.' },
-      { id: 'run-tests', label: 'Run & Report', prompt: 'Run ALL tests (both existing and new). Use run_plugin to execute tests and capture results. Document results in docs/test-report.md: total tests, passed, failed, skipped. For each failure: test name, expected vs actual, steps to reproduce. Include a summary verdict: PASS (all green) or FAIL (with blocking issues listed). Send bug reports to upstream agents via send_message.' },
+      { id: 'setup', label: 'Setup', prompt: 'Check the project structure. If playwright.config.ts does not exist, create one with testDir: "./tests/e2e" and baseURL from the project config. Create tests/e2e/ directory if missing. Check if the dev server is running (use check_url), start it if not.' },
+      { id: 'plan', label: 'Test Plan', prompt: 'Read the source code and any PRD/docs. Understand what pages and features exist. Create a test plan in docs/test-plan.md covering: E2E user flows, edge cases, error states, responsive behavior. Map each test to a feature.' },
+      { id: 'write-tests', label: 'Write Tests', prompt: 'Write Playwright test scripts in tests/e2e/. Cover all features from the test plan. Use page.goto(), locators, assertions. Test both happy path and error states. Use descriptive test names.' },
+      { id: 'run-tests', label: 'Run & Report', prompt: 'Run tests via run_plugin with Playwright. If tests fail, read the error output carefully. Fix test scripts if the test itself is wrong, but report to Engineer if the app has a bug. Write docs/test-report.md with results. Send bug reports to Engineer via send_message.' },
     ],
   },
   {

@@ -36,6 +36,12 @@ config:
     type: string
     label: Project Directory
     description: "For docker mode — local path to mount as /app"
+  headless:
+    type: select
+    label: Headless Mode
+    options: ["true", "false"]
+    default: "true"
+    description: "false = show browser window (local mode only)"
 
 params:
   test_file:
@@ -54,7 +60,7 @@ actions:
   # Local mode
   local_test:
     run: shell
-    command: "BASE_URL={{config.base_url}} npx playwright test {{params.test_file}} {{params.args}} --reporter=line 2>&1"
+    command: "BASE_URL={{config.base_url}} npx playwright test {{params.test_file}} {{params.args}} --reporter=line $([ '{{config.headless}}' = 'false' ] && echo '--headed') 2>&1"
     timeout: 600
     output:
       result: "$stdout"

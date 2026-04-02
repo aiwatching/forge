@@ -83,7 +83,7 @@ actions:
 
   check_url:
     run: shell
-    command: "curl -sf -o /dev/null -w '%{http_code}' {{params.url}}"
+    command: "URL=\"{{params.url}}\"; [ -z \"$URL\" ] && URL=\"{{config.base_url}}\"; curl -sf -o /dev/null -w '%{http_code}' \"$URL\""
     timeout: 10
     output:
       status_code: "$stdout"

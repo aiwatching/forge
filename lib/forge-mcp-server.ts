@@ -325,7 +325,7 @@ function createForgeMcpServer(sessionId: string): McpServer {
     {
       plugin: z.string().optional().describe('Plugin ID (e.g., "jenkins", "shell-command", "docker"). Omit to list installed plugins.'),
       action: z.string().optional().describe('Action name (e.g., "trigger", "run", "build"). Uses default action if omitted.'),
-      params: z.record(z.string(), z.any()).optional().describe('Parameters for the action. Keys matching plugin config fields will override config values.'),
+      params: z.record(z.string(), z.string()).optional().describe('Parameters for the action. Keys matching plugin config fields will override config values.'),
       wait: z.boolean().optional().describe('Auto-run "wait" action after main action (for async operations like Jenkins builds)'),
     },
     async (params) => {
@@ -438,8 +438,9 @@ export async function startMcpServer(port: number): Promise<void> {
       // Each session gets its own MCP server with context
       const server = createForgeMcpServer(sessionId);
       await server.connect(transport);
-      const agentLabel = workspaceId ? (getOrch(workspaceId)?.getSnapshot()?.agents?.find((a: any) => a.id === agentId)?.label || agentId) : 'unknown';
-      console.log(`[forge-mcp] Client connected: ${agentLabel} (ws=${workspaceId.slice(0, 8)}, session=${sessionId})`);
+      let agentLabel = 'unknown';
+      try { agentLabel = workspaceId ? (getOrch(workspaceId)?.getSnapshot()?.agents?.find((a: any) => a.id === agentId)?.label || agentId) : 'unknown'; } catch {}
+      console.log(`[forge-mcp] Client connected: ${agentLabel} (ws=${workspaceId?.slice(0, 8) || '?'}, session=${sessionId})`);
       return;
     }
 

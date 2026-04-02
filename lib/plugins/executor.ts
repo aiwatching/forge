@@ -190,7 +190,7 @@ export async function executePluginAction(
   const mergedConfig = { ...plugin.config };
   const remainingParams = { ...params };
   for (const k of Object.keys(params)) {
-    if (k in plugin.definition.config) {
+    if (k in plugin.definition.config && params[k] != null) {
       mergedConfig[k] = params[k];
       delete remainingParams[k];
     }
@@ -200,7 +200,7 @@ export async function executePluginAction(
   for (const [k, v] of Object.entries(mergedConfig)) {
     if (k.startsWith('default_')) {
       const paramKey = k.slice(8); // "default_job" → "job"
-      if (!remainingParams[paramKey] && v) {
+      if (remainingParams[paramKey] == null && v != null) {
         remainingParams[paramKey] = v;
       }
     }

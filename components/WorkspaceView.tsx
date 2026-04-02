@@ -2863,13 +2863,13 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
     // Auto-install base plugins if not already installed (for preset templates)
     // User-selected instances are already installed, so this is a no-op for them
     if (cfg.plugins?.length) {
-      for (const pluginId of cfg.plugins) {
+      await Promise.all(cfg.plugins.map(pluginId =>
         fetch('/api/plugins', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'install', id: pluginId, config: {} }),
-        }).catch(() => {}); // silently skip if already installed
-      }
+        }).catch(() => {})
+      ));
     }
     // Optimistic update — show immediately
     setModal(null);

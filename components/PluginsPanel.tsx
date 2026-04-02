@@ -125,21 +125,31 @@ export default function PluginsPanel() {
 
   const handleSaveConfig = async () => {
     const id = selectedInstance || selectedId;
-    if (!id) return;
+    if (!id || !detail) return;
+    // Merge schema defaults with user-entered values
+    const finalConfig: Record<string, any> = {};
+    for (const [key, schema] of Object.entries(detail.config)) {
+      finalConfig[key] = configValues[key] ?? (schema as any).default ?? '';
+    }
     await fetch('/api/plugins', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'update_config', id, config: configValues }),
+      body: JSON.stringify({ action: 'update_config', id, config: finalConfig }),
     });
     await selectPlugin(selectedId!, selectedInstance || undefined);
   };
 
   const handleCreateInstance = async () => {
-    if (!selectedId || !newInstanceName.trim()) return;
+    if (!selectedId || !newInstanceName.trim() || !detail) return;
+    // Merge schema defaults with user-entered values
+    const finalConfig: Record<string, any> = {};
+    for (const [key, schema] of Object.entries(detail.config)) {
+      finalConfig[key] = configValues[key] ?? (schema as any).default ?? '';
+    }
     const res = await fetch('/api/plugins', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'create_instance', source: selectedId, name: newInstanceName.trim(), config: configValues }),
+      body: JSON.stringify({ action: 'create_instance', source: selectedId, name: newInstanceName.trim(), config: finalConfig }),
     });
     const data = await res.json();
     if (!res.ok) {

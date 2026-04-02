@@ -1,16 +1,40 @@
 id: slack
 name: Slack
-icon: 📢
-version: 1.0.0
+icon: "📢"
+version: "1.1.0"
 author: forge
-description: Send messages to Slack channels
+description: |
+  Send messages to Slack channels via Incoming Webhook.
+  Create instances per channel or workspace:
+  - "Dev Alerts" → webhook for #dev-alerts
+  - "Deploy Notify" → webhook for #deployments
 
 config:
-  webhook_url: { type: secret, label: "Webhook URL", required: true, description: "Slack Incoming Webhook URL" }
+  webhook_url:
+    type: secret
+    label: Webhook URL
+    required: true
+    description: "Slack Incoming Webhook URL"
+  default_channel:
+    type: string
+    label: Default Channel
+    description: "Override channel (e.g., #dev-alerts)"
+  description:
+    type: string
+    label: Description
+    description: "What this webhook is for (shown to agents)"
 
 params:
-  text: { type: string, label: "Message", required: true }
-  channel: { type: string, label: "Channel (optional)" }
+  text:
+    type: string
+    label: Message
+    required: true
+  channel:
+    type: string
+    label: Channel
+    description: "Overrides default_channel"
+
+defaultAction: send
 
 actions:
   send:
@@ -19,8 +43,6 @@ actions:
     url: "{{config.webhook_url}}"
     headers:
       Content-Type: application/json
-    body: '{"text":"{{params.text}}"}'
+    body: '{"text":"{{params.text}}","channel":"{{params.channel}}"}'
     output:
       status: "$body"
-
-defaultAction: send

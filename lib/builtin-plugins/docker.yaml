@@ -1,18 +1,52 @@
 id: docker
 name: Docker
-icon: 🐳
-version: 1.0.0
+icon: "🐳"
+version: "1.1.0"
 author: forge
-description: Build and manage Docker images
+description: |
+  Build and manage Docker images.
+  Create instances per project or registry:
+  - "Build App" → default_image: my-app, default_context: .
+  - "Push to Harbor" → registry: harbor.example.com
 
 config:
-  registry: { type: string, label: "Registry URL", description: "e.g., docker.io, harbor.example.com" }
+  registry:
+    type: string
+    label: Registry URL
+    description: "e.g., docker.io, ghcr.io, harbor.example.com"
+  default_image:
+    type: string
+    label: Default Image Name
+    description: "Pre-configured image name"
+  default_tag:
+    type: string
+    label: Default Tag
+    default: "latest"
+  default_dockerfile:
+    type: string
+    label: Default Dockerfile
+    default: "Dockerfile"
+  default_context:
+    type: string
+    label: Default Build Context
+    default: "."
 
 params:
-  image: { type: string, label: "Image Name", required: true }
-  tag: { type: string, label: "Tag", default: "latest" }
-  dockerfile: { type: string, label: "Dockerfile Path", default: "Dockerfile" }
-  context: { type: string, label: "Build Context", default: "." }
+  image:
+    type: string
+    label: Image Name
+    description: "Overrides default_image"
+  tag:
+    type: string
+    label: Tag
+  dockerfile:
+    type: string
+    label: Dockerfile Path
+  context:
+    type: string
+    label: Build Context
+
+defaultAction: build
 
 actions:
   build:
@@ -20,19 +54,17 @@ actions:
     command: "docker build -t {{params.image}}:{{params.tag}} -f {{params.dockerfile}} {{params.context}}"
     timeout: 600
     output:
-      image: "$stdout"
+      result: "$stdout"
 
   push:
     run: shell
     command: "docker push {{config.registry}}/{{params.image}}:{{params.tag}}"
     timeout: 300
     output:
-      digest: "$stdout"
+      result: "$stdout"
 
   tag:
     run: shell
     command: "docker tag {{params.image}}:{{params.tag}} {{config.registry}}/{{params.image}}:{{params.tag}}"
     output:
       result: "$stdout"
-
-defaultAction: build

@@ -299,14 +299,32 @@ export default function PluginsPanel() {
                     <div key={key}>
                       <label className="text-[10px] text-[var(--text-secondary)] block mb-0.5">
                         {schema.label || key} {schema.required && <span className="text-red-400">*</span>}
+                        {schema.description && <span className="text-[8px] text-[var(--text-secondary)]/60 ml-1">{schema.description}</span>}
                       </label>
-                      <input
-                        type={schema.type === 'secret' ? 'password' : 'text'}
-                        value={configValues[key] ?? ''}
-                        onChange={e => setConfigValues({ ...configValues, [key]: e.target.value })}
-                        placeholder={schema.description || ''}
-                        className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text-primary)]"
-                      />
+                      {schema.type === 'select' ? (
+                        <select
+                          value={configValues[key] || schema.default || ''}
+                          onChange={e => setConfigValues({ ...configValues, [key]: e.target.value })}
+                          className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text-primary)]"
+                        >
+                          <option value="">Select...</option>
+                          {(schema.options || []).map((o: string) => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      ) : schema.type === 'boolean' ? (
+                        <input type="checkbox"
+                          checked={configValues[key] === true || configValues[key] === 'true'}
+                          onChange={e => setConfigValues({ ...configValues, [key]: e.target.checked })}
+                          className="accent-[var(--accent)]"
+                        />
+                      ) : (
+                        <input
+                          type={schema.type === 'secret' ? 'password' : schema.type === 'number' ? 'number' : 'text'}
+                          value={configValues[key] ?? schema.default ?? ''}
+                          onChange={e => setConfigValues({ ...configValues, [key]: e.target.value })}
+                          placeholder={schema.description || ''}
+                          className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text-primary)]"
+                        />
+                      )}
                     </div>
                   ))}
                   <div className="flex gap-2">

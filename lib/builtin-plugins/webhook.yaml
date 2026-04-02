@@ -1,22 +1,51 @@
 id: webhook
 name: Webhook
-icon: 🪝
-version: 1.0.0
+icon: "🪝"
+version: "1.1.0"
 author: forge
-description: Send webhook notifications to any URL
+description: |
+  Send webhook notifications to any URL.
+  Create instances per endpoint:
+  - "Deploy Hook" → url: https://deploy.example.com/hook
+  - "CI Trigger" → url: https://ci.example.com/trigger
 
 config:
-  url: { type: string, label: "Webhook URL", required: true }
-  secret: { type: secret, label: "Secret (optional)" }
+  url:
+    type: string
+    label: Webhook URL
+    required: true
+    description: "Target URL to send webhooks to"
+  secret:
+    type: secret
+    label: Secret
+    description: "Shared secret for signature verification (optional)"
+  default_event:
+    type: string
+    label: Default Event Type
+    default: "forge.notification"
+    description: "Sent as X-Forge-Event header"
+  default_method:
+    type: select
+    label: HTTP Method
+    options: ["POST", "PUT", "PATCH"]
+    default: "POST"
 
 params:
-  payload: { type: json, label: "Payload" }
-  event: { type: string, label: "Event Type", default: "forge.notification" }
+  payload:
+    type: json
+    label: Payload
+    description: "JSON body to send"
+  event:
+    type: string
+    label: Event Type
+    description: "Overrides default_event"
+
+defaultAction: send
 
 actions:
   send:
     run: http
-    method: POST
+    method: "{{params.method}}"
     url: "{{config.url}}"
     headers:
       Content-Type: application/json
@@ -24,6 +53,4 @@ actions:
       X-Forge-Secret: "{{config.secret}}"
     body: "{{params | json}}"
     output:
-      status: "$.status"
-
-defaultAction: send
+      status: "$body"

@@ -812,6 +812,69 @@ const server = createServer(async (req, res) => {
       });
     }
 
+    // Create workspace (daemon is the exclusive writer of state.json)
+    if (path === '/workspace/create' && method === 'POST') {
+      const bodyStr = await readBody(req);
+      const { id, projectPath, projectName, agents, agentStates, nodePositions, template, createdAt } = JSON.parse(bodyStr);
+
+      if (!projectPath || !projectName) return jsonError(res, 'projectPath and projectName required');
+
+      const state: import('./workspace/types').WorkspaceState = {
+        id: id || require('node:crypto').randomUUID(),
+        projectPath,
+        projectName,
+        agents: [],
+        agentStates: {},
+        nodePositions: {},
+        busLog: [],
+        createdAt: createdAt || Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      // Import template: create agents from template with new IDs
+      if (template?.agents) {
+        const idMap = new Map<string, string>();
+        const ts = Date.now();
+        for (const agent of template.agents) {
+          const newId = `${agent.label.toLowerCase().replace(/\s+/g, '-')}-${ts}-${Math.random().toString(36).slice(2, 5)}`;
+          idMap.set(agent.id, newId);
+        }
+        for (const agent of template.agents) {
+          state.agents.push({
+            ...agent,
+            id: idMap.get(agent.id) || agent.id,
+            dependsOn: agent.dependsOn.map((d: string) => idMap.get(d) || d),
+            entries: agent.type === 'input' ? [] : undefined,
+          });
+          state.agentStates[idMap.get(agent.id) || agent.id] = { smithStatus: 'down', taskStatus: 'idle', history: [], artifacts: [] };
+        }
+        if (template.nodePositions) {
+          for (const [oldId, pos] of Object.entries(template.nodePositions)) {
+            const newId = idMap.get(oldId);
+            if (newId) state.nodePositions[newId] = pos as { x: number; y: number };
+          }
+        }
+      }
+
+      // Persist to disk — daemon is the single writer
+      await saveWorkspace(state);
+
+      // Load into memory immediately so SSE/API work without a second round-trip
+      const orch = new WorkspaceOrchestrator(state.id, state.projectPath, state.projectName);
+      if (state.agents.length > 0) {
+        orch.loadSnapshot({
+          agents: state.agents,
+          agentStates: state.agentStates,
+          busLog: state.busLog,
+          busOutbox: state.busOutbox,
+        });
+      }
+      orch.on('event', (event: OrchestratorEvent) => { broadcastSSE(state.id, event); });
+      orchestrators.set(state.id, orch);
+
+      return json(res, state, 201);
+    }
+
     // Route: /workspace/:id/...
     const wsMatch = path.match(/^\/workspace\/([^/]+)(\/.*)?$/);
     if (!wsMatch) {

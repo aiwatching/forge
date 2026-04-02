@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { listWorkspaces, findWorkspaceByProject, loadWorkspace, saveWorkspace, deleteWorkspace } from '@/lib/workspace';
-import type { WorkspaceState } from '@/lib/workspace';
+import { listWorkspaces, findWorkspaceByProject, loadWorkspace, deleteWorkspace } from '@/lib/workspace';
 import { randomUUID } from 'node:crypto';
 
 // List workspaces, find by projectPath, or export template
@@ -30,7 +29,8 @@ export async function GET(req: Request) {
   return NextResponse.json(listWorkspaces());
 }
 
-// Create workspace or import template
+// Create workspace or import template — proxied through the workspace daemon
+// so the daemon remains the exclusive writer of state.json (prevents race conditions).
 export async function POST(req: Request) {
   const body = await req.json();
   const { projectPath, projectName, template } = body;
@@ -44,45 +44,24 @@ export async function POST(req: Request) {
     return NextResponse.json(existing);
   }
 
-  const state: WorkspaceState = {
-    id: existing?.id || randomUUID(),
-    projectPath,
-    projectName,
-    agents: [],
-    agentStates: {},
-    nodePositions: {},
-    busLog: [],
-    createdAt: existing?.createdAt || Date.now(),
-    updatedAt: Date.now(),
-  };
-
-  // Import template: create agents from template with new IDs
-  if (template?.agents) {
-    const idMap = new Map<string, string>(); // old ID → new ID
-    const ts = Date.now();
-    for (const agent of template.agents) {
-      const newId = `${agent.label.toLowerCase().replace(/\s+/g, '-')}-${ts}-${Math.random().toString(36).slice(2, 5)}`;
-      idMap.set(agent.id, newId);
-    }
-    for (const agent of template.agents) {
-      state.agents.push({
-        ...agent,
-        id: idMap.get(agent.id) || agent.id,
-        dependsOn: agent.dependsOn.map((d: string) => idMap.get(d) || d),
-        entries: agent.type === 'input' ? [] : undefined,
-      });
-      state.agentStates[idMap.get(agent.id) || agent.id] = { smithStatus: 'down', taskStatus: 'idle', history: [], artifacts: [] };
-    }
-    if (template.nodePositions) {
-      for (const [oldId, pos] of Object.entries(template.nodePositions)) {
-        const newId = idMap.get(oldId);
-        if (newId) state.nodePositions[newId] = pos as { x: number; y: number };
-      }
-    }
+  const daemonUrl = `http://localhost:${Number(process.env.WORKSPACE_PORT) || 8405}`;
+  try {
+    const daemonRes = await fetch(`${daemonUrl}/workspace/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: existing?.id || randomUUID(),
+        projectPath,
+        projectName,
+        template,
+        createdAt: existing?.createdAt,
+      }),
+    });
+    const data = await daemonRes.json();
+    return NextResponse.json(data, { status: daemonRes.status });
+  } catch (err: any) {
+    return NextResponse.json({ error: `Workspace daemon unreachable: ${err.message}` }, { status: 503 });
   }
-
-  await saveWorkspace(state);
-  return NextResponse.json(state, { status: 201 });
 }
 
 // Delete a workspace

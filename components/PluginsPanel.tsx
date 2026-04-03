@@ -43,6 +43,7 @@ export default function PluginsPanel() {
   const [detail, setDetail] = useState<PluginDetail | null>(null);
   const [installedConfig, setInstalledConfig] = useState<Record<string, any> | null>(null);
   const [configValues, setConfigValues] = useState<Record<string, any>>({});
+  const [configSaved, setConfigSaved] = useState(false);
   const [filter, setFilter] = useState<'all' | 'installed'>('all');
   const [loading, setLoading] = useState(true);
   const [testResult, setTestResult] = useState<{ ok: boolean; output: any; error?: string; duration?: number } | null>(null);
@@ -136,6 +137,8 @@ export default function PluginsPanel() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'update_config', id, config: finalConfig }),
     });
+    setConfigSaved(true);
+    setTimeout(() => setConfigSaved(false), 2000);
     await selectPlugin(selectedId!, selectedInstance || undefined);
   };
 
@@ -380,8 +383,8 @@ export default function PluginsPanel() {
                 </div>
               )}
 
-              {/* Config (only for instances) */}
-              {!showNewInstance && Object.keys(detail.config).length > 0 && selectedInstance && (
+              {/* Config (for installed plugins and instances) */}
+              {!showNewInstance && Object.keys(detail.config).length > 0 && installedConfig !== null && (
                 <div>
                   <h3 className="text-[11px] font-semibold text-[var(--text-primary)] mb-1.5">Configuration</h3>
                   <div className="space-y-2">
@@ -418,7 +421,7 @@ export default function PluginsPanel() {
                     ))}
                     <button onClick={handleSaveConfig}
                       className="text-[10px] px-3 py-1 rounded bg-[var(--accent)]/20 text-[var(--accent)] hover:bg-[var(--accent)]/30 transition-colors"
-                    >Save Config</button>
+                    >{configSaved ? 'Saved!' : 'Save Config'}</button>
                   </div>
                 </div>
               )}

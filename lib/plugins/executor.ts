@@ -265,9 +265,19 @@ export async function executePluginAction(
     return { ok: false, output: {}, error: `Action "${actionName}" not found in plugin "${plugin.id}"` };
   }
 
+  // Fill missing config values with definition defaults (handles plugins installed before defaults were added)
+  const configWithDefaults = { ...plugin.config };
+  if (plugin.definition.config) {
+    for (const [k, fieldDef] of Object.entries(plugin.definition.config)) {
+      if (configWithDefaults[k] == null && (fieldDef as any).default != null) {
+        configWithDefaults[k] = (fieldDef as any).default;
+      }
+    }
+  }
+
   // params can override config values — supports multi-instance scenarios
   // e.g., different Jenkins URLs per pipeline node via params.jenkins_url
-  const mergedConfig = { ...plugin.config };
+  const mergedConfig = { ...configWithDefaults };
   const remainingParams = { ...params };
   for (const k of Object.keys(params)) {
     if (k in plugin.definition.config && params[k] != null) {

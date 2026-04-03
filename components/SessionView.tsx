@@ -442,8 +442,7 @@ export default function SessionView({
                             onClick={(e) => {
                               e.stopPropagation();
                               const pp = projects.find(p => p.name === project)?.path || '';
-                              if (pp && onOpenInTerminal) onOpenInTerminal(s.sessionId, pp);
-                              else if (pp) window.dispatchEvent(new CustomEvent('forge:open-terminal', { detail: { projectPath: pp, projectName: project, agentId: 'claude', resumeMode: true, sessionId: s.sessionId } }));
+                              if (pp) window.dispatchEvent(new CustomEvent('forge:open-terminal', { detail: { projectPath: pp, projectName: project, agentId: 'claude', resumeMode: true, sessionId: s.sessionId } }));
                             }}
                             className="text-[8px] px-1 py-0.5 rounded bg-green-500/10 text-green-400 hover:bg-green-500/20"
                             title="Open this session in terminal"
@@ -551,11 +550,11 @@ export default function SessionView({
                     Monitor
                   </button>
                 )}
-                {onOpenInTerminal && activeSessionId && (
+                {activeSessionId && (
                   <button
                     onClick={() => {
                       const proj = projects.find(p => p.name === selectedProject);
-                      if (proj) onOpenInTerminal(activeSessionId!, proj.path);
+                      if (proj) window.dispatchEvent(new CustomEvent('forge:open-terminal', { detail: { projectPath: proj.path, projectName: selectedProject, agentId: 'claude', resumeMode: true, sessionId: activeSessionId } }));
                     }}
                     className="text-[10px] px-2 py-0.5 bg-[var(--accent)] text-white rounded hover:opacity-90"
                   >
@@ -602,6 +601,7 @@ export default function SessionView({
           <div ref={bottomRef} />
         </div>
       </div>
+
     </div>
   );
 }

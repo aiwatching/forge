@@ -219,16 +219,18 @@ export function resolveTerminalLaunch(agentId?: string): TerminalLaunchInfo {
   // Resolve env/model: either from this agent's own profile fields, or from linked profile
   let env: Record<string, string> | undefined;
   let model: string | undefined;
-  if (agentCfg.base || agentCfg.env || agentCfg.model) {
-    // This agent IS a profile — read env/model directly
+  if (agentCfg.base || agentCfg.env || agentCfg.model || agentCfg.models) {
+    // This agent has profile-like config — read env/model directly
     if (agentCfg.env) env = { ...agentCfg.env };
-    if (agentCfg.model) model = agentCfg.model;
+    model = agentCfg.model || agentCfg.models?.terminal;
+    if (model === 'default') model = undefined; // 'default' means no override
   } else if (agentCfg.profile) {
     // Agent links to a separate profile — read from that
     const profileCfg = settings.agents?.[agentCfg.profile];
     if (profileCfg) {
       if (profileCfg.env) env = { ...profileCfg.env };
-      if (profileCfg.model) model = profileCfg.model;
+      model = profileCfg.model || profileCfg.models?.terminal;
+      if (model === 'default') model = undefined;
     }
   }
 

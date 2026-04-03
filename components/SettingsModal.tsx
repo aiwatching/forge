@@ -274,9 +274,6 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   }, [tunnel.status, refreshTunnel]);
 
   const save = async () => {
-    const cs = (settings as any).agents?.['claude-sonnet'];
-    if (cs) console.log('[save] claude-sonnet at save time:', JSON.stringify({ taskFlags: cs.taskFlags, models: cs.models, cliType: cs.cliType }));
-    else console.log('[save] claude-sonnet NOT in settings.agents. keys:', Object.keys((settings as any).agents || {}));
     await fetch('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -1182,8 +1179,6 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
   const defaultAgent = settings.defaultAgent || 'claude';
 
   const saveAgentConfig = (updated: AgentEntry[]) => {
-    const csEntry = updated.find(a => a.id === 'claude-sonnet');
-    if (csEntry) console.log('[saveAgentConfig] claude-sonnet in updated:', JSON.stringify({ taskFlags: csEntry.taskFlags, models: csEntry.models }));
     // Use functional update to avoid stale closure — each call sees the latest settings
     setSettings((prev: any) => {
       const agentsCfg: Record<string, any> = { ...(prev.agents || {}) };

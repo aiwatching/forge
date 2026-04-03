@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef, memo, lazy, Suspense } from 'react';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
 
+import { TerminalSessionPickerLazy, fetchProjectSessions } from './TerminalLauncher';
 const InlinePipelineView = lazy(() => import('./InlinePipelineView'));
 const WorkspaceViewLazy = lazy(() => import('./WorkspaceView'));
 const SessionViewLazy = lazy(() => import('./SessionView'));
@@ -1508,9 +1509,7 @@ const FileTreeNode = memo(function FileTreeNode({ node, depth, selected, onSelec
 function AgentTerminalButton({ projectPath, projectName }: { projectPath: string; projectName: string }) {
   const [agents, setAgents] = useState<{ id: string; name: string; detected?: boolean; isProfile?: boolean; base?: string; backendType?: string; env?: Record<string, string>; model?: string }[]>([]);
   const [showMenu, setShowMenu] = useState(false);
-  const [launchDialog, setLaunchDialog] = useState<{ agentId: string; agentName: string; env?: Record<string, string>; model?: string } | null>(null);
-  const [sessions, setSessions] = useState<{ id: string; modified: string; size: number }[]>([]);
-  const [showSessions, setShowSessions] = useState(false);
+  const [pickerInfo, setPickerInfo] = useState<{ agentId: string; agentName: string; env?: Record<string, string>; model?: string; supportsSession: boolean; currentSessionId: string | null } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1526,68 +1525,39 @@ function AgentTerminalButton({ projectPath, projectName }: { projectPath: string
     return () => document.removeEventListener('mousedown', h);
   }, [showMenu]);
 
-  // Fetch sessions when dialog opens (only for claude-code agents)
-  useEffect(() => {
-    if (!launchDialog) return;
-    const pName = projectPath.replace(/\/+$/, '').split('/').pop() || '';
-    fetch(`/api/claude-sessions/${encodeURIComponent(pName)}`)
-      .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data) && data.length > 0) {
-          setSessions(data.map((s: any) => ({
-            id: s.sessionId || s.id || '',
-            modified: s.modified || '',
-            size: s.fileSize || s.size || 0,
-          })));
-        }
-      })
-      .catch(() => {});
-  }, [launchDialog, projectPath]);
-
-  const openWithAgent = (agentId: string, resumeMode?: boolean, sessionId?: string, env?: Record<string, string>, model?: string) => {
-    setLaunchDialog(null);
+  const openTerminal = (agentId: string, resumeMode?: boolean, sessionId?: string, env?: Record<string, string>, model?: string) => {
+    setPickerInfo(null);
     setShowMenu(false);
-    // Build profile env for the event
-    const profileEnv = env ? { ...env } : undefined;
-    if (model && profileEnv) profileEnv.CLAUDE_MODEL = model;
-    else if (model) {
-      const pe: Record<string, string> = { CLAUDE_MODEL: model };
-      window.dispatchEvent(new CustomEvent('forge:open-terminal', {
-        detail: { projectPath, projectName, agentId, resumeMode, sessionId, profileEnv: pe },
-      }));
-      return;
-    }
+    const profileEnv: Record<string, string> = { ...(env || {}) };
+    if (model) profileEnv.CLAUDE_MODEL = model;
     window.dispatchEvent(new CustomEvent('forge:open-terminal', {
-      detail: { projectPath, projectName, agentId, resumeMode, sessionId, profileEnv },
+      detail: { projectPath, projectName, agentId, resumeMode, sessionId, profileEnv: Object.keys(profileEnv).length > 0 ? profileEnv : undefined },
     }));
   };
 
   const handleAgentClick = async (a: typeof agents[0]) => {
     setShowMenu(false);
-    // Resolve launch info from server (reads cliType + profile)
     try {
       const res = await fetch(`/api/agents?resolve=${encodeURIComponent(a.id)}`);
       const info = await res.json();
+      // Resolve current session (fixedSession for this project)
+      let currentSessionId: string | null = null;
       if (info.supportsSession) {
-        setSessions([]);
-        setShowSessions(false);
-        setLaunchDialog({ agentId: a.id, agentName: a.name, env: info.env, model: info.model });
-      } else {
-        openWithAgent(a.id, false, undefined, info.env, info.model);
+        try {
+          const { resolveFixedSession } = await import('@/lib/session-utils');
+          currentSessionId = await resolveFixedSession(projectPath) || null;
+        } catch {}
       }
+      setPickerInfo({
+        agentId: a.id, agentName: a.name,
+        env: info.env, model: info.model,
+        supportsSession: info.supportsSession ?? true,
+        currentSessionId,
+      });
     } catch {
-      // Fallback: open directly
-      openWithAgent(a.id);
+      openTerminal(a.id);
     }
   };
-
-  const formatTime = (iso: string) => {
-    const diff = Date.now() - new Date(iso).getTime();
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-    return new Date(iso).toLocaleDateString();
-  };
-  const formatSize = (b: number) => b < 1024 ? `${b}B` : b < 1048576 ? `${(b/1024).toFixed(0)}KB` : `${(b/1048576).toFixed(1)}MB`;
 
   const allAgents = agents.filter(a => a.detected !== false || a.isProfile);
 
@@ -1626,54 +1596,22 @@ function AgentTerminalButton({ projectPath, projectName }: { projectPath: string
         )}
       </div>
 
-      {/* Launch dialog — New / Resume / Sessions */}
-      {launchDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.75)' }}
-          onClick={e => { if (e.target === e.currentTarget) setLaunchDialog(null); }}>
-          <div className="w-80 rounded-lg border border-[#30363d] p-4 shadow-xl" style={{ background: '#0d1117' }}>
-            <div className="text-sm font-bold text-white mb-3">⌨️ {launchDialog.agentName}</div>
-            <div className="space-y-2">
-              <button onClick={() => openWithAgent(launchDialog.agentId, false, undefined, launchDialog.env, launchDialog.model)}
-                className="w-full text-left px-3 py-2 rounded border border-[#30363d] hover:border-[#58a6ff] hover:bg-[#161b22] transition-colors">
-                <div className="text-xs text-white font-semibold">New Session</div>
-                <div className="text-[9px] text-gray-500">Start fresh</div>
-              </button>
-
-              {sessions.length > 0 && (
-                <button onClick={async () => {
-                  // Use fixedSession if available, otherwise latest session
-                  const { resolveFixedSession } = await import('@/lib/session-utils');
-                  const fixedId = await resolveFixedSession(projectPath);
-                  openWithAgent(launchDialog.agentId, true, fixedId || sessions[0].id, launchDialog.env, launchDialog.model);
-                }}
-                  className="w-full text-left px-3 py-2 rounded border border-[#30363d] hover:border-[#3fb950] hover:bg-[#161b22] transition-colors">
-                  <div className="text-xs text-white font-semibold">Resume Latest</div>
-                  <div className="text-[9px] text-gray-500">{sessions[0].id.slice(0, 8)} · {formatTime(sessions[0].modified)} · {formatSize(sessions[0].size)}</div>
-                </button>
-              )}
-
-              {sessions.length > 1 && (
-                <button onClick={() => setShowSessions(!showSessions)}
-                  className="w-full text-[9px] text-gray-500 hover:text-white py-1">
-                  {showSessions ? '▼' : '▶'} More sessions ({sessions.length - 1})
-                </button>
-              )}
-
-              {showSessions && sessions.slice(1).map(s => (
-                <button key={s.id} onClick={() => openWithAgent(launchDialog.agentId, true, s.id, launchDialog.env, launchDialog.model)}
-                  className="w-full text-left px-3 py-1.5 rounded border border-[#21262d] hover:border-[#30363d] hover:bg-[#161b22] transition-colors">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[9px] text-gray-400 font-mono">{s.id.slice(0, 8)}</span>
-                    <span className="text-[8px] text-gray-600">{formatTime(s.modified)}</span>
-                    <span className="text-[8px] text-gray-600">{formatSize(s.size)}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-            <button onClick={() => setLaunchDialog(null)}
-              className="w-full mt-3 text-[9px] text-gray-500 hover:text-white">Cancel</button>
-          </div>
-        </div>
+      {/* Unified Terminal Session Picker */}
+      {pickerInfo && (
+        <TerminalSessionPickerLazy
+          agentLabel={pickerInfo.agentName}
+          currentSessionId={pickerInfo.currentSessionId}
+          supportsSession={pickerInfo.supportsSession}
+          fetchSessions={() => fetchProjectSessions(projectName)}
+          onSelect={(sel) => {
+            if (sel.mode === 'new') {
+              openTerminal(pickerInfo.agentId, false, undefined, pickerInfo.env, pickerInfo.model);
+            } else {
+              openTerminal(pickerInfo.agentId, true, sel.sessionId, pickerInfo.env, pickerInfo.model);
+            }
+          }}
+          onCancel={() => setPickerInfo(null)}
+        />
       )}
     </>
   );

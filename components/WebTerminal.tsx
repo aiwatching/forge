@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, memo, useImperativeHandle, forwardRef } from 'react';
+import { TerminalSessionPickerLazy, fetchProjectSessions } from './TerminalLauncher';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
@@ -219,6 +220,7 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
   const [refreshKeys, setRefreshKeys] = useState<Record<number, number>>({});
   const [tabCodeOpen, setTabCodeOpen] = useState<Record<number, boolean>>({});
   const [showNewTabModal, setShowNewTabModal] = useState(false);
+  const [vibePickerInfo, setVibePickerInfo] = useState<{ projectPath: string; projectName: string; agentId: string; profileEnv?: Record<string, string>; supportsSession: boolean; currentSessionId: string | null } | null>(null);
   const [projectRoots, setProjectRoots] = useState<string[]>([]);
   const [allProjects, setAllProjects] = useState<{ name: string; path: string; root: string }[]>([]);
   const [skipPermissions, setSkipPermissions] = useState(false);
@@ -332,24 +334,42 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
     },
     async openProjectTerminal(projectPath: string, projectName: string, agentId?: string, resumeMode?: boolean, sessionId?: string, profileEnv?: Record<string, string>) {
       const agent = agentId || 'claude';
-      // Resolve CLI command — profiles use base agent's binary
-      const knownClis = ['claude', 'codex', 'aider'];
-      const agentCmd = knownClis.includes(agent) ? agent : 'claude';
 
-      // Resume flag: explicit sessionId > fixedSession (set async below) > -c
+      // Resolve agent info via API — get correct cliCmd, cliType, supportsSession
+      let agentCmd = 'claude';
+      let supportsSession = true;
+      let agentSkipFlag = '';
+      try {
+        const resolveRes = await fetch(`/api/agents?resolve=${encodeURIComponent(agent)}`);
+        const info = await resolveRes.json();
+        agentCmd = info.cliCmd || 'claude';
+        supportsSession = info.supportsSession ?? true;
+        // Merge profile env if not already provided
+        if (!profileEnv && (info.env || info.model)) {
+          const pe: Record<string, string> = { ...(info.env || {}) };
+          if (info.model) pe.CLAUDE_MODEL = info.model;
+          profileEnv = pe;
+        }
+        // Get skip-permissions flag from agent config
+        const agentsRes = await fetch('/api/agents');
+        const agentsData = await agentsRes.json();
+        const agentConfig = (agentsData.agents || []).find((a: any) => a.id === agent);
+        agentSkipFlag = agentConfig?.skipPermissionsFlag || '';
+      } catch {}
+
+      // Resume flag: explicit sessionId > fixedSession > -c (only for session-capable agents)
       let resumeFlag = '';
-      if (agentCmd === 'claude') {
+      if (supportsSession) {
         if (sessionId) resumeFlag = ` --resume ${sessionId}`;
         else if (resumeMode) resumeFlag = ' -c';
-      }
-      // Override with fixedSession if available (async, patched before command is sent)
-      let fixedSessionPending: Promise<void> | null = null;
-      if (agentCmd === 'claude' && !sessionId && projectPath) {
-        fixedSessionPending = import('@/lib/session-utils').then(({ resolveFixedSession }) =>
-          resolveFixedSession(projectPath).then(fixedId => {
+        // Override with fixedSession if no explicit sessionId
+        if (!sessionId && projectPath) {
+          try {
+            const { resolveFixedSession } = await import('@/lib/session-utils');
+            const fixedId = await resolveFixedSession(projectPath);
             if (fixedId) resumeFlag = ` --resume ${fixedId}`;
-          })
-        ).catch(() => {});
+          } catch {}
+        }
       }
 
       // Model flag from profile
@@ -364,25 +384,13 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
         : '';
       const envPrefix = envExports ? envExports + ' && ' : '';
 
-      // Get skip-permissions flag
+      // Skip-permissions flag
       let sf = '';
-      try {
-        const agentRes = await fetch('/api/agents');
-        const agentData = await agentRes.json();
-        const agentConfig = (agentData.agents || []).find((a: any) => a.id === agent);
-        if (agentConfig?.skipPermissionsFlag && skipPermissions) {
-          sf = ` ${agentConfig.skipPermissionsFlag}`;
-        } else if (skipPermissions && agentCmd === 'claude') {
-          sf = ' --dangerously-skip-permissions';
-        }
-      } catch {
-        if (skipPermissions && agentCmd === 'claude') sf = ' --dangerously-skip-permissions';
+      if (skipPermissions) {
+        sf = agentSkipFlag ? ` ${agentSkipFlag}` : (agentCmd === 'claude' ? ' --dangerously-skip-permissions' : '');
       }
 
-      // Wait for fixedSession resolution before building command
-      if (fixedSessionPending) await fixedSessionPending;
-
-      // MCP + env vars for claude-code agents
+      // MCP config for claude-code agents
       let mcpFlag = '';
       if (agentCmd === 'claude' && projectPath) {
         try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(projectPath); } catch {}
@@ -391,7 +399,8 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
       let targetTabId: number | null = null;
 
       setTabs(prev => {
-        const existing = prev.find(t => t.projectPath === projectPath);
+        // Reuse existing tab only if same project AND same agent
+        const existing = prev.find(t => t.projectPath === projectPath && (!t.agent || t.agent === agent));
         if (existing) {
           targetTabId = existing.id;
           return prev;
@@ -401,11 +410,12 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
         pendingCommands.set(paneId, `${envPrefix}cd "${projectPath}" && ${agentCmd}${resumeFlag}${modelFlag}${sf}${mcpFlag}\n`);
         const newTab: TabState = {
           id: nextId++,
-          label: projectName,
+          label: agent !== 'claude' ? `${projectName} (${agentCmd})` : projectName,
           tree,
           ratios: {},
           activeId: paneId,
           projectPath,
+          agent,
         };
         targetTabId = newTab.id;
         return [...prev, newTab];
@@ -900,59 +910,31 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
                                   agents={availableAgents}
                                   defaultAgentId={defaultAgentId}
                                   onSelect={async (a) => {
-                                          setShowNewTabModal(false); setExpandedRoot(null);
-                                          let cmd: string;
-                                          try {
-                                            // Resolve terminal launch info (reads profile env/model)
-                                            const resolveRes = await fetch(`/api/agents?resolve=${encodeURIComponent(a.id)}`);
-                                            const info = await resolveRes.json();
-                                            const cliCmd = info.cliCmd || 'claude';
-
-                                            // Build env exports from profile
-                                            const profileEnv = { ...(info.env || {}), ...(info.model ? { CLAUDE_MODEL: info.model } : {}) };
-                                            const envEntries = Object.entries(profileEnv).filter(([k]) => k !== 'CLAUDE_MODEL');
-                                            const envExports = envEntries.length > 0
-                                              ? envEntries.map(([k, v]) => `export ${k}="${v}"`).join(' && ') + ' && '
-                                              : '';
-
-                                            // Model flag (claude-code only)
-                                            const modelFlag = info.supportsSession && profileEnv.CLAUDE_MODEL ? ` --model ${profileEnv.CLAUDE_MODEL}` : '';
-
-                                            // Resume flag: use fixedSession if available, else -c
-                                            let resumeFlag = '';
-                                            if (info.supportsSession) {
-                                              try {
-                                                const { resolveFixedSession, buildResumeFlag } = await import('@/lib/session-utils');
-                                                const fixedId = await resolveFixedSession(p.path);
-                                                resumeFlag = buildResumeFlag(fixedId, true);
-                                              } catch {}
-                                            }
-
-                                            // Skip permissions flag
-                                            let sf = '';
-                                            if (skipPermissions) {
-                                              const agentRes = await fetch('/api/agents');
-                                              const agentData = await agentRes.json();
-                                              const cfg = (agentData.agents || []).find((ag: any) => ag.id === a.id);
-                                              sf = cfg?.skipPermissionsFlag ? ` ${cfg.skipPermissionsFlag}` : (cliCmd === 'claude' ? ' --dangerously-skip-permissions' : '');
-                                            }
-
-                                            // MCP + env vars
-                                            let mcpFlag = '';
-                                            if (cliCmd === 'claude') {
-                                              try { const { getMcpFlag } = await import('@/lib/session-utils'); mcpFlag = await getMcpFlag(p.path); } catch {}
-                                            }
-
-                                            cmd = `${envExports}cd "${p.path}" && ${cliCmd}${resumeFlag}${modelFlag}${sf}${mcpFlag}\n`;
-                                          } catch {
-                                            cmd = `cd "${p.path}" && ${a.id}\n`;
-                                          }
-                                          const tree = makeTerminal(undefined, p.path);
-                                          const paneId = firstTerminalId(tree);
-                                          pendingCommands.set(paneId, cmd);
-                                          const newTab: TabState = { id: nextId++, label: p.name || 'Terminal', tree, ratios: {}, activeId: paneId, projectPath: p.path, agent: a.id };
-                                          setTabs(prev => [...prev, newTab]);
-                                          setActiveTabId(newTab.id);
+                                    setShowNewTabModal(false); setExpandedRoot(null);
+                                    try {
+                                      const resolveRes = await fetch(`/api/agents?resolve=${encodeURIComponent(a.id)}`);
+                                      const info = await resolveRes.json();
+                                      const profileEnv: Record<string, string> = { ...(info.env || {}) };
+                                      if (info.model) profileEnv.CLAUDE_MODEL = info.model;
+                                      let currentSessionId: string | null = null;
+                                      if (info.supportsSession) {
+                                        try {
+                                          const { resolveFixedSession } = await import('@/lib/session-utils');
+                                          currentSessionId = await resolveFixedSession(p.path) || null;
+                                        } catch {}
+                                      }
+                                      setVibePickerInfo({
+                                        projectPath: p.path, projectName: p.name, agentId: a.id,
+                                        profileEnv: Object.keys(profileEnv).length > 0 ? profileEnv : undefined,
+                                        supportsSession: info.supportsSession ?? true,
+                                        currentSessionId,
+                                      });
+                                    } catch {
+                                      // Fallback: open directly without picker
+                                      window.dispatchEvent(new CustomEvent('forge:open-terminal', {
+                                        detail: { projectPath: p.path, projectName: p.name, agentId: a.id },
+                                      }));
+                                    }
                                   }}
                                 />
                               </div>
@@ -1017,6 +999,24 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
             </button>
           </div>
         </div>
+      )}
+
+      {/* VibeCoding Terminal Session Picker */}
+      {vibePickerInfo && (
+        <TerminalSessionPickerLazy
+          agentLabel={vibePickerInfo.projectName}
+          currentSessionId={vibePickerInfo.currentSessionId}
+          supportsSession={vibePickerInfo.supportsSession}
+          fetchSessions={() => fetchProjectSessions(vibePickerInfo.projectName)}
+          onSelect={(sel) => {
+            const info = vibePickerInfo;
+            setVibePickerInfo(null);
+            const detail: any = { projectPath: info.projectPath, projectName: info.projectName, agentId: info.agentId, profileEnv: info.profileEnv };
+            if (sel.mode !== 'new') { detail.resumeMode = true; detail.sessionId = sel.sessionId; }
+            window.dispatchEvent(new CustomEvent('forge:open-terminal', { detail }));
+          }}
+          onCancel={() => setVibePickerInfo(null)}
+        />
       )}
 
       {/* Terminal panes — render all tabs, hide inactive */}

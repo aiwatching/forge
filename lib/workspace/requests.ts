@@ -225,6 +225,40 @@ export function updateResponse(
 }
 
 /**
+ * Claim a request — set assigned_to and status to in_progress.
+ * Returns true if claimed successfully, false if already claimed by someone else.
+ */
+export function claimRequest(projectPath: string, requestId: string, agentLabel: string): { ok: boolean; claimedBy?: string } {
+  const dir = requestDir(projectPath, requestId);
+  const reqFile = join(dir, 'request.yml');
+  if (!existsSync(reqFile)) throw new Error(`Request ${requestId} not found`);
+
+  const doc: RequestDocument = YAML.parse(readFileSync(reqFile, 'utf-8'));
+
+  // Already claimed by someone else
+  if (doc.assigned_to && doc.assigned_to !== agentLabel) {
+    return { ok: false, claimedBy: doc.assigned_to };
+  }
+
+  // Already claimed by this agent (idempotent)
+  if (doc.assigned_to === agentLabel) {
+    return { ok: true };
+  }
+
+  // Only open requests can be claimed
+  if (doc.status !== 'open') {
+    return { ok: false, claimedBy: doc.assigned_to || `(status: ${doc.status})` };
+  }
+
+  doc.assigned_to = agentLabel;
+  doc.status = 'in_progress';
+  doc.updated_at = new Date().toISOString();
+  writeFileSync(reqFile, YAML.stringify(doc), 'utf-8');
+  console.log(`[requests] ${requestId}: claimed by ${agentLabel}`);
+  return { ok: true };
+}
+
+/**
  * Manually update request status.
  */
 export function updateRequestStatus(projectPath: string, requestId: string, status: RequestStatus): void {

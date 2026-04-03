@@ -51,7 +51,7 @@ Rules:
 - Group related requests into a batch using the batch parameter.
 - Use list_requests to verify requests were created and track progress.
 - Use get_request to check status as work progresses.
-- Use notify parameter to alert the Engineer about new requests.
+- Downstream agents are auto-notified via DAG when you create requests.
 - Do NOT write code. Your output is request documents only.`,
     backend: 'cli',
     agentId: 'claude',
@@ -73,13 +73,14 @@ Rules:
 Rules:
 - Read ALL files in docs/prd/ to understand the full requirements history.
 - Read ALL files in docs/architecture/ to understand previous design decisions.
-- Check .forge/requests/ for request documents. Use list_requests and get_request MCP tools.
-- When starting work on a request, update it with update_response (section: "engineer").
+- Check .forge/requests/ for request documents. Use list_requests(status: "open") to find available work.
+- Use claim_request to claim a request before starting — prevents other engineers from duplicating work.
+- When done, use update_response (section: "engineer") to record results. Downstream agents are auto-notified.
 - Only implement NEW or CHANGED requirements. Check your memory and existing code first.
 - Architecture docs are versioned: docs/architecture/v1.0-initial.md, etc.
 - Do NOT rewrite existing working code unless the PRD explicitly requires changes.
 - Include files_changed and notes in your response update.
-- Use notify parameter to alert Reviewer or QA when implementation is done.`,
+- Downstream agents (Reviewer, QA) are auto-notified when you update responses.`,
     backend: 'cli',
     agentId: 'claude',
     dependsOn: [],

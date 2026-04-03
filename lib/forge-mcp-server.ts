@@ -406,7 +406,7 @@ function createForgeMcpServer(sessionId: string): McpServer {
 
   server.tool(
     'create_request',
-    'Create a new request document describing a feature/task for implementation. The request is stored as YAML in .forge/requests/ and can optionally notify an agent.',
+    'Create a new request document for implementation. Auto-notifies downstream agents via DAG.',
     {
       title: z.string().describe('Short title for the request'),
       description: z.string().describe('Detailed description of what to implement'),
@@ -418,7 +418,6 @@ function createForgeMcpServer(sessionId: string): McpServer {
       })).describe('Feature modules with acceptance criteria'),
       batch: z.string().optional().describe('Batch name to group related requests (default: auto-generated from date)'),
       priority: z.enum(['high', 'medium', 'low']).optional().describe('Priority level (default: medium)'),
-      notify: z.string().optional().describe('Agent name to notify about this request (e.g., "Engineer")'),
     },
     async (params) => {
       const { workspaceId, agentId } = ctx();
@@ -441,23 +440,46 @@ function createForgeMcpServer(sessionId: string): McpServer {
           created_by: agentLabel,
         });
 
-        // Optionally notify target agent
-        if (params.notify) {
-          const snapshot = orch.getSnapshot();
-          const target = snapshot.agents.find((a: any) =>
-            a.label.toLowerCase() === params.notify!.toLowerCase() ||
-            a.id === params.notify
-          );
-          if (target) {
-            orch.getBus().send(agentId, target.id, 'notify', {
-              action: 'new_request',
-              content: `New request: ${params.title} [${params.priority || 'medium'}] — ${params.modules.length} module(s)`,
-              ref,
-            });
-          }
+        // Auto-notify downstream agents via DAG
+        const snapshot = orch.getSnapshot();
+        const notified: string[] = [];
+        for (const agent of snapshot.agents) {
+          if (agent.type === 'input') continue;
+          if (!agent.dependsOn?.includes(agentId)) continue;
+          orch.getBus().send(agentId, agent.id, 'notify', {
+            action: 'new_request',
+            content: `New request: ${params.title} [${params.priority || 'medium'}] — ${params.modules.length} module(s). Use list_requests and claim_request to pick it up.`,
+            ref,
+          });
+          notified.push(agent.label);
         }
 
-        return { content: [{ type: 'text', text: `Created request: ${ref}\nBatch: ${batch}\nModules: ${params.modules.length}\n${params.notify ? `Notified: ${params.notify}` : 'No notification sent (use notify param to alert an agent)'}` }] };
+        return { content: [{ type: 'text', text: `Created request: ${ref}\nBatch: ${batch}\nModules: ${params.modules.length}\nNotified: ${notified.length > 0 ? notified.join(', ') : '(no downstream agents)'}` }] };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
+      }
+    }
+  );
+
+  server.tool(
+    'claim_request',
+    'Claim an open request for implementation. Prevents other agents from working on the same request.',
+    {
+      request_id: z.string().describe('Request ID to claim (e.g., REQ-20260403-001)'),
+    },
+    async (params) => {
+      const { workspaceId, agentId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context.' }] };
+      try {
+        const orch = getOrch(workspaceId);
+        const { claimRequest } = await import('./workspace/requests') as any;
+        const agentLabel = orch.getSnapshot().agents.find((a: any) => a.id === agentId)?.label || agentId;
+
+        const result = claimRequest(orch.projectPath, params.request_id, agentLabel);
+        if (!result.ok) {
+          return { content: [{ type: 'text', text: `Cannot claim ${params.request_id}: already claimed by ${result.claimedBy}. Use list_requests(status: "open") to find available requests.` }] };
+        }
+        return { content: [{ type: 'text', text: `Claimed ${params.request_id}. Status: in_progress. You can now implement it and use update_response when done.` }] };
       } catch (err: any) {
         return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
       }
@@ -466,7 +488,7 @@ function createForgeMcpServer(sessionId: string): McpServer {
 
   server.tool(
     'update_response',
-    'Update a response document with your work results. Auto-advances request status (engineer→review, review→qa, qa→done).',
+    'Update a response document with your work results. Auto-advances status and notifies downstream agents via DAG.',
     {
       request_id: z.string().describe('Request ID (e.g., REQ-20260403-001)'),
       section: z.enum(['engineer', 'review', 'qa']).describe('Which section to update'),
@@ -480,7 +502,6 @@ function createForgeMcpServer(sessionId: string): McpServer {
         })).optional().describe('Issues found (review/qa)'),
         test_files: z.array(z.string()).optional().describe('Test files run (qa)'),
       }).describe('Response data for your section'),
-      notify: z.string().optional().describe('Agent name to notify about this update'),
     },
     async (params) => {
       const { workspaceId, agentId } = ctx();
@@ -493,23 +514,21 @@ function createForgeMcpServer(sessionId: string): McpServer {
         const updated = getRequest(orch.projectPath, params.request_id);
         const newStatus = updated?.request?.status || 'unknown';
 
-        // Optionally notify next agent
-        if (params.notify) {
-          const snapshot = orch.getSnapshot();
-          const target = snapshot.agents.find((a: any) =>
-            a.label.toLowerCase() === params.notify!.toLowerCase() ||
-            a.id === params.notify
-          );
-          if (target) {
-            orch.getBus().send(agentId, target.id, 'notify', {
-              action: 'response_updated',
-              content: `${params.section} completed for ${params.request_id} → status: ${newStatus}`,
-              ref,
-            });
-          }
+        // Auto-notify downstream agents via DAG
+        const snapshot = orch.getSnapshot();
+        const notified: string[] = [];
+        for (const agent of snapshot.agents) {
+          if (agent.type === 'input') continue;
+          if (!agent.dependsOn?.includes(agentId)) continue;
+          orch.getBus().send(agentId, agent.id, 'notify', {
+            action: 'response_updated',
+            content: `${params.section} completed for ${params.request_id} → status: ${newStatus}. Use get_request to review details.`,
+            ref,
+          });
+          notified.push(agent.label);
         }
 
-        return { content: [{ type: 'text', text: `Updated ${params.request_id} [${params.section}] → status: ${newStatus}\n${params.notify ? `Notified: ${params.notify}` : ''}` }] };
+        return { content: [{ type: 'text', text: `Updated ${params.request_id} [${params.section}] → status: ${newStatus}\nNotified: ${notified.length > 0 ? notified.join(', ') : '(no downstream agents)'}` }] };
       } catch (err: any) {
         return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
       }

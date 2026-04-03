@@ -2324,7 +2324,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
               .join(' && ');
             if (envExports) envExports += ' && ';
           }
-          if (info.model) modelFlag = ` --model ${info.model}`;
+          // Workspace agent model takes priority over profile/settings model
+          const effectiveModel = config.model || info.model;
+          if (effectiveModel) modelFlag = ` --model ${effectiveModel}`;
         } catch {}
 
         // Generate MCP config for Claude Code agents

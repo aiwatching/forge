@@ -659,6 +659,7 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
   const hasPrimaryAlready = existingAgents.some(a => a.primary && a.id !== initial.id);
   const [persistentSession, setPersistentSession] = useState(initial.persistentSession || initial.primary || false);
   const [skipPermissions, setSkipPermissions] = useState(initial.skipPermissions !== false);
+  const [agentModel, setAgentModel] = useState(initial.model || '');
   const [watchEnabled, setWatchEnabled] = useState(initial.watch?.enabled || false);
   const [watchInterval, setWatchInterval] = useState(String(initial.watch?.interval || 60));
   const [watchAction, setWatchAction] = useState<'log' | 'analyze' | 'approve' | 'send_message'>(initial.watch?.action || 'log');
@@ -974,6 +975,27 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
             );
           })()}
 
+          {/* Model override — only for claude-code agents */}
+          {(() => {
+            const sa = availableAgents.find(a => a.id === agentId);
+            const ct = sa?.cliType || (agentId === 'claude' ? 'claude-code' : '');
+            if (ct !== 'claude-code') return null;
+            return (
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[9px] text-gray-500 uppercase">Model</label>
+                <input value={agentModel} onChange={e => setAgentModel(e.target.value)}
+                  placeholder="default (uses profile or system default)"
+                  list="workspace-model-list"
+                  className="text-xs bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-white focus:outline-none focus:border-[#58a6ff] font-mono" />
+                <datalist id="workspace-model-list">
+                  <option value="claude-sonnet-4-6" />
+                  <option value="claude-opus-4-6" />
+                  <option value="claude-haiku-4-5-20251001" />
+                </datalist>
+              </div>
+            );
+          })()}
+
           {/* Steps */}
           <div className="flex flex-col gap-1">
             <label className="text-[9px] text-gray-500 uppercase">Steps (one per line — Label: Prompt)</label>
@@ -1164,8 +1186,15 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
               steps: parseSteps(),
               primary: isPrimary || undefined,
               requiresApproval: requiresApproval || undefined,
-              persistentSession: isPrimary ? true : (persistentSession || undefined),
+              persistentSession: (() => {
+                if (isPrimary) return true;
+                // Non-terminal agents (codex, aider, etc.) force headless
+                const sa = availableAgents.find(a => a.id === agentId);
+                const isClaude = sa?.cliType === 'claude-code' || sa?.base === 'claude' || !sa;
+                return (isClaude || isPrimary) ? (persistentSession || undefined) : false;
+              })(),
               skipPermissions: persistentSession ? (skipPermissions ? undefined : false) : undefined,
+              model: agentModel || undefined,
               watch: watchEnabled && watchTargets.length > 0 ? {
                 enabled: true,
                 interval: Math.max(10, parseInt(watchInterval) || 60),

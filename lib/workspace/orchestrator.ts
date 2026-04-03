@@ -350,9 +350,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
     entry.worker = null;
 
     if (this.daemonActive) {
-      // Rebuild worker + message loop
-      this.enterDaemonListening(id);
-      // Set 'starting' until ensurePersistentSession finishes — Open Terminal is blocked during this
+      // Set 'starting' BEFORE creating worker — worker.executeDaemon emits 'active' synchronously
+      // which would cause a race: frontend sees active before boundSessionId is ready
       entry.state.smithStatus = 'starting';
       this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'starting' } as any);
       // Restart watch if config changed
@@ -360,13 +359,15 @@ export class WorkspaceOrchestrator extends EventEmitter {
       this.ensurePersistentSession(id, config).then(() => {
         const e = this.agents.get(id);
         if (e) {
+          // Rebuild worker + message loop AFTER session is ready (boundSessionId set)
+          this.enterDaemonListening(id);
           e.state.smithStatus = 'active';
           this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'active' } as any);
           this.emitAgentsChanged();
         }
         this.startMessageLoop(id);
       });
-  }
+    }
     this.saveNow();
     this.emitAgentsChanged();
     this.emit('event', { type: 'task_status', agentId: id, taskStatus: 'idle' } satisfies WorkerEvent);
@@ -2281,14 +2282,23 @@ export class WorkspaceOrchestrator extends EventEmitter {
         console.log(`[daemon] ${config.label}: persistent session alive (${sessionName}) — skipping script generation`);
         // Ensure FORGE env vars are set in the tmux session environment
         try {
-          execSync(`tmux set-environment -t "${sessionName}" FORGE_WORKSPACE_ID "${this.workspaceId}"`, { timeout: 3000 });
-          execSync(`tmux set-environment -t "${sessionName}" FORGE_AGENT_ID "${config.id}"`, { timeout: 3000 });
-          execSync(`tmux set-environment -t "${sessionName}" FORGE_PORT "${Number(process.env.PORT) || 8403}"`, { timeout: 3000 });
+          execSync(`tmux set-environment -t "${sessionName}" FORGE_WORKSPACE_ID "${this.workspaceId}" && tmux set-environment -t "${sessionName}" FORGE_AGENT_ID "${config.id}" && tmux set-environment -t "${sessionName}" FORGE_PORT "${Number(process.env.PORT) || 8403}"`, { timeout: 5000 });
         } catch {}
       }
     }
 
     if (!sessionAlreadyExists) {
+      // Pre-bind: find existing session file BEFORE starting CLI so --resume is available from the start.
+      // This avoids starting a fresh CLI then restarting it after polling finds the session.
+      if (!config.primary && !config.boundSessionId) {
+        const existingSessionId = this.getLatestSessionId(config.workDir);
+        if (existingSessionId) {
+          config.boundSessionId = existingSessionId;
+          this.saveNow();
+          console.log(`[daemon] ${config.label}: pre-bound to existing session ${existingSessionId}`);
+        }
+      }
+
       // Create new tmux session and start the CLI agent
       try {
         // Resolve agent launch info
@@ -2404,12 +2414,30 @@ export class WorkspaceOrchestrator extends EventEmitter {
           }
           // Fire boundSessionId binding in background (no await — don't block terminal open)
           if (!config.primary && !config.boundSessionId) {
+            const bgScriptPath = `/tmp/forge-launch-${config.id.replace(/[^a-z0-9-]/g, '')}.sh`;
             setTimeout(() => {
               const sid = this.getLatestSessionId(config.workDir);
               if (sid) {
                 config.boundSessionId = sid;
                 this.saveNow();
                 console.log(`[daemon] ${config.label}: background bound to session ${sid}`);
+                // Also update launch script for future restarts
+                if (existsSync(bgScriptPath)) {
+                  try {
+                    const lines = readFileSync(bgScriptPath, 'utf-8').split('\n');
+                    const execIdx = lines.findIndex(l => l.startsWith('exec '));
+                    if (execIdx >= 0) {
+                      const withoutResume = lines[execIdx].replace(/\s--resume\s+\S+/, '');
+                      const afterExec = withoutResume.startsWith('exec ') ? 5 : 0;
+                      const cmdEnd = withoutResume.indexOf(' ', afterExec);
+                      lines[execIdx] = cmdEnd >= 0
+                        ? withoutResume.slice(0, cmdEnd) + ` --resume ${sid}` + withoutResume.slice(cmdEnd)
+                        : withoutResume + ` --resume ${sid}`;
+                      writeFileSync(bgScriptPath, lines.join('\n'), { mode: 0o755 });
+                      console.log(`[daemon] ${config.label}: background updated launch script with --resume ${sid}`);
+                    }
+                  } catch {}
+                }
               }
             }, 5000);
           }

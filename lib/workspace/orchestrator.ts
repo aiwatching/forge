@@ -2056,9 +2056,11 @@ export class WorkspaceOrchestrator extends EventEmitter {
       .filter(h => h.subtype === 'final_summary' || h.subtype === 'step_summary')
       .slice(-1)[0]?.content || '';
 
+    // Keep notification concise — agent can read files/git diff for details
+    const shortSummary = summary.split('\n')[0]?.slice(0, 100) || '';
     const content = files.length > 0
-      ? `${completedLabel} completed: ${files.length} files changed. ${summary.slice(0, 200)}. If you are currently processing a task or have seen this before, ignore this notification.`
-      : `${completedLabel} completed. ${summary.slice(0, 300) || 'If you are currently processing a task or have seen this before, ignore this notification.'}`;
+      ? `${completedLabel} completed: ${files.length} files changed.${shortSummary ? ' ' + shortSummary : ''} Run \`git diff --stat HEAD~1\` for details.`
+      : `${completedLabel} completed.${shortSummary ? ' ' + shortSummary : ''}`;
 
     // Find all downstream agents — skip if already sent upstream_complete recently (60s)
     const now = Date.now();

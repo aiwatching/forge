@@ -423,7 +423,7 @@ export class AgentWorker extends EventEmitter {
     let prompt: string;
     switch (reason.type) {
       case 'bus_message':
-        prompt = `You received new messages from other agents:\n${reason.messages.map(m => m.content).join('\n')}\n\nReact accordingly — update your work, respond, or take action as needed.`;
+        prompt = `You received new messages from other agents:\n${reason.messages.map(m => m.content).join('\n')}\n\nAct on these messages. Be concise — don't repeat the message content back. Use tools to inspect files or git history if you need more details.`;
         break;
       case 'upstream_changed':
         prompt = `Your upstream dependency (agent ${reason.agentId}) has produced new output: ${reason.files.join(', ')}.\n\nRe-analyze and update your work based on the new upstream output.`;

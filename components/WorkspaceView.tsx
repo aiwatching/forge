@@ -945,7 +945,7 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
           {(() => {
             // Check if selected agent supports terminal mode (claude-code or its profiles)
             const selectedAgent = availableAgents.find(a => a.id === agentId);
-            const isClaude = agentId === 'claude' || selectedAgent?.base === 'claude' || selectedAgent?.cliType === 'claude-code' || !selectedAgent;
+            const isClaude = selectedAgent?.cliType === 'claude-code' || selectedAgent?.base === 'claude' || !selectedAgent;
             const canTerminal = isClaude || isPrimary;
             return canTerminal ? (
               <>

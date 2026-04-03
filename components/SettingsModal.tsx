@@ -274,6 +274,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   }, [tunnel.status, refreshTunnel]);
 
   const save = async () => {
+    const cs = (settings as any).agents?.['claude-sonnet'];
+    if (cs) console.log('[save] claude-sonnet at save time:', JSON.stringify({ taskFlags: cs.taskFlags, models: cs.models, cliType: cs.cliType }));
+    else console.log('[save] claude-sonnet NOT in settings.agents. keys:', Object.keys((settings as any).agents || {}));
     await fetch('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -809,7 +812,7 @@ function ProfileRow({ id, cfg, inputClass, onUpdate, onDelete }: {
   const isApi = cfg.type === 'api';
   const summary = isApi
     ? `API: ${cfg.provider || '?'} / ${cfg.model || '?'}`
-    : `CLI: ${cfg.base || '?'} / ${cfg.model || cfg.models?.task || 'default'}`;
+    : `CLI: ${cfg.cliType || cfg.base || '?'} / ${cfg.model || cfg.models?.task || 'default'}`;
   const envStr = cfg.env ? Object.entries(cfg.env).map(([k, v]) => `${k}=${v}`).join('\n') : '';
 
   return (
@@ -833,14 +836,14 @@ function ProfileRow({ id, cfg, inputClass, onUpdate, onDelete }: {
               <label className="text-[8px] text-[var(--text-secondary)]">Model</label>
               <input value={cfg.model || ''} onChange={e => onUpdate({ ...cfg, model: e.target.value })}
                 list={`profile-model-${id}`} className={inputClass} />
-              {(cfg.base === 'claude' || cfg.cliType === 'claude-code' || (!cfg.base && !isApi)) && (
+              {(cfg.cliType === 'claude-code' || (!cfg.cliType && !cfg.base && !isApi)) && (
                 <datalist id={`profile-model-${id}`}>
                   <option value="claude-opus-4-6" />
                   <option value="claude-sonnet-4-6" />
                   <option value="claude-haiku-4-5-20251001" />
                 </datalist>
               )}
-              {cfg.base === 'codex' && (
+              {(cfg.cliType === 'codex' || cfg.base === 'codex') && (
                 <datalist id={`profile-model-${id}`}>
                   <option value="codex-mini" />
                   <option value="o4-mini" />
@@ -869,7 +872,7 @@ function ProfileRow({ id, cfg, inputClass, onUpdate, onDelete }: {
             <>
               <div>
                 <label className="text-[8px] text-[var(--text-secondary)]">CLI Type</label>
-                <select value={cfg.base || 'claude'} onChange={e => onUpdate({ ...cfg, base: e.target.value, cliType: e.target.value === 'claude' ? 'claude-code' : e.target.value })} className={inputClass}>
+                <select value={cfg.cliType === 'claude-code' ? 'claude' : (cfg.cliType || cfg.base || 'claude')} onChange={e => onUpdate({ ...cfg, cliType: e.target.value === 'claude' ? 'claude-code' : e.target.value })} className={inputClass}>
                   <option value="claude">Claude Code</option>
                   <option value="codex">Codex</option>
                   <option value="aider">Aider</option>
@@ -879,14 +882,15 @@ function ProfileRow({ id, cfg, inputClass, onUpdate, onDelete }: {
               <div>
                 <div className="flex items-center gap-2">
                   <label className="text-[8px] text-[var(--text-secondary)]">Environment Variables (KEY=VALUE per line)</label>
-                  {cfg.base && (
+                  {(cfg.cliType || cfg.base) && (
                     <button onClick={() => {
                       const templates: Record<string, string> = {
+                        'claude-code': 'ANTHROPIC_AUTH_TOKEN=\nANTHROPIC_BASE_URL=\nANTHROPIC_SMALL_FAST_MODEL=\nCLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=true\nDISABLE_TELEMETRY=true\nDISABLE_ERROR_REPORTING=true\nDISABLE_AUTOUPDATER=true\nDISABLE_NON_ESSENTIAL_MODEL_CALLS=true',
                         claude: 'ANTHROPIC_AUTH_TOKEN=\nANTHROPIC_BASE_URL=\nANTHROPIC_SMALL_FAST_MODEL=\nCLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=true\nDISABLE_TELEMETRY=true\nDISABLE_ERROR_REPORTING=true\nDISABLE_AUTOUPDATER=true\nDISABLE_NON_ESSENTIAL_MODEL_CALLS=true',
                         codex: 'OPENAI_API_KEY=\nOPENAI_BASE_URL=',
                         aider: 'ANTHROPIC_API_KEY=\nOPENAI_API_KEY=',
                       };
-                      const tpl = templates[cfg.base!];
+                      const tpl = templates[cfg.cliType || cfg.base!];
                       if (tpl) {
                         const env: Record<string, string> = {};
                         for (const line of tpl.split('\n')) {
@@ -898,7 +902,7 @@ function ProfileRow({ id, cfg, inputClass, onUpdate, onDelete }: {
                         onUpdate({ ...cfg, env: merged });
                       }
                     }} className="text-[7px] px-1.5 py-0.5 rounded bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20">
-                      Fill {cfg.base} template
+                      Fill {cfg.cliType === 'claude-code' ? 'claude' : (cfg.cliType || cfg.base)} template
                     </button>
                   )}
                 </div>
@@ -993,7 +997,7 @@ function AddProfileForm({ type, baseAgents, onAdd }: {
   const handleAdd = () => {
     if (!id) return;
     if (type === 'cli') {
-      onAdd(id, { base, cliType: base === 'claude' ? 'claude-code' : base, name: name || id, model: model || undefined, env: parseEnv() });
+      onAdd(id, { cliType: base === 'claude' ? 'claude-code' : base, name: name || id, model: model || undefined, env: parseEnv() });
     } else {
       onAdd(id, { type: 'api', name: name || id, provider, model: model || undefined, apiKey: apiKey || undefined });
     }
@@ -1096,17 +1100,35 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
   const [loading, setLoading] = useState(true);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [newAgent, setNewAgent] = useState({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', models: { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' }, skipPermissionsFlag: '', requiresTTY: false });
+  const cliDefaults: Record<string, any> = {
+    'claude-code': { taskFlags: '-p --verbose --output-format stream-json --dangerously-skip-permissions', resumeFlag: '-c', outputFormat: 'stream-json', skipPermissionsFlag: '--dangerously-skip-permissions' },
+    'codex': { taskFlags: '', resumeFlag: '', outputFormat: 'text', skipPermissionsFlag: '--full-auto' },
+    'aider': { taskFlags: '--message', resumeFlag: '', outputFormat: 'text', skipPermissionsFlag: '--yes' },
+    'generic': { taskFlags: '', resumeFlag: '', outputFormat: 'text', skipPermissionsFlag: '' },
+  };
+  const makeNewAgent = (cliType = 'claude-code') => ({
+    id: '', name: '', path: '', interactiveCmd: '',
+    models: { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' },
+    requiresTTY: false, cliType,
+    ...cliDefaults[cliType],
+  });
+  const [newAgent, setNewAgent] = useState(makeNewAgent());
 
   // Fetch detected + configured agents
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const res = await fetch('/api/agents');
-        const data = await res.json();
+        // Fetch both agents and settings together to avoid race condition
+        // (settings prop may not be loaded yet when this effect runs)
+        const [agentsRes, settingsRes] = await Promise.all([
+          fetch('/api/agents'),
+          fetch('/api/settings'),
+        ]);
+        const data = await agentsRes.json();
+        const settingsData = await settingsRes.json();
         const detected = (data.agents || []) as any[];
-        const configured = settings.agents || {};
+        const configured = settingsData.agents || {};
 
         const merged: AgentEntry[] = [];
 
@@ -1115,16 +1137,16 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
           const cfg = configured[a.id] || {};
           merged.push({
             id: a.id,
-            name: cfg.name || a.name,
-            path: cfg.path || a.path,
+            name: cfg.name ?? a.name,
+            path: cfg.path ?? a.path,
             enabled: cfg.enabled !== false,
             type: a.type || 'generic',
-            taskFlags: cfg.taskFlags || (a.id === 'claude' ? '-p --verbose --output-format stream-json --dangerously-skip-permissions' : cfg.flags?.join(' ') || ''),
-            interactiveCmd: cfg.interactiveCmd || a.path,
-            resumeFlag: cfg.resumeFlag || (a.capabilities?.supportsResume ? '-c' : ''),
-            outputFormat: cfg.outputFormat || (a.capabilities?.supportsStreamJson ? 'stream-json' : 'text'),
-            models: cfg.models || { terminal: "default", task: "default", telegram: "default", help: "default", mobile: "default" },
-            skipPermissionsFlag: cfg.skipPermissionsFlag || a.skipPermissionsFlag || "",
+            taskFlags: cfg.taskFlags ?? (a.id === 'claude' ? '-p --verbose --output-format stream-json --dangerously-skip-permissions' : cfg.flags?.join(' ') ?? ''),
+            interactiveCmd: cfg.interactiveCmd ?? a.path,
+            resumeFlag: cfg.resumeFlag ?? (a.capabilities?.supportsResume ? '-c' : ''),
+            outputFormat: cfg.outputFormat ?? (a.capabilities?.supportsStreamJson ? 'stream-json' : 'text'),
+            models: cfg.models ?? { terminal: "default", task: "default", telegram: "default", help: "default", mobile: "default" },
+            skipPermissionsFlag: cfg.skipPermissionsFlag ?? a.skipPermissionsFlag ?? "",
             requiresTTY: cfg.requiresTTY ?? a.capabilities?.requiresTTY ?? false,
             detected: a.detected !== false,
           });
@@ -1135,16 +1157,16 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
           if (merged.find(a => a.id === id)) continue;
           merged.push({
             id,
-            name: cfg.name || id,
-            path: cfg.path || '',
+            name: cfg.name ?? id,
+            path: cfg.path ?? '',
             enabled: cfg.enabled !== false,
             type: 'generic',
-            taskFlags: cfg.taskFlags || cfg.flags?.join(' ') || '',
-            interactiveCmd: cfg.interactiveCmd || cfg.path || '',
-            resumeFlag: cfg.resumeFlag || '',
-            outputFormat: cfg.outputFormat || 'text',
-            models: cfg.models || { terminal: "default", task: "default", telegram: "default", help: "default", mobile: "default" },
-            skipPermissionsFlag: cfg.skipPermissionsFlag || '',
+            taskFlags: cfg.taskFlags ?? cfg.flags?.join(' ') ?? '',
+            interactiveCmd: cfg.interactiveCmd ?? cfg.path ?? '',
+            resumeFlag: cfg.resumeFlag ?? '',
+            outputFormat: cfg.outputFormat ?? 'text',
+            models: cfg.models ?? { terminal: "default", task: "default", telegram: "default", help: "default", mobile: "default" },
+            skipPermissionsFlag: cfg.skipPermissionsFlag ?? '',
             requiresTTY: cfg.requiresTTY ?? false,
             detected: false,
           });
@@ -1160,27 +1182,31 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
   const defaultAgent = settings.defaultAgent || 'claude';
 
   const saveAgentConfig = (updated: AgentEntry[]) => {
-    // Start with existing config to preserve profile fields (base/env/model/type/provider/apiKey)
-    const agentsCfg: Record<string, any> = { ...(settings.agents || {}) };
-    for (const a of updated) {
-      const existing = agentsCfg[a.id] || {};
-      agentsCfg[a.id] = {
-        ...existing, // preserve profile-specific fields
-        name: a.name,
-        path: a.path,
-        enabled: a.enabled,
-        taskFlags: a.taskFlags,
-        interactiveCmd: a.interactiveCmd,
-        resumeFlag: a.resumeFlag,
-        outputFormat: a.outputFormat,
-        models: a.models,
-        skipPermissionsFlag: a.skipPermissionsFlag,
-        requiresTTY: a.requiresTTY,
-      };
-    }
-    // Keep claudePath in sync for backward compat
-    const claude = updated.find(a => a.id === 'claude');
-    setSettings({ ...settings, agents: agentsCfg, claudePath: claude?.path || settings.claudePath });
+    const csEntry = updated.find(a => a.id === 'claude-sonnet');
+    if (csEntry) console.log('[saveAgentConfig] claude-sonnet in updated:', JSON.stringify({ taskFlags: csEntry.taskFlags, models: csEntry.models }));
+    // Use functional update to avoid stale closure — each call sees the latest settings
+    setSettings((prev: any) => {
+      const agentsCfg: Record<string, any> = { ...(prev.agents || {}) };
+      for (const a of updated) {
+        const existing = agentsCfg[a.id] || {};
+        agentsCfg[a.id] = {
+          ...existing, // preserve profile-specific fields
+          name: a.name,
+          path: a.path,
+          enabled: a.enabled,
+          taskFlags: a.taskFlags,
+          interactiveCmd: a.interactiveCmd,
+          resumeFlag: a.resumeFlag,
+          outputFormat: a.outputFormat,
+          models: a.models,
+          skipPermissionsFlag: a.skipPermissionsFlag,
+          requiresTTY: a.requiresTTY,
+          cliType: (a as any).cliType || existing.cliType,
+        };
+      }
+      const claude = updated.find(a => a.id === 'claude');
+      return { ...prev, agents: agentsCfg, claudePath: claude?.path || prev.claudePath };
+    });
   };
 
   const [agentsDirty, setAgentsDirty] = useState(false);
@@ -1197,8 +1223,8 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
   const updateAgent = (id: string, field: string, value: any) => {
     const updated = agents.map(a => a.id === id ? { ...a, [field]: value } : a);
     setAgents(updated);
-    setAgentsDirty(true);
-    debouncedSave(updated);
+    // Sync to settings immediately (no debounce) so global Save always has latest data
+    saveAgentConfig(updated);
   };
 
   const saveAgents = () => {
@@ -1226,7 +1252,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
     setAgents(updated);
     debouncedSave(updated);
     setShowAdd(false);
-    setNewAgent({ id: '', name: '', path: '', taskFlags: '', interactiveCmd: '', resumeFlag: '', outputFormat: 'text', models: { terminal: 'default', task: 'default', telegram: 'default', help: 'default', mobile: 'default' }, skipPermissionsFlag: '', requiresTTY: false });
+    setNewAgent(makeNewAgent());
   };
 
   const inputClass = "w-full px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--accent)]";
@@ -1247,7 +1273,12 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
           className="text-[9px] px-2 py-0.5 border border-[var(--accent)] text-[var(--accent)] rounded hover:bg-[var(--accent)] hover:text-white ml-auto"
         >Detect</button>
         <button
-          onClick={() => setShowAdd(v => !v)}
+          onClick={() => {
+            // Auto-fill path from detected claude agent when opening Add form
+            const claude = agents.find(a => a.id === 'claude');
+            if (claude?.path && !newAgent.path) setNewAgent((prev: any) => ({ ...prev, path: claude.path, interactiveCmd: claude.path }));
+            setShowAdd(v => !v);
+          }}
           className="text-[9px] px-2 py-0.5 border border-[var(--border)] text-[var(--text-secondary)] rounded hover:text-[var(--text-primary)]"
         >+ Add</button>
         {agentsDirty && (
@@ -1370,12 +1401,12 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
                     {/* Preset models */}
                     <div className="flex items-center gap-1 mt-1.5 flex-wrap">
                       <span className="text-[8px] text-[var(--text-secondary)]">Presets:</span>
-                      {(a.id === 'claude'
-                        ? ['default', 'sonnet', 'opus', 'haiku', 'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001']
-                        : a.id === 'codex'
-                          ? ['default', 'o3-mini', 'o4-mini', 'gpt-4.1']
-                          : ['default']
-                      ).map(preset => (
+                      {((() => {
+                        const ct = (settings.agents?.[a.id] as any)?.cliType || (a.id === 'claude' ? 'claude-code' : a.id === 'codex' ? 'codex' : a.id === 'aider' ? 'aider' : 'generic');
+                        if (ct === 'claude-code') return ['default', 'sonnet', 'opus', 'haiku', 'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'];
+                        if (ct === 'codex') return ['default', 'o3-mini', 'o4-mini', 'gpt-4.1'];
+                        return ['default'];
+                      })()).map(preset => (
                         <button
                           key={preset}
                           onClick={() => navigator.clipboard.writeText(preset)}
@@ -1434,7 +1465,7 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
       {showAdd && (
         <div className="border border-[var(--accent)]/30 rounded-lg p-3 space-y-2 bg-[var(--bg-secondary)]">
           <div className="text-[10px] text-[var(--text-primary)] font-semibold">Add Custom Agent</div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <div>
               <label className="text-[9px] text-[var(--text-secondary)]">ID (unique)</label>
               <input value={newAgent.id} onChange={e => setNewAgent({ ...newAgent, id: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })} placeholder="my-agent" className={inputClass} />
@@ -1443,14 +1474,51 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
               <label className="text-[9px] text-[var(--text-secondary)]">Display Name</label>
               <input value={newAgent.name} onChange={e => setNewAgent({ ...newAgent, name: e.target.value })} placeholder="My Agent" className={inputClass} />
             </div>
+            <div>
+              <label className="text-[9px] text-[var(--text-secondary)]">CLI Type</label>
+              <select value={newAgent.cliType} onChange={e => {
+                const ct = e.target.value;
+                // Auto-fill path from detected agent if available
+                const baseId = ct === 'claude-code' ? 'claude' : ct;
+                const detected = agents.find(a => a.id === baseId);
+                setNewAgent({ ...newAgent, cliType: ct, ...(cliDefaults[ct] || {}), path: detected?.path || newAgent.path, interactiveCmd: detected?.path || newAgent.interactiveCmd });
+              }} className={inputClass}>
+                <option value="claude-code">Claude Code</option>
+                <option value="codex">Codex</option>
+                <option value="aider">Aider</option>
+                <option value="generic">Generic</option>
+              </select>
+            </div>
           </div>
-          <div>
-            <label className="text-[9px] text-[var(--text-secondary)]">Binary Path</label>
-            <input value={newAgent.path} onChange={e => setNewAgent({ ...newAgent, path: e.target.value })} placeholder="/usr/local/bin/my-agent" className={inputClass} />
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[9px] text-[var(--text-secondary)]">Binary Path</label>
+              <input value={newAgent.path} onChange={e => setNewAgent({ ...newAgent, path: e.target.value })}
+                placeholder={newAgent.cliType === 'claude-code' ? 'claude' : newAgent.cliType === 'codex' ? 'codex' : newAgent.cliType === 'aider' ? 'aider' : '/usr/local/bin/agent'}
+                className={inputClass} />
+            </div>
+            <div>
+              <label className="text-[9px] text-[var(--text-secondary)]">Task Flags (non-interactive)</label>
+              <input value={newAgent.taskFlags} onChange={e => setNewAgent({ ...newAgent, taskFlags: e.target.value })} placeholder="--prompt" className={inputClass} />
+            </div>
           </div>
-          <div>
-            <label className="text-[9px] text-[var(--text-secondary)]">Task Flags (non-interactive)</label>
-            <input value={newAgent.taskFlags} onChange={e => setNewAgent({ ...newAgent, taskFlags: e.target.value })} placeholder="--prompt" className={inputClass} />
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="text-[9px] text-[var(--text-secondary)]">Resume Flag</label>
+              <input value={newAgent.resumeFlag} onChange={e => setNewAgent({ ...newAgent, resumeFlag: e.target.value })} placeholder="-c or --resume" className={inputClass} />
+            </div>
+            <div>
+              <label className="text-[9px] text-[var(--text-secondary)]">Output Format</label>
+              <select value={newAgent.outputFormat} onChange={e => setNewAgent({ ...newAgent, outputFormat: e.target.value })} className={inputClass}>
+                <option value="stream-json">stream-json</option>
+                <option value="json">json</option>
+                <option value="text">text</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[9px] text-[var(--text-secondary)]">Skip Permissions Flag</label>
+              <input value={newAgent.skipPermissionsFlag} onChange={e => setNewAgent({ ...newAgent, skipPermissionsFlag: e.target.value })} placeholder="--dangerously-skip-permissions" className={inputClass} />
+            </div>
           </div>
           <div className="flex gap-2">
             <button onClick={addAgent} disabled={!newAgent.id || !newAgent.path} className="text-[10px] px-3 py-1 bg-[var(--accent)] text-white rounded disabled:opacity-50">Add</button>

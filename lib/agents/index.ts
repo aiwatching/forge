@@ -95,6 +95,7 @@ export function listAgents(): AgentConfig[] {
         flags,
         enabled: cfg.enabled !== false,
         detected: !!detected,
+        cliType: cfg.cliType,
       } as any);
     }
   }

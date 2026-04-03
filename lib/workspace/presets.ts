@@ -38,6 +38,33 @@ Rules:
     ],
   },
 
+  architect: {
+    label: 'Architect',
+    icon: '🏗️',
+    role: `You are a Software Architect. You break down requirements into small, independently implementable request documents.
+
+Rules:
+- Read requirements from upstream input or docs/prd/ carefully.
+- Break requirements into small, independent modules — each should be implementable and testable in isolation.
+- For each module, use the create_request MCP tool to create a request document.
+- Each request should have clear acceptance_criteria that QA can verify.
+- Group related requests into a batch using the batch parameter.
+- Use list_requests to verify requests were created and track progress.
+- Use get_request to check status as work progresses.
+- Use notify parameter to alert the Engineer about new requests.
+- Do NOT write code. Your output is request documents only.`,
+    backend: 'cli',
+    agentId: 'claude',
+    dependsOn: [],
+    workDir: './',
+    outputs: ['.forge/requests/'],
+    steps: [
+      { id: 'analyze', label: 'Analyze Requirements', prompt: 'Read the requirements from upstream input and docs/prd/. Identify all distinct features and modules. Plan how to break them into small, independently testable units.' },
+      { id: 'create-requests', label: 'Create Requests', prompt: 'For each module, use the create_request MCP tool. Include detailed description and acceptance_criteria. Group them in a single batch. Use notify to alert the Engineer.' },
+      { id: 'verify', label: 'Verify & Track', prompt: 'Use list_requests to verify all requests were created. Check acceptance criteria are clear and complete. Monitor progress with get_request.' },
+    ],
+  },
+
   engineer: {
     label: 'Engineer',
     icon: '🔨',
@@ -46,9 +73,13 @@ Rules:
 Rules:
 - Read ALL files in docs/prd/ to understand the full requirements history.
 - Read ALL files in docs/architecture/ to understand previous design decisions.
+- Check .forge/requests/ for request documents. Use list_requests and get_request MCP tools.
+- When starting work on a request, update it with update_response (section: "engineer").
 - Only implement NEW or CHANGED requirements. Check your memory and existing code first.
 - Architecture docs are versioned: docs/architecture/v1.0-initial.md, etc.
-- Do NOT rewrite existing working code unless the PRD explicitly requires changes.`,
+- Do NOT rewrite existing working code unless the PRD explicitly requires changes.
+- Include files_changed and notes in your response update.
+- Use notify parameter to alert Reviewer or QA when implementation is done.`,
     backend: 'cli',
     agentId: 'claude',
     dependsOn: [],
@@ -68,7 +99,9 @@ Rules:
 
 Rules:
 - Read docs/prd/ to understand requirements (focus on latest version).
+- Check .forge/requests/ for request documents in "qa" status. Use list_requests and get_request MCP tools.
 - Read docs/qa/ to see what was already tested. Skip tests that already passed for unchanged features.
+- After testing, use update_response (section: "qa") to record results (passed/failed + findings).
 - Test plans are versioned: docs/qa/test-plan-v1.1.md
 - Test reports are versioned: docs/qa/test-report-v1.1.md
 - Test code goes in tests/e2e/ directory (Playwright tests).
@@ -101,6 +134,8 @@ Communication rules:
 Rules:
 - Read docs/prd/ (latest) to understand what should have been implemented.
 - Read docs/architecture/ (latest) to understand design decisions.
+- Check .forge/requests/ for request documents in "review" status. Use list_requests and get_request MCP tools.
+- After reviewing, use update_response (section: "review") to record findings (approved/changes_requested/rejected).
 - Review ONLY recent code changes, not the entire codebase.
 - Review reports are versioned: docs/review/review-v1.1.md
 - Do NOT modify code directly.
@@ -145,6 +180,39 @@ export function createDevPipeline(): WorkspaceAgentConfig[] {
     },
     {
       ...AGENT_PRESETS.engineer, id: engId, dependsOn: [pmId],
+    },
+    {
+      ...AGENT_PRESETS.qa, id: qaId, dependsOn: [engId],
+    },
+    {
+      ...AGENT_PRESETS.reviewer, id: revId, dependsOn: [engId, qaId],
+    },
+  ];
+}
+
+/**
+ * Create an architect-driven pipeline: Input → Architect → Engineer → QA → Reviewer
+ * Architect breaks requirements into request documents, Engineer picks them up.
+ */
+export function createArchitectPipeline(): WorkspaceAgentConfig[] {
+  const ts = Date.now();
+  const inputId = `input-${ts}`;
+  const archId = `architect-${ts}`;
+  const engId = `engineer-${ts}`;
+  const qaId = `qa-${ts}`;
+  const revId = `reviewer-${ts}`;
+
+  return [
+    {
+      id: inputId, label: 'Requirements', icon: '📝',
+      type: 'input', content: '', entries: [],
+      role: '', backend: 'cli', dependsOn: [], outputs: [], steps: [],
+    },
+    {
+      ...AGENT_PRESETS.architect, id: archId, dependsOn: [inputId],
+    },
+    {
+      ...AGENT_PRESETS.engineer, id: engId, dependsOn: [archId],
     },
     {
       ...AGENT_PRESETS.qa, id: qaId, dependsOn: [engId],

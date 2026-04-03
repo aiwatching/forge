@@ -3054,8 +3054,18 @@ export class WorkspaceOrchestrator extends EventEmitter {
           r.type === 'response' && r.payload.replyTo === m.id
         )
       );
-      if (!hasPendingRequests) {
-        console.log('[workspace] All agents complete, no pending requests. Workspace done.');
+      // Also check request documents are all done
+      let requestsComplete = true;
+      try {
+        const { listRequests } = require('./requests');
+        const allReqs = listRequests(this.projectPath);
+        if (allReqs.length > 0) {
+          requestsComplete = allReqs.every((r: any) => r.status === 'done' || r.status === 'rejected');
+        }
+      } catch {}
+
+      if (!hasPendingRequests && requestsComplete) {
+        console.log('[workspace] All agents complete, no pending requests, all request docs done. Workspace done.');
         this.emit('event', { type: 'workspace_complete' } satisfies OrchestratorEvent);
       }
     }

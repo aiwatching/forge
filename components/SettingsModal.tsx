@@ -1232,7 +1232,12 @@ function AgentsSection({ settings, setSettings }: { settings: any; setSettings: 
     if (!confirm(`Remove "${id}" agent?`)) return;
     const updated = agents.filter(a => a.id !== id);
     setAgents(updated);
-    debouncedSave(updated);
+    // Remove from settings directly (saveAgentConfig only handles add/update, not delete)
+    setSettings((prev: any) => {
+      const agentsCfg = { ...(prev.agents || {}) };
+      delete agentsCfg[id];
+      return { ...prev, agents: agentsCfg };
+    });
   };
 
   const addAgent = () => {

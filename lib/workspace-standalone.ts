@@ -287,9 +287,18 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
           launchInfo = resolveTerminalLaunch(agentConfig.agentId);
         } catch {}
 
-        // resolveOnly: just return launch info without side effects
+        // resolveOnly: return launch info + current session ID (no side effects)
         if (body.resolveOnly) {
-          return json(res, { ok: true, ...launchInfo });
+          let currentSessionId: string | null = null;
+          if (agentConfig.primary) {
+            try {
+              const { getFixedSession } = await import('./project-sessions.js');
+              currentSessionId = getFixedSession(orch.projectPath) || null;
+            } catch {}
+          } else {
+            currentSessionId = agentConfig.boundSessionId || null;
+          }
+          return json(res, { ok: true, ...launchInfo, currentSessionId });
         }
 
         // Primary agent: always return its fixed session, no selection
@@ -298,8 +307,17 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
         }
 
         if (agentState.tmuxSession) {
-          return json(res, { ok: true, alreadyOpen: true, tmuxSession: agentState.tmuxSession, ...launchInfo });
+          try {
+            execSync(`tmux has-session -t "${agentState.tmuxSession}" 2>/dev/null`, { timeout: 3000 });
+            return json(res, { ok: true, alreadyOpen: true, tmuxSession: agentState.tmuxSession, ...launchInfo });
+          } catch {
+            // Session no longer alive — fall through to create a new one
+          }
         }
+
+        // Ensure tmux session exists (creates if needed, no 3s startup delay)
+        // forceRestart: kill existing tmux so launch script is rewritten with current boundSessionId
+        const tmuxSession = await orch.openTerminalSession(agentId, body.forceRestart === true);
 
         orch.setManualMode(agentId);
         // Skills call Next.js API (/api/workspace/.../smith), so use FORGE_PORT not daemon PORT
@@ -312,6 +330,7 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
           skillsInstalled: result.installed,
           agentId,
           label: agentConfig.label,
+          tmuxSession: tmuxSession || undefined,
           ...launchInfo,
         });
       }

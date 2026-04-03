@@ -332,6 +332,11 @@ export class WorkspaceOrchestrator extends EventEmitter {
       }
       entry.state.tmuxSession = undefined;
       config.boundSessionId = undefined;
+    } else {
+      // Preserve server-managed fields the client doesn't track
+      if (!config.boundSessionId && entry.config.boundSessionId) {
+        config.boundSessionId = entry.config.boundSessionId;
+      }
     }
 
     entry.config = config;
@@ -347,18 +352,21 @@ export class WorkspaceOrchestrator extends EventEmitter {
     if (this.daemonActive) {
       // Rebuild worker + message loop
       this.enterDaemonListening(id);
-      entry.state.smithStatus = 'active';
+      // Set 'starting' until ensurePersistentSession finishes — Open Terminal is blocked during this
+      entry.state.smithStatus = 'starting';
+      this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'starting' } as any);
       // Restart watch if config changed
       this.watchManager.startWatch(id, config);
-      // Create persistent session if configured (before message loop so inject works)
-      if (config.persistentSession) {
-        this.ensurePersistentSession(id, config).then(() => {
-          this.startMessageLoop(id);
-        });
-      } else {
+      this.ensurePersistentSession(id, config).then(() => {
+        const e = this.agents.get(id);
+        if (e) {
+          e.state.smithStatus = 'active';
+          this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'active' } as any);
+          this.emitAgentsChanged();
+        }
         this.startMessageLoop(id);
-      }
-    }
+      });
+  }
     this.saveNow();
     this.emitAgentsChanged();
     this.emit('event', { type: 'task_status', agentId: id, taskStatus: 'idle' } satisfies WorkerEvent);
@@ -710,7 +718,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
     }
 
     // Ensure smith is active when daemon starts this agent
-    if (this.daemonActive && entry.state.smithStatus !== 'active') {
+    // Skip if 'starting': ensurePersistentSession is in progress and will set 'active' when done.
+    if (this.daemonActive && entry.state.smithStatus !== 'active' && entry.state.smithStatus !== 'starting') {
       entry.state.smithStatus = 'active';
       this.emit('event', { type: 'smith_status', agentId, smithStatus: 'active' } satisfies WorkerEvent);
     }
@@ -1253,7 +1262,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
       }
 
       // Check 2: SmithStatus should be active
-      if (entry.state.smithStatus !== 'active') {
+      // Skip: 'starting' means ensurePersistentSession is in progress — overriding would race with it.
+      if (entry.state.smithStatus !== 'active' && entry.state.smithStatus !== 'starting') {
         console.log(`[health] ${entry.config.label}: smith=${entry.state.smithStatus} — setting active`);
         entry.state.smithStatus = 'active';
         this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'active' } as any);
@@ -1291,7 +1301,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
       }
 
       // Check 6: persistentSession agent without tmux → auto-restart terminal
-      if (entry.config.persistentSession && !entry.state.tmuxSession) {
+      // Skip if smithStatus='starting': ensurePersistentSession is already in progress.
+      if (entry.config.persistentSession && !entry.state.tmuxSession && entry.state.smithStatus === 'active') {
         console.log(`[health] ${entry.config.label}: persistentSession but no tmux — restarting terminal`);
         this.ensurePersistentSession(id, entry.config).catch(err => {
           console.error(`[health] ${entry.config.label}: failed to restart terminal: ${err.message}`);
@@ -2107,7 +2118,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
     return join(homedir(), '.claude', 'projects', encoded);
   }
 
-  /** Return the latest session ID (by mtime) from the CLI session dir, or undefined if none */
+  /** Return the latest session ID (by mtime) from the CLI session dir, or undefined if none. */
   private getLatestSessionId(workDir?: string): string | undefined {
     try {
       const sessionDir = this.getCliSessionDir(workDir);
@@ -2123,8 +2134,76 @@ export class WorkspaceOrchestrator extends EventEmitter {
     }
   }
 
+  /** Lightweight session bind for non-persistentSession agents.
+   *  Checks if the tmux session already exists and sets entry.state.tmuxSession.
+   *  Also auto-binds boundSessionId from the latest session file if not already set.
+   *  Does NOT create any session or run any launch script.
+   */
+  private tryBindExistingSession(agentId: string, config: WorkspaceAgentConfig): void {
+    const entry = this.agents.get(agentId);
+    if (!entry) return;
+
+    const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
+    const sessionName = `mw-forge-${safeName(this.projectName)}-${safeName(config.label)}`;
+
+    // Check if tmux session is alive → set tmuxSession so open_terminal can return it
+    try {
+      execSync(`tmux has-session -t "${sessionName}" 2>/dev/null`, { timeout: 3000 });
+      if (entry.state.tmuxSession !== sessionName) {
+        entry.state.tmuxSession = sessionName;
+        this.saveNow();
+        console.log(`[daemon] ${config.label}: found existing tmux session, bound tmuxSession`);
+      }
+    } catch {
+      // No existing session — leave tmuxSession undefined, open_terminal will let FloatingTerminal create one
+    }
+
+    // Auto-bind boundSessionId from latest session file if not already set
+    if (!config.boundSessionId) {
+      const sessionId = this.getLatestSessionId(config.workDir);
+      if (sessionId) {
+        config.boundSessionId = sessionId;
+        this.saveNow();
+        console.log(`[daemon] ${config.label}: auto-bound boundSessionId=${sessionId}`);
+      }
+    }
+  }
+
+  /**
+   * Create or attach to the tmux session for an agent (terminal-open path).
+   * Unlike ensurePersistentSession, skips the 3s startup verification so the
+   * HTTP response is fast. Returns the session name, or null on failure.
+   */
+  async openTerminalSession(agentId: string, forceRestart = false): Promise<string | null> {
+    const entry = this.agents.get(agentId);
+    if (!entry || entry.config.type === 'input') return null;
+    const config = entry.config;
+
+    const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
+    const sessionName = `mw-forge-${safeName(this.projectName)}-${safeName(config.label)}`;
+
+    if (forceRestart) {
+      // Kill existing tmux session so ensurePersistentSession rewrites the launch script
+      // with the current boundSessionId (--resume flag). Safe — claude session data is in jsonl files.
+      try { execSync(`tmux kill-session -t "${sessionName}" 2>/dev/null`, { timeout: 3000 }); } catch {}
+      entry.state.tmuxSession = undefined;
+    } else if (entry.state.tmuxSession) {
+      // Attach to existing session if still alive
+      try {
+        execSync(`tmux has-session -t "${entry.state.tmuxSession}" 2>/dev/null`, { timeout: 3000 });
+        return entry.state.tmuxSession;
+      } catch {
+        entry.state.tmuxSession = undefined;
+      }
+    }
+
+    // Create (or recreate) session without startup verification delay
+    await this.ensurePersistentSession(agentId, config, true);
+    return entry.state.tmuxSession || null;
+  }
+
   /** Create a persistent tmux session with the CLI agent */
-  private async ensurePersistentSession(agentId: string, config: WorkspaceAgentConfig): Promise<void> {
+  private async ensurePersistentSession(agentId: string, config: WorkspaceAgentConfig, skipStartupCheck = false): Promise<void> {
     const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
     const sessionName = `mw-forge-${safeName(this.projectName)}-${safeName(config.label)}`;
 
@@ -2159,8 +2238,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
     // Write agent context file for hooks to read (workDir/.forge/agent-context.json)
     try {
       const forgeDir = join(workDir, '.forge');
-      const { mkdirSync: mkdirS } = require('node:fs');
-      mkdirS(forgeDir, { recursive: true });
+      mkdirSync(forgeDir, { recursive: true });
       const ctxPath = join(forgeDir, 'agent-context.json');
       writeFileSync(ctxPath, JSON.stringify({
         workspaceId: this.workspaceId,
@@ -2176,10 +2254,12 @@ export class WorkspaceOrchestrator extends EventEmitter {
     // Check if tmux session already exists and Claude is still alive inside
     let sessionAlreadyExists = false;
     let tmuxSessionExists = false;
+    console.log(`[daemon] ${config.label}: ensurePersistentSession called — sessionName=${sessionName} boundSessionId=${config.boundSessionId || 'NONE'} skipStartupCheck=${skipStartupCheck}`);
     try {
       execSync(`tmux has-session -t "${sessionName}" 2>/dev/null`, { timeout: 3000 });
       tmuxSessionExists = true;
     } catch {}
+    console.log(`[daemon] ${config.label}: tmuxSessionExists=${tmuxSessionExists}`);
 
     if (tmuxSessionExists) {
       // Check if Claude process is still alive inside the tmux pane
@@ -2198,7 +2278,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
       if (claudeAlive) {
         sessionAlreadyExists = true;
-        console.log(`[daemon] ${config.label}: persistent session alive (${sessionName})`);
+        console.log(`[daemon] ${config.label}: persistent session alive (${sessionName}) — skipping script generation`);
         // Ensure FORGE env vars are set in the tmux session environment
         try {
           execSync(`tmux set-environment -t "${sessionName}" FORGE_WORKSPACE_ID "${this.workspaceId}"`, { timeout: 3000 });
@@ -2251,8 +2331,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
                 },
               },
             };
-            const { mkdirSync: mkdirS } = await import('node:fs');
-            mkdirS(join(workDir, '.forge'), { recursive: true });
+            mkdirSync(join(workDir, '.forge'), { recursive: true });
             writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
             mcpConfigFlag = ` --mcp-config "${mcpConfigPath}"`;
           } catch (err: any) {
@@ -2285,14 +2364,18 @@ export class WorkspaceOrchestrator extends EventEmitter {
             console.log(`[daemon] ${config.label}: fixedSession=${sessionId || 'NONE'} for ${this.projectPath}`);
           } else {
             sessionId = config.boundSessionId;
+            console.log(`[daemon] ${config.label}: script-gen boundSessionId=${sessionId || 'NONE'}`);
           }
           if (sessionId) {
             const sessionFile = join(this.getCliSessionDir(config.workDir), `${sessionId}.jsonl`);
             if (existsSync(sessionFile)) {
               cmd += ` --resume ${sessionId}`;
+              console.log(`[daemon] ${config.label}: script-gen adding --resume ${sessionId}`);
             } else {
               console.log(`[daemon] ${config.label}: bound session ${sessionId} missing, starting fresh`);
             }
+          } else {
+            console.log(`[daemon] ${config.label}: script-gen no boundSessionId → no --resume (skipStartupCheck=${skipStartupCheck})`);
           }
         }
         if (modelFlag) cmd += modelFlag;
@@ -2302,12 +2385,36 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
         // Write script and execute in tmux
         const scriptPath = `/tmp/forge-launch-${config.id.replace(/[^a-z0-9-]/g, '')}.sh`;
+        console.log(`[daemon] ${config.label}: writing launch script ${scriptPath}`);
+        console.log(`[daemon] ${config.label}: exec line → ${cmd}`);
         writeFileSync(scriptPath, scriptLines.join('\n'), { mode: 0o755 });
         execSync(`tmux send-keys -t "${sessionName}" 'bash ${scriptPath}' Enter`, { timeout: 5000 });
 
         console.log(`[daemon] ${config.label}: persistent session created (${sessionName}) [${cliType}: ${cliCmd}]`);
 
         // Verify CLI started successfully (check after 3s if process is still alive)
+        // Skip when called from openTerminalSession (terminal-open path) for fast response.
+        if (skipStartupCheck) {
+          // Set tmuxSession here only — normal path sets it after startup verification passes.
+          const entrySkip = this.agents.get(agentId);
+          if (entrySkip) {
+            entrySkip.state.tmuxSession = sessionName;
+            this.saveNow();
+            this.emitAgentsChanged();
+          }
+          // Fire boundSessionId binding in background (no await — don't block terminal open)
+          if (!config.primary && !config.boundSessionId) {
+            setTimeout(() => {
+              const sid = this.getLatestSessionId(config.workDir);
+              if (sid) {
+                config.boundSessionId = sid;
+                this.saveNow();
+                console.log(`[daemon] ${config.label}: background bound to session ${sid}`);
+              }
+            }, 5000);
+          }
+          return;
+        }
         await new Promise(resolve => setTimeout(resolve, 3000));
         try {
           const paneContent = execSync(`tmux capture-pane -t "${sessionName}" -p -S -20`, { timeout: 3000, encoding: 'utf-8' });
@@ -2383,6 +2490,29 @@ export class WorkspaceOrchestrator extends EventEmitter {
             config.boundSessionId = sessionId;
             this.saveNow();
             console.log(`[daemon] ${config.label}: bound to session ${config.boundSessionId}`);
+            // Update launch script with the now-known sessionId — script was written before
+            // polling completed so it had no --resume flag. Fix it for future restarts.
+            const scriptPath = `/tmp/forge-launch-${config.id.replace(/[^a-z0-9-]/g, '')}.sh`;
+            if (existsSync(scriptPath)) {
+              try {
+                const lines = readFileSync(scriptPath, 'utf-8').split('\n');
+                const execIdx = lines.findIndex(l => l.startsWith('exec '));
+                if (execIdx >= 0) {
+                  // Remove any existing --resume flag, then re-insert after command name.
+                  // Line format: 'exec <cmd> [args...]'
+                  // Insert after cmd (skip 'exec ' prefix + cmd word) so bash doesn't
+                  // misinterpret --resume as an exec builtin option.
+                  const withoutResume = lines[execIdx].replace(/\s--resume\s+\S+/, '');
+                  const afterExec = withoutResume.startsWith('exec ') ? 5 : 0;
+                  const cmdEnd = withoutResume.indexOf(' ', afterExec);
+                  lines[execIdx] = cmdEnd >= 0
+                    ? withoutResume.slice(0, cmdEnd) + ` --resume ${sessionId}` + withoutResume.slice(cmdEnd)
+                    : withoutResume + ` --resume ${sessionId}`;
+                  writeFileSync(scriptPath, lines.join('\n'), { mode: 0o755 });
+                  console.log(`[daemon] ${config.label}: updated launch script with --resume ${sessionId}`);
+                }
+              } catch {}
+            }
             return resolve();
           }
           if (Date.now() - pollStart < 10_000) {

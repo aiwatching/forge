@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef, forwardRef, useImperativeHandle, lazy, Suspense } from 'react';
+import { TerminalSessionPickerLazy, fetchAgentSessions, type PickerSelection } from './TerminalLauncher';
 import {
   ReactFlow, Background, Controls, Handle, Position, useReactFlow, ReactFlowProvider,
   type Node, type NodeProps, MarkerType, type NodeChange,
@@ -54,6 +55,7 @@ const COLORS = [
 // Smith status colors
 const SMITH_STATUS: Record<string, { label: string; color: string; glow?: boolean }> = {
   down: { label: 'down', color: '#30363d' },
+  starting: { label: 'starting', color: '#f0883e' },   // orange: ensurePersistentSession in progress
   active: { label: 'active', color: '#3fb950', glow: true },
 };
 
@@ -2602,9 +2604,11 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
         )}
         <div className="flex-1" />
         <span className="flex items-center">
-            <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onOpenTerminal(); }}
-              className={`text-[9px] px-1 ${hasTmux && taskStatus === 'running' ? 'text-green-400 animate-pulse' : 'text-gray-600 hover:text-green-400'}`}
-              title="Open terminal">⌨️</button>
+            <button onPointerDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); if (smithStatus === 'active') onOpenTerminal(); }}
+              disabled={smithStatus !== 'active'}
+              className={`text-[9px] px-1 ${smithStatus !== 'active' ? 'text-gray-700 cursor-not-allowed' : hasTmux && taskStatus === 'running' ? 'text-green-400 animate-pulse' : 'text-gray-600 hover:text-green-400'}`}
+              title={smithStatus === 'starting' ? 'Starting session…' : smithStatus === 'down' ? 'Smith not started' : 'Open terminal'}>⌨️</button>
             {hasTmux && !config.primary && (
               <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onSwitchSession(); }}
                 className="text-[10px] text-gray-600 hover:text-yellow-400 px-0.5 py-0.5" title="Switch session">▾</button>
@@ -2650,7 +2654,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
   const [inboxTarget, setInboxTarget] = useState<{ id: string; label: string } | null>(null);
   const [showBusPanel, setShowBusPanel] = useState(false);
   const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; cliCmd?: string; cliType?: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string>; isPrimary?: boolean; skipPermissions?: boolean; persistentSession?: boolean; boundSessionId?: string; initialPos?: { x: number; y: number } }[]>([]);
-  const [termLaunchDialog, setTermLaunchDialog] = useState<{ agent: AgentConfig; sessName: string; workDir?: string; sessions: string[]; supportsSession?: boolean; initialPos?: { x: number; y: number } } | null>(null);
+  const [termPicker, setTermPicker] = useState<{ agent: AgentConfig; sessName: string; workDir?: string; supportsSession?: boolean; currentSessionId: string | null; initialPos?: { x: number; y: number } } | null>(null);
 
   // Expose focusAgent to parent
   useImperativeHandle(ref, () => ({
@@ -2760,48 +2764,16 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
               // Close existing terminal (config may have changed)
               setFloatingTerminals(prev => prev.filter(t => t.agentId !== agent.id));
 
-              // Get node screen position for initial terminal placement
               const nodeEl = document.querySelector(`[data-id="${agent.id}"]`);
               const nodeRect = nodeEl?.getBoundingClientRect();
-              const initialPos = nodeRect
-                ? { x: nodeRect.left, y: nodeRect.bottom + 4 }
-                : { x: 80, y: 60 };
-
-              const agentState = states[agent.id];
-              const existingTmux = agentState?.tmuxSession;
+              const initialPos = nodeRect ? { x: nodeRect.left, y: nodeRect.bottom + 4 } : { x: 80, y: 60 };
               const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
               const sessName = `mw-forge-${safeName(projectName)}-${safeName(agent.label)}`;
               const workDir = agent.workDir && agent.workDir !== './' && agent.workDir !== '.' ? agent.workDir : undefined;
-
-              // Always resolve launch info for this agent (cliCmd, env, model)
+              // All agents: show picker (current session / new session / other sessions)
               const resolveRes = await wsApi(workspaceId, 'open_terminal', { agentId: agent.id, resolveOnly: true }).catch(() => ({})) as any;
-              const launchInfo = {
-                cliCmd: resolveRes?.cliCmd || 'claude',
-                cliType: resolveRes?.cliType || 'claude-code',
-                profileEnv: {
-                  ...(resolveRes?.env || {}),
-                  ...(resolveRes?.model ? { CLAUDE_MODEL: resolveRes.model } : {}),
-                  FORGE_AGENT_ID: agent.id,
-                  FORGE_WORKSPACE_ID: workspaceId!,
-                  FORGE_PORT: String(window.location.port || 8403),
-                },
-              };
-
-              // All paths: let daemon create/ensure session, then attach
-              if (existingTmux || agent.primary || agent.persistentSession || agent.boundSessionId) {
-                // Daemon creates session via ensurePersistentSession (launch script, no truncation)
-                const res = await wsApi(workspaceId, 'open_terminal', { agentId: agent.id }).catch(() => ({})) as any;
-                const tmux = existingTmux || res?.tmuxSession || sessName;
-                setFloatingTerminals(prev => [...prev, {
-                  agentId: agent.id, label: agent.label, icon: agent.icon,
-                  cliId: agent.agentId || 'claude', workDir,
-                  tmuxSession: tmux, sessionName: sessName,
-                  isPrimary: agent.primary, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: agent.boundSessionId, initialPos,
-                }]);
-                return;
-              }
-              // No persistent session, no bound session → show launch dialog
-              setTermLaunchDialog({ agent, sessName, workDir, sessions: [], supportsSession: resolveRes?.supportsSession ?? true, initialPos });
+              const currentSessionId = resolveRes?.currentSessionId ?? null;
+              setTermPicker({ agent, sessName, workDir, supportsSession: resolveRes?.supportsSession ?? true, currentSessionId, initialPos });
             },
             onSwitchSession: async () => {
               if (!workspaceId) return;
@@ -2809,12 +2781,13 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
               if (agent.id) wsApi(workspaceId, 'close_terminal', { agentId: agent.id });
               const nodeEl = document.querySelector(`[data-id="${agent.id}"]`);
               const nodeRect = nodeEl?.getBoundingClientRect();
-              const switchPos = nodeRect ? { x: nodeRect.left, y: nodeRect.bottom + 4 } : { x: 80, y: 60 };
+              const initialPos = nodeRect ? { x: nodeRect.left, y: nodeRect.bottom + 4 } : { x: 80, y: 60 };
               const safeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').slice(0, 20);
               const sessName = `mw-forge-${safeName(projectName)}-${safeName(agent.label)}`;
               const workDir = agent.workDir && agent.workDir !== './' && agent.workDir !== '.' ? agent.workDir : undefined;
               const resolveRes = await wsApi(workspaceId, 'open_terminal', { agentId: agent.id, resolveOnly: true }).catch(() => ({})) as any;
-              setTermLaunchDialog({ agent, sessName, workDir, sessions: [], supportsSession: resolveRes?.supportsSession ?? true, initialPos: switchPos });
+              const currentSessionId = resolveRes?.currentSessionId ?? null;
+              setTermPicker({ agent, sessName, workDir, supportsSession: resolveRes?.supportsSession ?? true, currentSessionId, initialPos });
             },
           } satisfies AgentNodeData,
         };
@@ -3180,33 +3153,46 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
         />
       )}
 
-      {/* Terminal launch dialog */}
-      {termLaunchDialog && workspaceId && (
-        <TerminalLaunchDialog
-          agent={termLaunchDialog.agent}
-          workDir={termLaunchDialog.workDir}
-          sessName={termLaunchDialog.sessName}
-          projectPath={projectPath}
-          workspaceId={workspaceId}
-          supportsSession={termLaunchDialog.supportsSession}
-          onLaunch={async (resumeMode, sessionId) => {
-            const { agent, sessName, workDir } = termLaunchDialog;
-            setTermLaunchDialog(null);
-            // Save selected session as boundSessionId
-            if (sessionId) {
-              await wsApi(workspaceId, 'update', { agentId: agent.id, config: { ...agent, boundSessionId: sessionId } }).catch(() => {});
+      {/* Terminal session picker */}
+      {termPicker && workspaceId && (
+        <TerminalSessionPickerLazy
+          agentLabel={termPicker.agent.label}
+          currentSessionId={termPicker.currentSessionId}
+          fetchSessions={() => fetchAgentSessions(workspaceId, termPicker.agent.id)}
+          supportsSession={termPicker.supportsSession}
+          onSelect={async (selection: PickerSelection) => {
+            const { agent, sessName, workDir } = termPicker;
+            const pickerInitialPos = termPicker.initialPos;
+            setTermPicker(null);
+
+            let boundSessionId = agent.boundSessionId;
+            if (selection.mode === 'session') {
+              // Bind to a specific session
+              await wsApi(workspaceId, 'update', { agentId: agent.id, config: { ...agent, boundSessionId: selection.sessionId } }).catch(() => {});
+              boundSessionId = selection.sessionId;
+            } else if (selection.mode === 'new') {
+              // Clear bound session → fresh start
+              if (agent.boundSessionId) {
+                await wsApi(workspaceId, 'update', { agentId: agent.id, config: { ...agent, boundSessionId: undefined } }).catch(() => {});
+              }
+              boundSessionId = undefined;
             }
-            // Daemon creates session (launch script), then attach
-            const res = await wsApi(workspaceId, 'open_terminal', { agentId: agent.id }).catch(() => ({})) as any;
+            // mode === 'current': keep existing boundSessionId
+
+            // 'current': just attach — claude is running, don't interrupt.
+            // 'session' or 'new': forceRestart — rebuild launch script with correct --resume.
+            const forceRestart = selection.mode !== 'current';
+            const res = await wsApi(workspaceId, 'open_terminal', { agentId: agent.id, forceRestart }).catch(() => ({})) as any;
             const tmux = res?.tmuxSession || sessName;
             setFloatingTerminals(prev => [...prev, {
               agentId: agent.id, label: agent.label, icon: agent.icon,
               cliId: agent.agentId || 'claude', workDir,
               tmuxSession: tmux, sessionName: sessName,
-              isPrimary: false, skipPermissions: agent.skipPermissions !== false, persistentSession: agent.persistentSession, boundSessionId: sessionId || agent.boundSessionId, initialPos: termLaunchDialog.initialPos,
+              isPrimary: agent.primary, skipPermissions: agent.skipPermissions !== false,
+              persistentSession: agent.persistentSession, boundSessionId, initialPos: pickerInitialPos,
             }]);
           }}
-          onCancel={() => setTermLaunchDialog(null)}
+          onCancel={() => setTermPicker(null)}
         />
       )}
 

@@ -84,7 +84,7 @@ export interface AgentStep {
 // ─── Agent State (Two-Layer Model) ───────────────────────
 
 /** Smith layer: daemon lifecycle */
-export type SmithStatus = 'down' | 'active';
+export type SmithStatus = 'down' | 'starting' | 'active';
 
 /** Task layer: current work execution */
 export type TaskStatus = 'idle' | 'running' | 'done' | 'failed';

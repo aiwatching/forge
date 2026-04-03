@@ -831,7 +831,22 @@ function ProfileRow({ id, cfg, inputClass, onUpdate, onDelete }: {
             </div>
             <div className="flex-1">
               <label className="text-[8px] text-[var(--text-secondary)]">Model</label>
-              <input value={cfg.model || ''} onChange={e => onUpdate({ ...cfg, model: e.target.value })} className={inputClass} />
+              <input value={cfg.model || ''} onChange={e => onUpdate({ ...cfg, model: e.target.value })}
+                list={`profile-model-${id}`} className={inputClass} />
+              {(cfg.base === 'claude' || cfg.cliType === 'claude-code' || (!cfg.base && !isApi)) && (
+                <datalist id={`profile-model-${id}`}>
+                  <option value="claude-opus-4-6" />
+                  <option value="claude-sonnet-4-6" />
+                  <option value="claude-haiku-4-5-20251001" />
+                </datalist>
+              )}
+              {cfg.base === 'codex' && (
+                <datalist id={`profile-model-${id}`}>
+                  <option value="codex-mini" />
+                  <option value="o4-mini" />
+                  <option value="gpt-4o" />
+                </datalist>
+              )}
             </div>
           </div>
           {isApi ? (
@@ -1013,7 +1028,23 @@ function AddProfileForm({ type, baseAgents, onAdd }: {
           </div>
           <div className="flex-1">
             <label className="text-[8px] text-[var(--text-secondary)]">Model</label>
-            <input value={model} onChange={e => setModel(e.target.value)} placeholder="claude-opus-4-6" className={inputClass} />
+            <input value={model} onChange={e => setModel(e.target.value)}
+              placeholder={base === 'claude' ? 'claude-sonnet-4-6' : base === 'codex' ? 'codex-mini' : ''}
+              list={`model-list-${base}`} className={inputClass} />
+            {base === 'claude' && (
+              <datalist id="model-list-claude">
+                <option value="claude-opus-4-6" />
+                <option value="claude-sonnet-4-6" />
+                <option value="claude-haiku-4-5-20251001" />
+              </datalist>
+            )}
+            {base === 'codex' && (
+              <datalist id="model-list-codex">
+                <option value="codex-mini" />
+                <option value="o4-mini" />
+                <option value="gpt-4o" />
+              </datalist>
+            )}
           </div>
         </div>
         <div>

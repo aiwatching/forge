@@ -29,7 +29,7 @@ export interface SessionMonitorEvent {
 
 const POLL_INTERVAL = 3000;      // check every 3s
 const IDLE_THRESHOLD = 3540000;  // 59min of no file change → check for result entry
-const STABLE_THRESHOLD = 3600000; // 60min of no change → force done (fallback if hook missed)
+const STABLE_THRESHOLD = 3600000; // 60min of no change → force done (fallback if hook missed) [59min check + 1min grace]
 
 export class SessionFileMonitor extends EventEmitter {
   private timers = new Map<string, NodeJS.Timeout>();
@@ -155,14 +155,14 @@ export class SessionFileMonitor extends EventEmitter {
       if (prevState === 'running') {
         if (stableFor >= IDLE_THRESHOLD) {
           // Check if session file has a 'result' entry at the end
-          const resultInfo = this.checkForResult(filePath);
+          const resultInfo = this.checkForResult(filePath, size);
           if (resultInfo) {
             this.setState(agentId, 'done', filePath, resultInfo);
             return;
           }
         }
         if (stableFor >= STABLE_THRESHOLD) {
-          // Force done after 30s even without result entry
+          // Force done after 60min even without result entry (ultimate fallback)
           this.setState(agentId, 'done', filePath, 'stable timeout');
           return;
         }
@@ -179,15 +179,19 @@ export class SessionFileMonitor extends EventEmitter {
    * Check the last few lines of the session file for a 'result' type entry.
    * Claude Code writes this when a turn completes.
    */
-  private checkForResult(filePath: string): string | null {
+  private checkForResult(filePath: string, fileSize?: number): string | null {
     try {
-      // Read last 4KB of the file
-      const stat = statSync(filePath);
-      const readSize = Math.min(4096, stat.size);
-      const fd = require('node:fs').openSync(filePath, 'r');
+      // Read last 4KB of the file — fileSize passed from caller to avoid second statSync
+      const { openSync, readSync, closeSync } = require('node:fs') as typeof import('node:fs');
+      const size = fileSize ?? statSync(filePath).size;
+      const readSize = Math.min(4096, size);
+      const fd = openSync(filePath, 'r');
       const buf = Buffer.alloc(readSize);
-      require('node:fs').readSync(fd, buf, 0, readSize, Math.max(0, stat.size - readSize));
-      require('node:fs').closeSync(fd);
+      try {
+        readSync(fd, buf, 0, readSize, Math.max(0, size - readSize));
+      } finally {
+        closeSync(fd);
+      }
 
       const tail = buf.toString('utf-8');
       const lines = tail.split('\n').filter(l => l.trim());

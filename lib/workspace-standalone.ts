@@ -306,14 +306,8 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
           return json(res, { ok: true, primary: true, tmuxSession: agentState.tmuxSession, fixedSession: true, ...launchInfo });
         }
 
-        if (agentState.tmuxSession) {
-          try {
-            execSync(`tmux has-session -t "${agentState.tmuxSession}" 2>/dev/null`, { timeout: 3000 });
-            return json(res, { ok: true, alreadyOpen: true, tmuxSession: agentState.tmuxSession, ...launchInfo });
-          } catch {
-            // Session no longer alive — fall through to create a new one
-          }
-        }
+        // No tmux has-session liveness check — it adds latency with no benefit.
+        // If the session is dead, openTerminalSession will recreate it anyway.
 
         // Ensure tmux session exists (creates if needed, no 3s startup delay)
         // forceRestart: kill existing tmux so launch script is rewritten with current boundSessionId
@@ -431,8 +425,10 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
         return json(res, { ok: true });
       }
       case 'start_daemon': {
-        // Check active daemon count before starting
-        const activeCount = Array.from(orchestrators.values()).filter(o => o.isDaemonActive()).length;
+        // Check active daemon count before starting (include 'starting' to prevent exceeding MAX_ACTIVE)
+        const activeCount = Array.from(orchestrators.values()).filter(o =>
+          o.isDaemonActive() || Object.values(o.getAllAgentStates()).some(s => s.smithStatus === 'starting')
+        ).length;
         if (activeCount >= MAX_ACTIVE && !orch.isDaemonActive()) {
           return jsonError(res, `Maximum ${MAX_ACTIVE} active daemons. Stop agents in another workspace first.`);
         }
@@ -528,14 +524,12 @@ async function handleSmith(id: string, body: any, res: ServerResponse): Promise<
           }).trim();
         } catch {}
 
-        let gitDiffDetail = '';
-        try {
-          gitDiffDetail = execSync('git diff HEAD --name-only', {
-            cwd: orch.projectPath, encoding: 'utf-8', timeout: 5000,
-          }).trim();
-        } catch {}
-
-        const changedFiles = gitDiffDetail.split('\n').filter(Boolean);
+        // Parse file names from --stat output (lines with ' | ') instead of a second execSync
+        const changedFiles = gitDiff
+          .split('\n')
+          .filter(l => l.includes(' | '))
+          .map(l => l.split(' | ')[0].trim())
+          .filter(Boolean);
         const entry = (orch as any).agents?.get(agentId);
         const config = entry?.config;
 
@@ -603,10 +597,12 @@ async function handleSmith(id: string, body: any, res: ServerResponse): Promise<
       const target = snapshot.agents.find(a => a.label.toLowerCase() === to.toLowerCase() || a.id === to);
       if (!target) return jsonError(res, `Agent "${to}" not found. Available: ${snapshot.agents.map(a => a.label).join(', ')}`, 404);
 
-      // Resolve sender: use agentId if valid, otherwise 'user'
-      const senderId = (agentId && agentId !== 'unknown')
-        ? agentId
-        : 'user';
+      // Resolve sender: validate agentId exists in workspace, otherwise 'user'
+      const senderExists = agentId && agentId !== 'unknown' && snapshot.agents.some(a => a.id === agentId);
+      if (agentId && agentId !== 'unknown' && !senderExists) {
+        return jsonError(res, `Sender agent "${agentId}" not found in workspace`);
+      }
+      const senderId = senderExists ? agentId : 'user';
 
       // Block: if sender is currently processing a message FROM the target,
       // don't send — the result is already delivered via markMessageDone
@@ -843,7 +839,8 @@ const server = createServer(async (req, res) => {
     // Agent operations
     if (subPath === '/agents' && method === 'POST') {
       const bodyStr = await readBody(req);
-      const body = JSON.parse(bodyStr);
+      let body: any;
+      try { body = JSON.parse(bodyStr); } catch { return jsonError(res, 'Invalid JSON', 400); }
       return handleAgentsPost(id, body, res);
     }
 
@@ -859,7 +856,8 @@ const server = createServer(async (req, res) => {
     // Smith API
     if (subPath === '/smith' && method === 'POST') {
       const bodyStr = await readBody(req);
-      const body = JSON.parse(bodyStr);
+      let body: any;
+      try { body = JSON.parse(bodyStr); } catch { return jsonError(res, 'Invalid JSON', 400); }
       return handleSmith(id, body, res);
     }
 

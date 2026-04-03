@@ -308,6 +308,18 @@ export class WorkspaceOrchestrator extends EventEmitter {
   updateAgentConfig(id: string, config: WorkspaceAgentConfig): void {
     const entry = this.agents.get(id);
     if (!entry) return;
+    // Validate agentId exists — fallback to default if deleted from Settings
+    if (config.agentId) {
+      try {
+        const { listAgents, getDefaultAgentId } = require('../agents/index');
+        const validAgents = new Set((listAgents() as any[]).map((a: any) => a.id));
+        if (!validAgents.has(config.agentId)) {
+          const fallback = getDefaultAgentId() || 'claude';
+          console.log(`[workspace] ${config.label}: agent "${config.agentId}" not found, falling back to "${fallback}"`);
+          config.agentId = fallback;
+        }
+      } catch {}
+    }
     const conflict = this.validateOutputs(config, id);
     if (conflict) throw new Error(conflict);
     const cycleErr = this.detectCycle(id, config.dependsOn);
@@ -877,6 +889,23 @@ export class WorkspaceOrchestrator extends EventEmitter {
     // Install forge skills globally (once per daemon start)
     try {
       installForgeSkills(this.projectPath, this.workspaceId, '', Number(process.env.PORT) || 8403);
+    } catch {}
+
+    // Validate agent IDs — fallback to default if configured agent was deleted from Settings
+    let defaultAgentId = 'claude';
+    try {
+      const { listAgents, getDefaultAgentId } = await import('../agents/index') as any;
+      const validAgents = new Set((listAgents() as any[]).map(a => a.id));
+      defaultAgentId = getDefaultAgentId() || 'claude';
+      for (const [id, entry] of this.agents) {
+        if (entry.config.type === 'input') continue;
+        if (entry.config.agentId && !validAgents.has(entry.config.agentId)) {
+          console.log(`[daemon] ${entry.config.label}: agent "${entry.config.agentId}" not found, falling back to "${defaultAgentId}"`);
+          entry.config.agentId = defaultAgentId;
+          this.emit('event', { type: 'log', agentId: id, entry: { type: 'system', subtype: 'warning', content: `Agent "${entry.config.agentId}" not found in Settings — using default "${defaultAgentId}"`, timestamp: new Date().toISOString() } } as any);
+          this.saveNow();
+        }
+      }
     } catch {}
 
     // Start each smith one by one, verify each starts correctly

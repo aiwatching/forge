@@ -64,24 +64,6 @@ function saveTerminalState(data: unknown): void {
   }
 }
 
-/** Get session names that have custom labels (user-renamed) */
-function getRenamedSessions(): Set<string> {
-  try {
-    const state = loadTerminalState() as any;
-    if (!state?.sessionLabels) return new Set();
-    // sessionLabels: { "mw-xxx": "My Custom Name", ... }
-    // A session is "renamed" if its label differs from default patterns
-    const renamed = new Set<string>();
-    for (const [sessionName, label] of Object.entries(state.sessionLabels)) {
-      if (label && typeof label === 'string') {
-        renamed.add(sessionName);
-      }
-    }
-    return renamed;
-  } catch {
-    return new Set();
-  }
-}
 
 // ─── tmux helpers ──────────────────────────────────────────────
 
@@ -179,11 +161,7 @@ function createTmuxSession(cols: number, rows: number): string {
       throw e;
     }
   }
-  // Enable mouse scrolling and set large scrollback buffer
-  try {
-    execSync(`${TMUX} set-option -t ${name} mouse on 2>/dev/null`);
-    execSync(`${TMUX} set-option -t ${name} history-limit 50000 2>/dev/null`);
-  } catch {}
+  // Mouse and scrollback are set in attachToTmux (always called after create)
   return name;
 }
 
@@ -211,8 +189,6 @@ function tmuxSessionExists(name: string): boolean {
 /** Map from tmux session name → Set of WebSocket clients attached to it */
 const sessionClients = new Map<string, Set<WebSocket>>();
 
-/** Map from WebSocket → timestamp when the session was *created* (not attached) by this client */
-const createdAt = new Map<WebSocket, { session: string; time: number }>();
 
 function trackAttach(ws: WebSocket, sessionName: string) {
   if (!sessionClients.has(sessionName)) sessionClients.set(sessionName, new Set());
@@ -232,9 +208,11 @@ function cleanupOrphanedSessions() {
   const sessions = listTmuxSessions();
   for (const s of sessions) {
     if (s.attached) continue;
+    if (s.name.startsWith(`${SESSION_PREFIX}forge-`)) continue; // workspace agent session — managed by orchestrator
     if (knownSessions.has(s.name)) continue; // saved in terminal state — preserve
     const clients = sessionClients.get(s.name)?.size ?? 0;
     if (clients === 0) {
+      console.log(`[terminal] Orphan cleanup: killing "${s.name}"`);
       killTmuxSession(s.name);
     }
   }
@@ -362,14 +340,10 @@ wss.on('connection', (ws: WebSocket) => {
                 cwd: homedir(),
                 env: { ...process.env, TERM: 'xterm-256color' },
               });
-              try {
-                execSync(`${TMUX} set-option -t ${name} mouse on 2>/dev/null`);
-                execSync(`${TMUX} set-option -t ${name} history-limit 50000 2>/dev/null`);
-              } catch {}
+              // Mouse and scrollback are set in attachToTmux (always called after create)
             } else {
               name = createTmuxSession(cols, rows);
             }
-            createdAt.set(ws, { session: name, time: Date.now() });
             attachToTmux(name, cols, rows);
           } catch (e: unknown) {
             const errMsg = e instanceof Error ? e.message : 'unknown error';
@@ -439,11 +413,9 @@ wss.on('connection', (ws: WebSocket) => {
     }
 
     // Untrack this client
-    const disconnectedSession = sessionName;
     if (sessionName) trackDetach(ws, sessionName);
-    createdAt.delete(ws);
 
-    // Orphan cleanup is handled by the periodic cleanupOrphanedSessions() (every 30s)
-    // which checks sessionClients and getRenamedSessions() from terminal-state.json
+    // Orphan cleanup is handled by the periodic cleanupOrphanedSessions() (every 60s)
+    // which checks sessionClients and getKnownSessions() from terminal-state.json
   });
 });

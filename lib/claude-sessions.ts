@@ -32,7 +32,8 @@ export interface SessionEntry {
  * Claude uses: ~/.claude/projects/<path-with-slashes-replaced-by-dashes>/
  */
 export function projectPathToClaudeDir(projectPath: string): string {
-  const hash = projectPath.replace(/\//g, '-');
+  // Claude Code encodes paths by replacing all non-alphanumeric chars with '-'
+  const hash = projectPath.replace(/[^a-zA-Z0-9]/g, '-');
   return join(getClaudeDir(), 'projects', hash);
 }
 

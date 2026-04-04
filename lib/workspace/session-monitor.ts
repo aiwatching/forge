@@ -108,7 +108,8 @@ export class SessionFileMonitor extends EventEmitter {
   static resolveSessionPath(projectPath: string, workDir: string | undefined, sessionId: string): string {
     const fullPath = workDir && workDir !== './' && workDir !== '.'
       ? join(projectPath, workDir) : projectPath;
-    const encoded = resolve(fullPath).replace(/\//g, '-');
+    // Claude Code encodes paths by replacing all non-alphanumeric chars with '-'
+    const encoded = resolve(fullPath).replace(/[^a-zA-Z0-9]/g, '-');
     return join(homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
   }
 

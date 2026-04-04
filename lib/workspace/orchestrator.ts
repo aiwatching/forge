@@ -2150,7 +2150,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
   private getCliSessionDir(workDir?: string): string {
     const projectPath = workDir && workDir !== './' && workDir !== '.'
       ? join(this.projectPath, workDir) : this.projectPath;
-    const encoded = resolve(projectPath).replace(/\//g, '-');
+    // Claude Code encodes paths by replacing all non-alphanumeric chars with '-'
+    const encoded = resolve(projectPath).replace(/[^a-zA-Z0-9]/g, '-');
     return join(homedir(), '.claude', 'projects', encoded);
   }
 

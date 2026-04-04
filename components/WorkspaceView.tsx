@@ -2591,6 +2591,7 @@ interface AgentNodeData {
   onOpenTerminal: () => void;
   onSwitchSession: () => void;
   onSaveAsTemplate: () => void;
+  mascotTheme: MascotTheme;
   onMarkIdle?: () => void;
   onMarkDone?: (notify: boolean) => void;
   onMarkFailed?: (notify: boolean) => void;
@@ -2602,8 +2603,634 @@ interface AgentNodeData {
 // PortalTerminal/NodeTerminal removed — xterm cannot render inside React Flow nodes
 // and createPortal causes event routing issues. Using FloatingTerminal instead.
 
+// ─── Worker Mascot — SVG stick figure with pose-based animations ──────────────
+const MASCOT_STYLES = `
+@keyframes mascot-sleep {
+  0%, 100% { transform: translateY(0) rotate(-3deg); opacity: 0.6; }
+  50% { transform: translateY(-2px) rotate(3deg); opacity: 0.9; }
+}
+@keyframes mascot-work {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-2px) rotate(-6deg); }
+  50% { transform: translateY(0) rotate(0deg); }
+  75% { transform: translateY(-2px) rotate(6deg); }
+}
+@keyframes mascot-celebrate {
+  0% { transform: translateY(0) scale(1); }
+  12% { transform: translateY(-6px) scale(1.15) rotate(-10deg); }
+  25% { transform: translateY(-3px) scale(1.1) rotate(0deg); }
+  37% { transform: translateY(-6px) scale(1.15) rotate(10deg); }
+  50% { transform: translateY(0) scale(1) rotate(0deg); }
+  100% { transform: translateY(0) scale(1) rotate(0deg); }
+}
+@keyframes mascot-fall {
+  0% { transform: translateY(0) rotate(0deg); }
+  30% { transform: translateY(2px) rotate(-15deg); }
+  60% { transform: translateY(4px) rotate(-90deg); }
+  100% { transform: translateY(4px) rotate(-90deg); opacity: 0.6; }
+}
+@keyframes mascot-idle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1px); }
+}
+@keyframes mascot-blink { 0%, 95%, 100% { opacity: 1; } 97% { opacity: 0.3; } }
+@keyframes stick-arm-hammer {
+  0%, 100% { transform: rotate(-40deg); }
+  50% { transform: rotate(20deg); }
+}
+@keyframes stick-arm-wave {
+  0%, 100% { transform: rotate(-120deg); }
+  50% { transform: rotate(-150deg); }
+}
+@keyframes stick-leg-walk-l {
+  0%, 100% { transform: rotate(-10deg); }
+  50% { transform: rotate(10deg); }
+}
+@keyframes stick-leg-walk-r {
+  0%, 100% { transform: rotate(10deg); }
+  50% { transform: rotate(-10deg); }
+}
+@keyframes stick-zzz {
+  0% { opacity: 0; transform: translate(0, 0) scale(0.5); }
+  50% { opacity: 1; transform: translate(4px, -6px) scale(1); }
+  100% { opacity: 0; transform: translate(8px, -12px) scale(1.2); }
+}
+@keyframes stick-spark {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+@keyframes stick-spark-burst {
+  0% { opacity: 0; transform: scale(0.5); }
+  30% { opacity: 1; transform: scale(1.2); }
+  70% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.8); }
+}
+`;
+type MascotPose = 'idle' | 'work' | 'done' | 'fail' | 'sleep' | 'wake';
+export type MascotTheme = 'off' | 'stick' | 'cat' | 'dog' | 'pig' | 'emoji';
+
+function StickCat({ pose, color, accentColor }: { pose: MascotPose; color: string; accentColor: string }) {
+  const strokeProps = { stroke: color, strokeWidth: 1.5, strokeLinecap: 'round' as const, fill: 'none' };
+  const body = (tailAnim: string) => (
+    <>
+      {/* head */}
+      <circle cx="10" cy="18" r="5" stroke={color} strokeWidth="1.5" fill="none" />
+      {/* ears */}
+      <path d="M 6 15 L 7 11 L 10 14 Z" fill={color} />
+      <path d="M 14 15 L 13 11 L 10 14 Z" fill={color} />
+      {/* eyes */}
+      <circle cx="8" cy="18" r="0.8" fill={accentColor} />
+      <circle cx="12" cy="18" r="0.8" fill={accentColor} />
+      {/* nose */}
+      <path d="M 9.5 19.5 L 10 20 L 10.5 19.5" stroke={accentColor} strokeWidth="0.8" fill="none" strokeLinecap="round" />
+      {/* whiskers */}
+      <line x1="5" y1="19" x2="2" y2="18" stroke={color} strokeWidth="0.6" />
+      <line x1="5" y1="20" x2="2" y2="20" stroke={color} strokeWidth="0.6" />
+      <line x1="15" y1="19" x2="18" y2="18" stroke={color} strokeWidth="0.6" />
+      <line x1="15" y1="20" x2="18" y2="20" stroke={color} strokeWidth="0.6" />
+      {/* body — oval */}
+      <ellipse cx="18" cy="26" rx="8" ry="5" stroke={color} strokeWidth="1.5" fill="none" />
+      {/* tail */}
+      <g style={{ transformOrigin: '26px 26px', animation: tailAnim }}>
+        <path d="M 26 26 Q 30 22 28 18" {...strokeProps} />
+      </g>
+      {/* legs */}
+      <line x1="13" y1="30" x2="13" y2="36" {...strokeProps} />
+      <line x1="23" y1="30" x2="23" y2="36" {...strokeProps} />
+      <line x1="16" y1="31" x2="16" y2="36" {...strokeProps} />
+      <line x1="20" y1="31" x2="20" y2="36" {...strokeProps} />
+    </>
+  );
+
+  if (pose === 'sleep') {
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        {/* curled up cat — circle with tail */}
+        <circle cx="16" cy="30" r="8" stroke={color} strokeWidth="1.5" fill="none" />
+        <circle cx="10" cy="28" r="3" stroke={color} strokeWidth="1.5" fill="none" />
+        <line x1="9" y1="27" x2="9" y2="29" stroke={color} strokeWidth="0.8" />
+        <line x1="11" y1="27" x2="11" y2="29" stroke={color} strokeWidth="0.8" />
+        <path d="M 23 32 Q 28 32 26 26" {...strokeProps} />
+        {/* zzz */}
+        <text x="20" y="20" fill={accentColor} fontSize="6" fontWeight="bold" style={{ animation: 'stick-zzz 2s ease-out infinite' }}>z</text>
+        <text x="24" y="14" fill={accentColor} fontSize="4" fontWeight="bold" style={{ animation: 'stick-zzz 2s ease-out infinite 0.7s' }}>z</text>
+      </svg>
+    );
+  }
+
+  if (pose === 'fail') {
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        {/* belly up */}
+        <ellipse cx="18" cy="26" rx="8" ry="5" stroke={color} strokeWidth="1.5" fill="none" />
+        <circle cx="10" cy="24" r="4" stroke={color} strokeWidth="1.5" fill="none" />
+        <line x1="8" y1="23" x2="9" y2="24" stroke={accentColor} strokeWidth="0.8" />
+        <line x1="9" y1="23" x2="8" y2="24" stroke={accentColor} strokeWidth="0.8" />
+        <line x1="11" y1="23" x2="12" y2="24" stroke={accentColor} strokeWidth="0.8" />
+        <line x1="12" y1="23" x2="11" y2="24" stroke={accentColor} strokeWidth="0.8" />
+        {/* legs up */}
+        <line x1="14" y1="22" x2="14" y2="16" {...strokeProps} />
+        <line x1="18" y1="22" x2="18" y2="15" {...strokeProps} />
+        <line x1="22" y1="22" x2="22" y2="16" {...strokeProps} />
+      </svg>
+    );
+  }
+
+  if (pose === 'done') {
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        {/* jumping — body elevated */}
+        <g style={{ transform: 'translateY(-2px)' }}>
+          {body('none')}
+        </g>
+        <text x="2" y="8" fill="#ffd700" fontSize="6" style={{ animation: 'stick-spark-burst 1.2s ease-out forwards' }}>✦</text>
+        <text x="26" y="10" fill="#ffd700" fontSize="8" style={{ animation: 'stick-spark-burst 1.2s ease-out forwards 0.3s' }}>✦</text>
+      </svg>
+    );
+  }
+
+  if (pose === 'work') {
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        {body('stick-arm-hammer 0.4s ease-in-out infinite')}
+      </svg>
+    );
+  }
+
+  if (pose === 'wake') {
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        {/* stretching — elongated body */}
+        <circle cx="8" cy="22" r="4" stroke={color} strokeWidth="1.5" fill="none" />
+        <path d="M 4 19 L 5 16 L 8 18 Z" fill={color} />
+        <path d="M 12 19 L 11 16 L 8 18 Z" fill={color} />
+        <circle cx="6.5" cy="22" r="0.6" fill={accentColor} />
+        <circle cx="9.5" cy="22" r="0.6" fill={accentColor} />
+        <ellipse cx="20" cy="28" rx="10" ry="4" stroke={color} strokeWidth="1.5" fill="none" />
+        <line x1="14" y1="32" x2="14" y2="38" {...strokeProps} />
+        <line x1="26" y1="32" x2="26" y2="38" {...strokeProps} />
+        <path d="M 30 28 Q 32 24 30 20" {...strokeProps} />
+      </svg>
+    );
+  }
+
+  // idle — tail swaying
+  return (
+    <svg width="32" height="40" viewBox="0 0 32 40">
+      {body('stick-arm-wave 2s ease-in-out infinite')}
+    </svg>
+  );
+}
+
+function StickDog({ pose, color, accentColor }: { pose: MascotPose; color: string; accentColor: string }) {
+  // Side-profile dog — elongated snout forward, triangular perked ear, visible tail
+  // Designed to read clearly at small sizes with distinct dog silhouette
+
+  if (pose === 'sleep') {
+    return (
+      <svg width="40" height="40" viewBox="0 0 40 40">
+        {/* body lying down */}
+        <ellipse cx="22" cy="32" rx="12" ry="4" stroke={color} strokeWidth="1.8" fill={color} fillOpacity="0.15" />
+        {/* head resting on paws — side profile */}
+        <path d="M 10 32 Q 6 30 4 32 Q 2 33 3 35 L 10 35 Z" stroke={color} strokeWidth="1.8" fill={color} fillOpacity="0.2" strokeLinejoin="round" />
+        {/* long snout */}
+        <path d="M 3 34 L 1 35 L 3 36" stroke={color} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        {/* floppy ear */}
+        <path d="M 8 30 Q 6 33 9 34" stroke={color} strokeWidth="2" fill={color} fillOpacity="0.35" strokeLinecap="round" />
+        {/* closed eye */}
+        <path d="M 6 33 Q 7 32.5 8 33" stroke={color} strokeWidth="0.8" fill="none" strokeLinecap="round" />
+        {/* nose */}
+        <ellipse cx="1.5" cy="35" rx="0.9" ry="0.7" fill={color} />
+        {/* curled tail */}
+        <path d="M 33 32 Q 38 30 36 26 Q 35 25 36 24" stroke={color} strokeWidth="2" fill="none" strokeLinecap="round" />
+        <text x="18" y="18" fill={accentColor} fontSize="7" fontWeight="bold" style={{ animation: 'stick-zzz 2s ease-out infinite' }}>z</text>
+        <text x="24" y="12" fill={accentColor} fontSize="5" fontWeight="bold" style={{ animation: 'stick-zzz 2s ease-out infinite 0.7s' }}>z</text>
+      </svg>
+    );
+  }
+
+  if (pose === 'fail') {
+    return (
+      <svg width="40" height="40" viewBox="0 0 40 40">
+        {/* belly up */}
+        <ellipse cx="22" cy="32" rx="12" ry="4" stroke={color} strokeWidth="1.8" fill={color} fillOpacity="0.15" />
+        {/* head upside down */}
+        <path d="M 10 32 Q 6 34 4 32 Q 2 31 3 29 L 10 29 Z" stroke={color} strokeWidth="1.8" fill={color} fillOpacity="0.2" strokeLinejoin="round" />
+        <path d="M 3 30 L 1 29 L 3 28" stroke={color} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        {/* X eyes */}
+        <line x1="5" y1="30" x2="6.5" y2="31.5" stroke={accentColor} strokeWidth="1.2" strokeLinecap="round" />
+        <line x1="6.5" y1="30" x2="5" y2="31.5" stroke={accentColor} strokeWidth="1.2" strokeLinecap="round" />
+        {/* tongue hanging out sideways */}
+        <path d="M 2 30 Q 1 27 2 25" stroke="#ff6b9d" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+        {/* all 4 legs sticking up */}
+        <line x1="14" y1="28" x2="13" y2="20" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+        <line x1="18" y1="28" x2="18" y2="18" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+        <line x1="26" y1="28" x2="26" y2="18" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+        <line x1="30" y1="28" x2="31" y2="20" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+        {/* limp tail */}
+        <path d="M 33 32 L 37 34" stroke={color} strokeWidth="2" fill="none" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  // Standing side-profile dog
+  const standingDog = (tailAnim: string, bounce: string = '') => (
+    <g style={bounce ? { transform: bounce } : {}}>
+      {/* body — side profile, clearly elongated horizontal */}
+      <path d="M 11 22 L 28 22 Q 32 22 32 26 L 32 30 Q 32 32 30 32 L 9 32 Q 7 32 7 30 L 7 27 Q 7 23 11 22 Z"
+        stroke={color} strokeWidth="1.8" fill={color} fillOpacity="0.15" strokeLinejoin="round" />
+      {/* head — side profile with long snout pointing LEFT */}
+      <path d="M 11 22 Q 8 22 6 20 Q 4 20 2 22 Q 0 23 1 25 Q 1 27 3 27 L 8 27 Q 10 27 11 25 Z"
+        stroke={color} strokeWidth="1.8" fill={color} fillOpacity="0.2" strokeLinejoin="round" />
+      {/* triangular perked ear (pointing up-back) */}
+      <path d="M 8 22 L 10 15 L 12 20 Z" stroke={color} strokeWidth="1.5" fill={color} fillOpacity="0.4" strokeLinejoin="round" />
+      {/* big black nose at tip */}
+      <ellipse cx="1" cy="24" rx="1.3" ry="1" fill={color} />
+      {/* eye */}
+      <circle cx="7" cy="23" r="1" fill={accentColor} />
+      <circle cx="6.7" cy="22.7" r="0.3" fill="#fff" />
+      {/* mouth line */}
+      <path d="M 1 25.5 Q 3 27 6 26" stroke={color} strokeWidth="0.8" fill="none" strokeLinecap="round" />
+      {/* tongue hanging out */}
+      <path d="M 2.5 26.5 Q 3 28.5 2 29" stroke="#ff6b9d" strokeWidth="1.2" fill="#ff6b9d" strokeLinecap="round" />
+      {/* curled tail (pointing up-right) — wags */}
+      <g style={{ transformOrigin: '32px 26px', animation: tailAnim }}>
+        <path d="M 32 26 Q 37 24 36 19 Q 36 17 38 17" stroke={color} strokeWidth="2.2" fill="none" strokeLinecap="round" />
+      </g>
+      {/* 4 legs — visible in side profile (2 front + 2 back, front pair visible) */}
+      <line x1="10" y1="32" x2="10" y2="38" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="14" y1="32" x2="14" y2="38" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="26" y1="32" x2="26" y2="38" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="30" y1="32" x2="30" y2="38" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+      {/* paws */}
+      <rect x="8.5" y="37.5" width="3" height="1.5" fill={color} rx="0.5" />
+      <rect x="12.5" y="37.5" width="3" height="1.5" fill={color} rx="0.5" />
+      <rect x="24.5" y="37.5" width="3" height="1.5" fill={color} rx="0.5" />
+      <rect x="28.5" y="37.5" width="3" height="1.5" fill={color} rx="0.5" />
+      {/* collar */}
+      <line x1="9" y1="27" x2="12" y2="27" stroke={accentColor} strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="10.5" cy="28" r="0.9" fill={accentColor} />
+    </g>
+  );
+
+  if (pose === 'done') {
+    return (
+      <svg width="40" height="40" viewBox="0 0 40 40">
+        {standingDog('stick-arm-wave 0.3s ease-in-out infinite', 'translateY(-3px)')}
+        <text x="2" y="10" fill="#ffd700" fontSize="7" style={{ animation: 'stick-spark-burst 1.2s ease-out forwards' }}>✦</text>
+        <text x="34" y="12" fill="#ffd700" fontSize="9" style={{ animation: 'stick-spark-burst 1.2s ease-out forwards 0.3s' }}>✦</text>
+        <text x="18" y="6" fill="#ffd700" fontSize="6" style={{ animation: 'stick-spark-burst 1.2s ease-out forwards 0.5s' }}>✦</text>
+      </svg>
+    );
+  }
+
+  if (pose === 'work') {
+    return (
+      <svg width="40" height="40" viewBox="0 0 40 40">
+        {standingDog('stick-arm-wave 0.25s ease-in-out infinite')}
+        {/* bone in mouth */}
+        <g transform="translate(-6, 0)">
+          <circle cx="0" cy="25" r="1.5" fill={accentColor} stroke={color} strokeWidth="0.6" />
+          <rect x="0" y="24.2" width="5" height="1.6" fill={accentColor} stroke={color} strokeWidth="0.6" rx="0.4" />
+          <circle cx="5" cy="25" r="1.5" fill={accentColor} stroke={color} strokeWidth="0.6" />
+        </g>
+      </svg>
+    );
+  }
+
+  if (pose === 'wake') {
+    return (
+      <svg width="40" height="40" viewBox="0 0 40 40">
+        {standingDog('stick-arm-wave 1.5s ease-in-out infinite')}
+        {/* yawn — open mouth replaces tongue */}
+        <ellipse cx="2" cy="26" rx="1.3" ry="1.8" fill={color} opacity="0.5" />
+      </svg>
+    );
+  }
+
+  // idle — standing, happy tail wag
+  return (
+    <svg width="40" height="40" viewBox="0 0 40 40">
+      {standingDog('stick-arm-wave 0.6s ease-in-out infinite')}
+    </svg>
+  );
+}
+
+function StickPig({ pose, color, accentColor }: { pose: MascotPose; color: string; accentColor: string }) {
+  const pink = '#ff9ecb';
+  const pinkFill = '#ff9ecb';
+
+  if (pose === 'sleep') {
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        <ellipse cx="16" cy="30" rx="12" ry="7" stroke={pink} strokeWidth="1.8" fill={pinkFill} fillOpacity="0.25" />
+        <circle cx="8" cy="28" r="4" stroke={pink} strokeWidth="1.8" fill={pinkFill} fillOpacity="0.3" />
+        {/* pig snout disc */}
+        <ellipse cx="4.5" cy="29" rx="2.5" ry="1.8" stroke={pink} strokeWidth="1.5" fill={pinkFill} fillOpacity="0.4" />
+        <circle cx="4" cy="29" r="0.5" fill={color} />
+        <circle cx="5" cy="29" r="0.5" fill={color} />
+        {/* pointy triangular ears */}
+        <path d="M 5 24 L 6 22 L 8 25 Z" fill={pinkFill} stroke={pink} strokeWidth="1" />
+        <path d="M 9 24 L 10 22 L 11 25 Z" fill={pinkFill} stroke={pink} strokeWidth="1" />
+        {/* closed eyes */}
+        <path d="M 7 27 Q 7.5 26.5 8 27" stroke={color} strokeWidth="0.8" fill="none" strokeLinecap="round" />
+        <path d="M 9 27 Q 9.5 26.5 10 27" stroke={color} strokeWidth="0.8" fill="none" strokeLinecap="round" />
+        {/* curly tail */}
+        <path d="M 28 28 Q 30 26 28 24 Q 26 24 28 22" stroke={pink} strokeWidth="2" fill="none" strokeLinecap="round" />
+        <text x="16" y="16" fill={accentColor} fontSize="7" fontWeight="bold" style={{ animation: 'stick-zzz 2s ease-out infinite' }}>z</text>
+        <text x="21" y="10" fill={accentColor} fontSize="5" fontWeight="bold" style={{ animation: 'stick-zzz 2s ease-out infinite 0.7s' }}>z</text>
+      </svg>
+    );
+  }
+
+  if (pose === 'fail') {
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        <ellipse cx="18" cy="29" rx="11" ry="5" stroke={pink} strokeWidth="1.8" fill={pinkFill} fillOpacity="0.25" />
+        <circle cx="8" cy="27" r="4.5" stroke={pink} strokeWidth="1.8" fill={pinkFill} fillOpacity="0.3" />
+        <ellipse cx="7" cy="23" rx="2.5" ry="2" stroke={pink} strokeWidth="1.5" fill={pinkFill} fillOpacity="0.5" />
+        <circle cx="6.3" cy="23" r="0.5" fill={color} />
+        <circle cx="7.7" cy="23" r="0.5" fill={color} />
+        <path d="M 4 28 Q 0 30 2 34" fill={pinkFill} stroke={pink} strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M 12 28 Q 16 30 14 34" fill={pinkFill} stroke={pink} strokeWidth="1.8" strokeLinecap="round" />
+        <line x1="6" y1="26" x2="7.5" y2="27.5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+        <line x1="7.5" y1="26" x2="6" y2="27.5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+        <line x1="9" y1="26" x2="10.5" y2="27.5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+        <line x1="10.5" y1="26" x2="9" y2="27.5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+        <line x1="14" y1="25" x2="13" y2="17" stroke={pink} strokeWidth="1.8" strokeLinecap="round" />
+        <line x1="18" y1="25" x2="18" y2="16" stroke={pink} strokeWidth="1.8" strokeLinecap="round" />
+        <line x1="22" y1="25" x2="22" y2="17" stroke={pink} strokeWidth="1.8" strokeLinecap="round" />
+        <line x1="26" y1="25" x2="27" y2="18" stroke={pink} strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  const pigBody = (tailAnim: string, bounce: string = '') => (
+    <g style={bounce ? { transform: bounce } : {}}>
+      {/* round pig body */}
+      <ellipse cx="18" cy="27" rx="11" ry="6.5" stroke={pink} strokeWidth="1.8" fill={pinkFill} fillOpacity="0.25" />
+      {/* round head */}
+      <circle cx="9" cy="18" r="6" stroke={pink} strokeWidth="1.8" fill={pinkFill} fillOpacity="0.3" />
+      {/* pig snout — flat disc with nostrils */}
+      <ellipse cx="5" cy="20" rx="3" ry="2.2" stroke={pink} strokeWidth="1.5" fill={pinkFill} fillOpacity="0.5" />
+      <circle cx="4" cy="20" r="0.6" fill={color} />
+      <circle cx="6" cy="20" r="0.6" fill={color} />
+      {/* triangular pointed ears */}
+      <path d="M 6 13 L 7 10 L 9 14 Z" fill={pinkFill} stroke={pink} strokeWidth="1.2" strokeLinejoin="round" />
+      <path d="M 11 13 L 12 10 L 14 14 Z" fill={pinkFill} stroke={pink} strokeWidth="1.2" strokeLinejoin="round" />
+      {/* eyes */}
+      <circle cx="8" cy="17" r="1" fill={color} />
+      <circle cx="12" cy="17" r="1" fill={color} />
+      <circle cx="7.7" cy="16.7" r="0.3" fill="#fff" />
+      <circle cx="11.7" cy="16.7" r="0.3" fill="#fff" />
+      {/* smile */}
+      <path d="M 7 22 Q 9 23 11 22" stroke={color} strokeWidth="0.8" fill="none" strokeLinecap="round" />
+      {/* curly tail — wagging */}
+      <g style={{ transformOrigin: '29px 25px', animation: tailAnim }}>
+        <path d="M 29 25 Q 32 23 30 21 Q 28 21 30 19 Q 31 18 32 19" stroke={pink} strokeWidth="2" fill="none" strokeLinecap="round" />
+      </g>
+      {/* trotter legs */}
+      <line x1="12" y1="32" x2="12" y2="38" stroke={pink} strokeWidth="2" strokeLinecap="round" />
+      <line x1="16" y1="33" x2="16" y2="38" stroke={pink} strokeWidth="2" strokeLinecap="round" />
+      <line x1="20" y1="33" x2="20" y2="38" stroke={pink} strokeWidth="2" strokeLinecap="round" />
+      <line x1="24" y1="32" x2="24" y2="38" stroke={pink} strokeWidth="2" strokeLinecap="round" />
+      {/* hooves */}
+      <rect x="10.5" y="37.5" width="3" height="1.8" fill={color} rx="0.3" />
+      <rect x="14.5" y="37.5" width="3" height="1.8" fill={color} rx="0.3" />
+      <rect x="18.5" y="37.5" width="3" height="1.8" fill={color} rx="0.3" />
+      <rect x="22.5" y="37.5" width="3" height="1.8" fill={color} rx="0.3" />
+    </g>
+  );
+
+  if (pose === 'done') {
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        {pigBody('stick-arm-wave 0.4s ease-in-out infinite', 'translateY(-2px)')}
+        <text x="2" y="8" fill="#ffd700" fontSize="6" style={{ animation: 'stick-spark-burst 1.2s ease-out forwards' }}>✦</text>
+        <text x="26" y="10" fill="#ffd700" fontSize="8" style={{ animation: 'stick-spark-burst 1.2s ease-out forwards 0.3s' }}>✦</text>
+      </svg>
+    );
+  }
+
+  if (pose === 'work') {
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        {pigBody('stick-arm-wave 0.3s ease-in-out infinite')}
+      </svg>
+    );
+  }
+
+  if (pose === 'wake') {
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        {pigBody('stick-arm-wave 1.5s ease-in-out infinite')}
+        <ellipse cx="9" cy="20" rx="1.3" ry="1.5" fill={color} opacity="0.4" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg width="32" height="40" viewBox="0 0 32 40">
+      {pigBody('stick-arm-wave 0.7s ease-in-out infinite')}
+    </svg>
+  );
+}
+
+function EmojiMascot({ pose, seed }: { pose: MascotPose; seed: number }) {
+  const characters = ['🦊', '🐱', '🐼', '🦉', '🐸', '🦝', '🐙', '🦖', '🐰', '🦄', '🐺', '🧙‍♂️', '🧝‍♀️', '🦸‍♂️', '🥷', '🐲'];
+  const character = characters[seed % characters.length];
+  let display = character;
+  if (pose === 'sleep') display = ['😴', '💤', '🌙', '💤'][Math.floor(Date.now() / 1200) % 4];
+  else if (pose === 'work') { const tools = ['🔨', '⚙️', '🛠️', '⚡']; const tick = Math.floor(Date.now() / 400); display = tick % 3 === 0 ? character : tools[tick % tools.length]; }
+  else if (pose === 'done') display = ['🎉', '🎊', '🥳', '🌟'][Math.floor(Date.now() / 600) % 4];
+  else if (pose === 'fail') display = ['😵', '💫', '🤕', '😿'][seed % 4];
+  else if (pose === 'wake') display = ['🥱', '☕', '🌅'][Math.floor(Date.now() / 1000) % 3];
+  return <div style={{ fontSize: '24px', lineHeight: 1 }}>{display}</div>;
+}
+
+function StickFigure({ pose, color, accentColor }: { pose: MascotPose; color: string; accentColor: string }) {
+  // viewBox 32×40: head at (16,8), body (16,12)→(16,26), arms from (16,14), legs from (16,26)
+  const strokeProps = { stroke: color, strokeWidth: 2, strokeLinecap: 'round' as const, fill: 'none' };
+
+  if (pose === 'sleep') {
+    // Lying down, sleeping
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        {/* body horizontal */}
+        <circle cx="8" cy="30" r="3" {...strokeProps} fill={color} />
+        <line x1="11" y1="30" x2="26" y2="30" {...strokeProps} />
+        <line x1="14" y1="30" x2="18" y2="26" {...strokeProps} />
+        <line x1="20" y1="30" x2="24" y2="34" {...strokeProps} />
+        {/* zzz */}
+        <text x="18" y="14" fill={accentColor} fontSize="8" fontWeight="bold" style={{ animation: 'stick-zzz 2s ease-out infinite' }}>z</text>
+        <text x="22" y="10" fill={accentColor} fontSize="6" fontWeight="bold" style={{ animation: 'stick-zzz 2s ease-out infinite 0.7s' }}>z</text>
+      </svg>
+    );
+  }
+
+  if (pose === 'wake') {
+    // Stretching — arms up
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        <circle cx="16" cy="8" r="3" {...strokeProps} fill={color} />
+        <line x1="16" y1="11" x2="16" y2="26" {...strokeProps} />
+        <line x1="16" y1="14" x2="10" y2="6" {...strokeProps} />
+        <line x1="16" y1="14" x2="22" y2="6" {...strokeProps} />
+        <line x1="16" y1="26" x2="12" y2="34" {...strokeProps} />
+        <line x1="16" y1="26" x2="20" y2="34" {...strokeProps} />
+        {/* ☼ */}
+        <circle cx="26" cy="6" r="2" fill={accentColor} opacity="0.8" />
+      </svg>
+    );
+  }
+
+  if (pose === 'done') {
+    // Victory pose — both arms up, legs apart
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        <circle cx="16" cy="8" r="3" {...strokeProps} fill={color} />
+        {/* smile */}
+        <path d="M 14 8 Q 16 10 18 8" stroke={accentColor} strokeWidth="1" fill="none" strokeLinecap="round" />
+        <line x1="16" y1="11" x2="16" y2="26" {...strokeProps} />
+        <line x1="16" y1="14" x2="8" y2="4" {...strokeProps} />
+        <line x1="16" y1="14" x2="24" y2="4" {...strokeProps} />
+        <line x1="16" y1="26" x2="10" y2="36" {...strokeProps} />
+        <line x1="16" y1="26" x2="22" y2="36" {...strokeProps} />
+        {/* sparkles */}
+        <text x="4" y="4" fill="#ffd700" fontSize="6" style={{ animation: 'stick-spark-burst 1.2s ease-out forwards' }}>✦</text>
+        <text x="26" y="6" fill="#ffd700" fontSize="8" style={{ animation: 'stick-spark-burst 1.2s ease-out forwards 0.3s' }}>✦</text>
+        <text x="2" y="20" fill="#ffd700" fontSize="5" style={{ animation: 'stick-spark-burst 1.2s ease-out forwards 0.5s' }}>✦</text>
+      </svg>
+    );
+  }
+
+  if (pose === 'fail') {
+    // Fallen down — lying on back, X eyes (handled via external rotate)
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        <circle cx="16" cy="8" r="3" {...strokeProps} fill={color} />
+        {/* X eyes */}
+        <line x1="14" y1="6" x2="15" y2="7" stroke={accentColor} strokeWidth="1" strokeLinecap="round" />
+        <line x1="15" y1="6" x2="14" y2="7" stroke={accentColor} strokeWidth="1" strokeLinecap="round" />
+        <line x1="17" y1="6" x2="18" y2="7" stroke={accentColor} strokeWidth="1" strokeLinecap="round" />
+        <line x1="18" y1="6" x2="17" y2="7" stroke={accentColor} strokeWidth="1" strokeLinecap="round" />
+        <line x1="16" y1="11" x2="16" y2="26" {...strokeProps} />
+        <line x1="16" y1="14" x2="8" y2="18" {...strokeProps} />
+        <line x1="16" y1="14" x2="24" y2="18" {...strokeProps} />
+        <line x1="16" y1="26" x2="10" y2="34" {...strokeProps} />
+        <line x1="16" y1="26" x2="22" y2="34" {...strokeProps} />
+      </svg>
+    );
+  }
+
+  if (pose === 'work') {
+    // Hammering — left arm stable, right arm swinging with hammer
+    return (
+      <svg width="32" height="40" viewBox="0 0 32 40">
+        <circle cx="16" cy="8" r="3" {...strokeProps} fill={color} />
+        <line x1="16" y1="11" x2="16" y2="26" {...strokeProps} />
+        {/* left arm holding nail */}
+        <line x1="16" y1="14" x2="10" y2="20" {...strokeProps} />
+        {/* right arm swinging hammer */}
+        <g style={{ transformOrigin: '16px 14px', animation: 'stick-arm-hammer 0.5s ease-in-out infinite' }}>
+          <line x1="16" y1="14" x2="24" y2="14" {...strokeProps} />
+          {/* hammer */}
+          <rect x="24" y="11" width="5" height="6" fill={accentColor} stroke={color} strokeWidth="1" rx="1" />
+        </g>
+        {/* legs walking */}
+        <g style={{ transformOrigin: '16px 26px', animation: 'stick-leg-walk-l 0.5s ease-in-out infinite' }}>
+          <line x1="16" y1="26" x2="12" y2="36" {...strokeProps} />
+        </g>
+        <g style={{ transformOrigin: '16px 26px', animation: 'stick-leg-walk-r 0.5s ease-in-out infinite' }}>
+          <line x1="16" y1="26" x2="20" y2="36" {...strokeProps} />
+        </g>
+        {/* sparks from hammer */}
+        <text x="26" y="22" fill="#ff9500" fontSize="6" style={{ animation: 'stick-spark 0.5s ease-in-out infinite' }}>✦</text>
+      </svg>
+    );
+  }
+
+  // idle — standing, waving
+  return (
+    <svg width="32" height="40" viewBox="0 0 32 40">
+      <circle cx="16" cy="8" r="3" {...strokeProps} fill={color} />
+      {/* eyes dots */}
+      <circle cx="15" cy="7" r="0.6" fill={accentColor} />
+      <circle cx="17" cy="7" r="0.6" fill={accentColor} />
+      <line x1="16" y1="11" x2="16" y2="26" {...strokeProps} />
+      {/* left arm down */}
+      <line x1="16" y1="14" x2="12" y2="22" {...strokeProps} />
+      {/* right arm waving */}
+      <g style={{ transformOrigin: '16px 14px', animation: 'stick-arm-wave 2s ease-in-out infinite' }}>
+        <line x1="16" y1="14" x2="22" y2="14" {...strokeProps} />
+      </g>
+      <line x1="16" y1="26" x2="12" y2="36" {...strokeProps} />
+      <line x1="16" y1="26" x2="20" y2="36" {...strokeProps} />
+    </svg>
+  );
+}
+
+function WorkerMascot({ taskStatus, smithStatus, seed, accentColor, theme }: { taskStatus: string; smithStatus: string; seed: number; accentColor: string; theme: MascotTheme }) {
+  if (theme === 'off') return null;
+
+  let pose: MascotPose = 'idle';
+  let animation = 'mascot-idle 3s ease-in-out infinite';
+  let title = 'Ready for work';
+  const color = '#e6edf3';
+
+  if (smithStatus === 'down') {
+    pose = 'sleep';
+    animation = 'mascot-sleep 2.5s ease-in-out infinite';
+    title = 'Smith is down — sleeping';
+  } else if (taskStatus === 'running') {
+    pose = 'work';
+    animation = 'mascot-work 0.6s ease-in-out infinite';
+    title = 'Hard at work!';
+  } else if (taskStatus === 'done') {
+    pose = 'done';
+    // Celebrate 2 times (~2.4s total), then hold the pose quietly
+    animation = 'mascot-celebrate 2.4s ease-in-out forwards';
+    title = 'Task done!';
+  } else if (taskStatus === 'failed') {
+    pose = 'fail';
+    animation = 'mascot-fall 0.8s ease-out forwards';
+    title = 'Task failed';
+  } else if (smithStatus === 'starting') {
+    pose = 'wake';
+    animation = 'mascot-sleep 1.8s ease-in-out infinite';
+    title = 'Waking up...';
+  } else {
+    animation = 'mascot-idle 3s ease-in-out infinite';
+    title = 'Ready for work';
+  }
+
+  let figure: React.ReactNode;
+  if (theme === 'stick') figure = <StickFigure pose={pose} color={color} accentColor={accentColor} />;
+  else if (theme === 'cat') figure = <StickCat pose={pose} color={color} accentColor={accentColor} />;
+  else if (theme === 'dog') figure = <StickDog pose={pose} color={color} accentColor={accentColor} />;
+  else if (theme === 'pig') figure = <StickPig pose={pose} color={color} accentColor={accentColor} />;
+  else figure = <EmojiMascot pose={pose} seed={seed} />;
+
+  return (
+    <div
+      className="absolute pointer-events-none select-none"
+      style={{
+        top: '-36px',
+        right: '-8px',
+        animation,
+        filter: 'drop-shadow(0 2px 3px rgba(0,0,0,0.6))',
+        zIndex: 10,
+        transformOrigin: 'bottom center',
+      }}
+      title={title}
+    >
+      {figure}
+    </div>
+  );
+}
+
 function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
-  const { config, state, colorIdx, previewLines, projectPath, workspaceId, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory, onShowInbox, onOpenTerminal, onSwitchSession, onSaveAsTemplate, inboxPending = 0, inboxFailed = 0 } = data;
+  const { config, state, colorIdx, previewLines, projectPath, workspaceId, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory, onShowInbox, onOpenTerminal, onSwitchSession, onSaveAsTemplate, mascotTheme, inboxPending = 0, inboxFailed = 0 } = data;
   const c = COLORS[colorIdx % COLORS.length];
   const smithStatus = state?.smithStatus || 'down';
   const taskStatus = state?.taskStatus || 'idle';
@@ -2614,10 +3241,15 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
   const step = currentStep !== undefined ? config.steps[currentStep] : undefined;
   const isApprovalPending = taskStatus === 'idle' && smithStatus === 'active';
 
+  // Stable seed for mascot character from agent id
+  const mascotSeed = config.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+
   return (
-    <div className="w-52 flex flex-col rounded-lg select-none"
+    <div className="w-52 flex flex-col rounded-lg select-none relative"
       style={{ border: `1px solid ${c.border}${taskStatus === 'running' ? '90' : '40'}`, background: c.bg,
         boxShadow: taskInfo.glow ? `0 0 12px ${taskInfo.color}25` : smithInfo.glow ? `0 0 8px ${smithInfo.color}15` : 'none' }}>
+      <style>{MASCOT_STYLES}</style>
+      <WorkerMascot taskStatus={taskStatus} smithStatus={smithStatus} seed={mascotSeed} accentColor={c.accent} theme={mascotTheme} />
       <Handle type="target" position={Position.Left} style={{ background: c.accent, width: 8, height: 8, border: 'none' }} />
       <Handle type="source" position={Position.Right} style={{ background: c.accent, width: 8, height: 8, border: 'none' }} />
 
@@ -2774,6 +3406,14 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
   const [memoryTarget, setMemoryTarget] = useState<{ id: string; label: string } | null>(null);
   const [inboxTarget, setInboxTarget] = useState<{ id: string; label: string } | null>(null);
   const [showBusPanel, setShowBusPanel] = useState(false);
+  const [mascotTheme, setMascotTheme] = useState<MascotTheme>(() => {
+    if (typeof window === 'undefined') return 'off';
+    return (localStorage.getItem('forge.mascotTheme') as MascotTheme) || 'off';
+  });
+  const updateMascotTheme = (t: MascotTheme) => {
+    setMascotTheme(t);
+    if (typeof window !== 'undefined') localStorage.setItem('forge.mascotTheme', t);
+  };
   const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; cliCmd?: string; cliType?: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string>; isPrimary?: boolean; skipPermissions?: boolean; persistentSession?: boolean; boundSessionId?: string; initialPos?: { x: number; y: number } }[]>([]);
   const [termPicker, setTermPicker] = useState<{ agent: AgentConfig; sessName: string; workDir?: string; supportsSession?: boolean; currentSessionId: string | null; initialPos?: { x: number; y: number } } | null>(null);
 
@@ -2861,6 +3501,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
             },
             onPause: () => wsApi(workspaceId!, 'pause', { agentId: agent.id }),
             onStop: () => wsApi(workspaceId!, 'stop', { agentId: agent.id }),
+            mascotTheme,
             onMarkIdle: () => wsApi(workspaceId!, 'mark_done', { agentId: agent.id, notify: false }),
             onMarkDone: (notify: boolean) => wsApi(workspaceId!, 'mark_done', { agentId: agent.id, notify }),
             onMarkFailed: (notify: boolean) => wsApi(workspaceId!, 'mark_failed', { agentId: agent.id, notify }),
@@ -2928,7 +3569,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
         };
       });
     });
-  }, [agents, states, logPreview, workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [agents, states, logPreview, workspaceId, mascotTheme]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Derive edges from dependsOn
   const rfEdges = useMemo(() => {
@@ -3100,6 +3741,16 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           </>
         )}
         <div className="ml-auto flex items-center gap-2">
+          <select value={mascotTheme} onChange={e => updateMascotTheme(e.target.value as MascotTheme)}
+            className="text-[8px] px-1.5 py-0.5 rounded border border-[#30363d] bg-[#0d1117] text-gray-500 hover:text-white hover:border-[#58a6ff]/60 cursor-pointer focus:outline-none"
+            title="Mascot theme">
+            <option value="stick">🏃 Stick</option>
+            <option value="cat">🐱 Cat</option>
+            <option value="dog">🐶 Dog</option>
+            <option value="pig">🐷 Pig</option>
+            <option value="emoji">🎭 Emoji</option>
+            <option value="off">⊘ Off</option>
+          </select>
           <button onClick={() => setShowBusPanel(true)}
             className={`text-[8px] px-2 py-0.5 rounded border border-[#30363d] hover:border-[#58a6ff]/60 ${busLog.length > 0 ? 'text-[#58a6ff]' : 'text-gray-500'}`}>
             📡 Logs{busLog.length > 0 ? ` (${busLog.length})` : ''}

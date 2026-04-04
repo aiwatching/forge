@@ -2615,8 +2615,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       const tmpFile = `/tmp/forge-inject-${Date.now()}.txt`;
       writeFileSync(tmpFile, text);
       execSync(`tmux load-buffer ${tmpFile}`, { timeout: 5000 });
-      execSync(`tmux paste-buffer -t "${tmuxSession}"`, { timeout: 5000 });
-      execSync(`tmux send-keys -t "${tmuxSession}" Enter`, { timeout: 5000 });
+      execSync(`tmux paste-buffer -t "${tmuxSession}" && sleep 0.2 && tmux send-keys -t "${tmuxSession}" Enter`, { timeout: 5000 });
       try { unlinkSync(tmpFile); } catch {}
       return true;
     } catch (err: any) {

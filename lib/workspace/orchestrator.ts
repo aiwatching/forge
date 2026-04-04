@@ -41,6 +41,30 @@ import {
 } from './smith-memory';
 import { getFixedSession } from '../project-sessions';
 
+// ─── Workspace Topology Cache ────────────────────────────
+
+export interface TopoAgent {
+  id: string;
+  label: string;
+  icon: string;
+  role: string;          // full role text
+  roleSummary: string;   // first line, ≤150 chars
+  primary: boolean;
+  dependsOn: string[];   // agent labels (not IDs)
+  dependsOnIds: string[];
+  workDir: string;
+  outputs: string[];
+  steps: string[];       // step labels
+  smithStatus: string;
+  taskStatus: string;
+}
+
+export interface WorkspaceTopo {
+  agents: TopoAgent[];
+  flow: string;          // "Lead → Engineer → QA → Reviewer"
+  updatedAt: number;
+}
+
 // ─── Orchestrator Events ─────────────────────────────────
 
 export type OrchestratorEvent =
@@ -70,6 +94,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
   private settingsValidCache = new Map<string, number>(); // filePath → mtime (validated ok)
   private agentRunningMsg = new Map<string, string>(); // agentId → messageId currently being processed
   private reconcileTick = 0; // counts health check ticks for 60s reconcile
+  private _topoCache: WorkspaceTopo | null = null; // cached workspace topology
 
   /** Emit a log event (auto-persisted via constructor listener) */
   emitLog(agentId: string, entry: any): void {
@@ -156,14 +181,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
         return `Work directory conflict: "${config.label}" (${newDir}/) overlaps with "${entry.config.label}" (${existingDir}/). Nested directories not allowed.`;
       }
 
-      // Check output path overlap
-      for (const out of config.outputs) {
-        for (const existing of entry.config.outputs) {
-          if (normalize(out) === normalize(existing)) {
-            return `Output conflict: "${config.label}" and "${entry.config.label}" both output to "${out}"`;
-          }
-        }
-      }
+      // Output path overlap is allowed — multiple agents can write to the same
+      // output directory (e.g., Engineer and UI Designer both output to src/).
+      // Work directory uniqueness already prevents file-level conflicts.
     }
     return null;
   }
@@ -973,6 +993,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
         console.log(`[daemon] ${entry.config.label}: skipped message loop (smith=${entry.state.smithStatus})`);
       }
     }
+
+    // Build workspace topology cache (all smiths can query via MCP get_agents)
+    this.rebuildTopo();
 
     // Start watch loops for agents with watch config
     this.watchManager.start();
@@ -1889,6 +1912,56 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
   // ─── Private ───────────────────────────────────────────
 
+  /** Rebuild workspace topology cache — called on agent changes and daemon start */
+  private rebuildTopo(): void {
+    // Topological sort
+    const sorted: WorkspaceAgentConfig[] = [];
+    const visited = new Set<string>();
+    const entries = Array.from(this.agents.values()).filter(e => e.config.type !== 'input');
+    const configMap = new Map(entries.map(e => [e.config.id, e.config]));
+
+    const visit = (id: string) => {
+      if (visited.has(id)) return;
+      visited.add(id);
+      const c = configMap.get(id);
+      if (!c) return;
+      for (const dep of c.dependsOn) visit(dep);
+      sorted.push(c);
+    };
+    for (const e of entries) visit(e.config.id);
+
+    const agents: TopoAgent[] = sorted.map(c => {
+      const state = this.agents.get(c.id)?.state;
+      return {
+        id: c.id,
+        label: c.label,
+        icon: c.icon,
+        role: c.role || '',
+        roleSummary: (c.role || '').split('\n')[0].slice(0, 150),
+        primary: !!c.primary,
+        dependsOn: c.dependsOn.map(d => this.agents.get(d)?.config.label || d),
+        dependsOnIds: [...c.dependsOn],
+        workDir: c.workDir || './',
+        outputs: c.outputs || [],
+        steps: (c.steps || []).map(s => s.label),
+        smithStatus: state?.smithStatus || 'down',
+        taskStatus: state?.taskStatus || 'idle',
+      };
+    });
+
+    this._topoCache = {
+      agents,
+      flow: sorted.map(c => c.label).join(' → '),
+      updatedAt: Date.now(),
+    };
+  }
+
+  /** Get cached workspace topology (always fresh — rebuilt on every agent change) */
+  getWorkspaceTopo(): WorkspaceTopo {
+    if (!this._topoCache) this.rebuildTopo();
+    return this._topoCache!;
+  }
+
   /** Sync agent role description into CLAUDE.md so CLI agents read it natively */
   private syncRoleToClaudeMd(config: WorkspaceAgentConfig): void {
     if (!config.role?.trim()) return;
@@ -1938,6 +2011,11 @@ export class WorkspaceOrchestrator extends EventEmitter {
       let content = '';
       if (existsSync(claudeMdPath)) {
         content = readFileSync(claudeMdPath, 'utf-8');
+        // Clean up stale topo blocks from previous versions (topo now lives in memory cache)
+        const topoRegex = /<!-- forge:workspace-topo -->[\s\S]*?<!-- \/forge:workspace-topo -->\n?/;
+        if (topoRegex.test(content)) {
+          content = content.replace(topoRegex, '').trimEnd() + '\n';
+        }
         // Replace existing forge block
         const regex = new RegExp(`${MARKER_START}[\\s\\S]*?${MARKER_END}`);
         if (regex.test(content)) {
@@ -1978,11 +2056,39 @@ export class WorkspaceOrchestrator extends EventEmitter {
     }
   }
 
+  /** Build a compact topo summary injected into every agent task */
+  private buildTopoSummary(selfId: string): string {
+    const topo = this.getWorkspaceTopo();
+    if (topo.agents.length === 0) return '';
+
+    const lines: string[] = ['## Workspace Team'];
+    lines.push(`Flow: ${topo.flow}`);
+
+    // Missing roles hint
+    const labels = new Set(topo.agents.map(a => a.label.toLowerCase()));
+    const standard = ['architect', 'engineer', 'qa', 'reviewer', 'pm', 'lead'];
+    const missing = standard.filter(r => !labels.has(r));
+    if (missing.length > 0) lines.push(`Missing: ${missing.join(', ')}`);
+
+    for (const a of topo.agents) {
+      const me = a.id === selfId ? ' ← you' : '';
+      const status = `${a.smithStatus}/${a.taskStatus}`;
+      lines.push(`- ${a.icon} ${a.label}${me} [${status}]: ${a.roleSummary}`);
+    }
+    return lines.join('\n');
+  }
+
   /** Build context string from upstream agents' outputs */
   private buildUpstreamContext(config: WorkspaceAgentConfig): string | undefined {
-    if (config.dependsOn.length === 0) return undefined;
+    // Always prepend workspace team summary so every agent knows who's who
+    const topoSummary = this.buildTopoSummary(config.id);
+
+    if (config.dependsOn.length === 0) {
+      return topoSummary || undefined;
+    }
 
     const sections: string[] = [];
+    if (topoSummary) sections.push(topoSummary);
 
     for (const depId of config.dependsOn) {
       const dep = this.agents.get(depId);
@@ -3172,6 +3278,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
   /** Emit agents_changed so SSE pushes the updated list to frontend */
   private emitAgentsChanged(): void {
+    // Refresh topology cache so MCP queries always return current state
+    this.rebuildTopo();
     const agents = Array.from(this.agents.values()).map(e => e.config);
     const agentStates = this.getAllAgentStates();
     this.emit('event', { type: 'agents_changed', agents, agentStates } satisfies WorkerEvent);

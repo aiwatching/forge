@@ -158,7 +158,7 @@ function createForgeMcpServer(sessionId: string): McpServer {
   // ── get_status ────────────────────────────
   server.tool(
     'get_status',
-    'Get status of all agents in the workspace',
+    'Get live status of all agents in the workspace (from topology cache)',
     {},
     async () => {
       const { workspaceId } = ctx();
@@ -166,18 +166,15 @@ function createForgeMcpServer(sessionId: string): McpServer {
 
       try {
         const orch = getOrch(workspaceId);
-        const snapshot = orch.getSnapshot();
-        const states = orch.getAllAgentStates();
+        const topo = orch.getWorkspaceTopo();
 
-        const lines = snapshot.agents
-          .filter((a: any) => a.type !== 'input')
-          .map((a: any) => {
-            const s = states[a.id];
-            const smith = s?.smithStatus || 'down';
-            const task = s?.taskStatus || 'idle';
-            const icon = smith === 'active' ? (task === 'running' ? '🔵' : task === 'done' ? '✅' : task === 'failed' ? '🔴' : '🟢') : '⬚';
-            return `${icon} ${a.label}: smith=${smith} task=${task}${s?.error ? ` error=${s.error}` : ''}`;
-          });
+        const lines = topo.agents.map((a: any) => {
+          const icon = a.smithStatus === 'active'
+            ? (a.taskStatus === 'running' ? '🔵' : a.taskStatus === 'done' ? '✅' : a.taskStatus === 'failed' ? '🔴' : '🟢')
+            : '⬚';
+          return `${icon} ${a.label}: smith=${a.smithStatus} task=${a.taskStatus}`;
+        });
+        lines.unshift(`Flow: ${topo.flow}\n`);
 
         return { content: [{ type: 'text', text: lines.join('\n') || 'No agents configured.' }] };
       } catch (err: any) {
@@ -189,7 +186,7 @@ function createForgeMcpServer(sessionId: string): McpServer {
   // ── get_agents ────────────────────────────
   server.tool(
     'get_agents',
-    'Get all agents in the workspace with their roles and relationships. Use this to understand who does what before sending messages.',
+    'Get workspace topology — all agents, their roles, relationships, current status, and execution flow. Cached and auto-refreshed on any agent change. Call this to understand the full team composition before planning work.',
     {},
     async () => {
       const { workspaceId, agentId } = ctx();
@@ -197,24 +194,35 @@ function createForgeMcpServer(sessionId: string): McpServer {
 
       try {
         const orch = getOrch(workspaceId);
-        const snapshot = orch.getSnapshot();
+        const topo = orch.getWorkspaceTopo();
 
-        const agents = snapshot.agents
-          .filter((a: any) => a.type !== 'input')
-          .map((a: any) => {
-            const deps = a.dependsOn
-              .map((depId: string) => snapshot.agents.find((d: any) => d.id === depId)?.label || depId)
-              .join(', ');
-            const isMe = a.id === agentId;
-            return [
-              `${a.icon} ${a.label}${isMe ? ' (you)' : ''}${a.primary ? ' [PRIMARY]' : ''}`,
-              `  Role: ${a.role || '(no role defined)'}`,
-              deps ? `  Depends on: ${deps}` : null,
-              a.workDir && a.workDir !== './' ? `  Work dir: ${a.workDir}` : null,
-            ].filter(Boolean).join('\n');
-          });
+        const lines: string[] = [];
+        lines.push(`## Workspace Topology (${topo.agents.length} agents)`);
+        lines.push(`Flow: ${topo.flow}\n`);
 
-        return { content: [{ type: 'text', text: agents.join('\n\n') || 'No agents configured.' }] };
+        // Identify present and missing standard roles
+        const labels = new Set(topo.agents.map((a: any) => a.label.toLowerCase()));
+        const standardRoles = ['architect', 'engineer', 'qa', 'reviewer', 'pm', 'lead'];
+        const present = standardRoles.filter(r => labels.has(r));
+        const missing = standardRoles.filter(r => !labels.has(r));
+        if (missing.length > 0) {
+          lines.push(`Present roles: ${present.join(', ') || 'none'}`);
+          lines.push(`Missing roles: ${missing.join(', ')} — these responsibilities must be covered by existing agents\n`);
+        }
+
+        for (const a of topo.agents as any[]) {
+          const isMe = a.id === agentId;
+          lines.push(`### ${a.icon} ${a.label}${isMe ? ' ← YOU' : ''}${a.primary ? ' [PRIMARY]' : ''}`);
+          lines.push(`Status: smith=${a.smithStatus} task=${a.taskStatus}`);
+          lines.push(`Role: ${a.roleSummary}`);
+          if (a.dependsOn.length > 0) lines.push(`Depends on: ${a.dependsOn.join(', ')}`);
+          if (a.workDir !== './') lines.push(`Work dir: ${a.workDir}`);
+          if (a.outputs.length > 0) lines.push(`Outputs: ${a.outputs.join(', ')}`);
+          if (a.steps.length > 0) lines.push(`Steps: ${a.steps.join(' → ')}`);
+          lines.push('');
+        }
+
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
       } catch (err: any) {
         return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
       }

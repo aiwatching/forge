@@ -32,7 +32,7 @@ interface AgentConfig {
 }
 
 interface AgentState {
-  smithStatus: 'down' | 'active';
+  smithStatus: 'down' | 'starting' | 'active';
   taskStatus: 'idle' | 'running' | 'done' | 'failed';
   currentStep?: number;
   tmuxSession?: string;
@@ -69,98 +69,80 @@ const TASK_STATUS: Record<string, { label: string; color: string; glow?: boolean
 
 const PRESET_AGENTS: Omit<AgentConfig, 'id'>[] = [
   {
-    label: 'PM', icon: '🎯', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['docs/prd.md'],
-    role: `Product Manager — You own the requirements. Your job is to deeply understand the project context, analyze user needs, and produce a clear, actionable PRD.
+    label: 'PM', icon: '📋', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['docs/prd/'],
+    role: `Product Manager. Context auto-includes Workspace Team.
 
-Rules:
-- NEVER write code or implementation details
-- Focus on WHAT and WHY, not HOW
-- Be specific: include user stories, acceptance criteria, edge cases, and priorities (P0/P1/P2)
-- Reference existing codebase structure when relevant
-- If requirements are unclear, list assumptions explicitly
-- PRD format: Summary → Goals → User Stories → Acceptance Criteria → Out of Scope → Open Questions`,
+SOP: Read upstream input → list docs/prd/ for version history → identify NEW vs covered → create NEW versioned PRD (never overwrite).
+
+PRD structure: version + date, summary, goals, user stories with testable acceptance_criteria, constraints, out of scope, open questions.
+
+Version: patch (v1.0.1) = clarification, minor (v1.1) = new feature, major (v2.0) = scope overhaul.
+
+Handoff: Do NOT create request docs or write code. Architect/Lead reads docs/prd/ downstream.`,
     steps: [
-      { id: 'research', label: 'Research', prompt: 'Read the project README, existing docs, and codebase structure. Understand the current state, tech stack, and conventions. List what you found.' },
-      { id: 'analyze', label: 'Analyze Requirements', prompt: 'Based on the input requirements and your research, identify all user stories. For each story, define acceptance criteria. Classify priority as P0 (must have), P1 (should have), P2 (nice to have). List any assumptions and open questions.' },
-      { id: 'write-prd', label: 'Write PRD', prompt: 'Write a comprehensive PRD to docs/prd.md. Include: Executive Summary, Goals & Non-Goals, User Stories with Acceptance Criteria, Technical Constraints, Dependencies, Out of Scope, Open Questions. Be specific enough that an engineer can implement without asking questions.' },
-      { id: 'self-review', label: 'Self-Review', prompt: 'Review your PRD critically. Check: Are acceptance criteria testable? Are edge cases covered? Is scope clear? Are priorities justified? Revise if needed.' },
+      { id: 'analyze', label: 'Analyze Requirements', prompt: 'Read Workspace Team. Read upstream input. List docs/prd/ for version history. Identify NEW vs already covered requirements. Decide version number.' },
+      { id: 'write-prd', label: 'Write PRD', prompt: 'Create NEW versioned file in docs/prd/. Include testable acceptance criteria for every user story. Never overwrite existing PRD files.' },
+      { id: 'self-review', label: 'Self-Review', prompt: 'Checklist: criteria testable by QA? Edge cases? Scope clear for Engineer? No duplication? Fix issues.' },
     ],
   },
   {
-    label: 'Engineer', icon: '🔨', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['src/', 'docs/architecture.md'],
-    role: `Senior Software Engineer — You design and implement features based on the PRD. You write production-quality code.
+    label: 'Engineer', icon: '🔨', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['src/', 'docs/architecture/'],
+    role: `Senior Software Engineer. Context auto-includes Workspace Team.
 
-Rules:
-- Read the PRD thoroughly before writing any code
-- Design before implement: write architecture doc first
-- Follow existing codebase conventions (naming, structure, patterns)
-- Write clean, maintainable code with proper error handling
-- Add inline comments only where logic isn't self-evident
-- Run tests after implementation to catch obvious issues
-- Commit atomically: one logical change per step
-- If the PRD is unclear, make a reasonable decision and document it`,
+SOP: Find Work → list_requests(status: "open") → claim_request → get_request for details.
+SOP: Implement → read acceptance_criteria → design (docs/architecture/) → code (src/) → self-test.
+SOP: Report → update_response(section: "engineer", data: {files_changed, notes}) → auto-notifies QA/Reviewer.
+
+IF claim fails (already taken) → pick next open request.
+IF blocked by unclear requirement → send_message to upstream (Architect/PM/Lead) with specific question.
+IF no open requests → check inbox for direct assignments.
+
+Rules: always claim before starting, always update_response when done, follow existing conventions, architecture docs versioned (never overwrite).`,
     steps: [
-      { id: 'design', label: 'Architecture', prompt: 'Read the PRD in docs/prd.md. Analyze the existing codebase structure and patterns. Design the architecture: what files to create/modify, data flow, interfaces, error handling strategy. Write docs/architecture.md with diagrams (ASCII or markdown) where helpful.' },
-      { id: 'implement', label: 'Implement', prompt: 'Implement the features based on your architecture doc. Follow existing code conventions. Handle errors properly. Add types/interfaces. Keep functions focused and testable. Create/modify files as planned.' },
-      { id: 'self-test', label: 'Self-Test', prompt: 'Review your implementation: check for bugs, missing error handling, edge cases, and convention violations. Run any existing tests. Fix issues you find. Do a final git diff review.' },
+      { id: 'claim', label: 'Find & Claim', prompt: 'Read Workspace Team. Check inbox. list_requests(status: "open"). claim_request on highest priority. If none, check inbox.' },
+      { id: 'design', label: 'Design', prompt: 'get_request for details. Read acceptance_criteria. Read existing code + docs/architecture/. Create new architecture doc if significant change.' },
+      { id: 'implement', label: 'Implement', prompt: 'Implement per design. Follow conventions. Track files changed. Run existing tests. Verify against each acceptance_criterion.' },
+      { id: 'report', label: 'Report Done', prompt: 'update_response(section: "engineer") with files_changed and notes. If blocked, send_message upstream.' },
     ],
   },
   {
-    label: 'QA', icon: '🧪', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['tests/', 'docs/test-report.md'],
+    label: 'QA', icon: '🧪', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['tests/', 'docs/qa/'],
     plugins: ['playwright', 'shell-command'],
-    role: `QA Engineer — You ensure quality through comprehensive testing. You find bugs, you don't fix them.
+    role: `QA Engineer. Context auto-includes Workspace Team.
 
-Rules:
-- NEVER fix bugs yourself — only report them clearly
-- Test against PRD acceptance criteria, not assumptions
-- Write both happy path and edge case tests
-- Include integration tests, not just unit tests
-- Run ALL tests (existing + new) and report results
-- Report format: what failed, expected vs actual, steps to reproduce
-- Check for security issues: injection, auth bypass, data leaks
-- Check for performance: N+1 queries, unbounded loops, memory leaks
+SOP: Find Work → list_requests(status: "qa") → get_request → read acceptance_criteria + engineer's files_changed.
+SOP: Test → map each criterion to test cases → write Playwright tests in tests/e2e/ → run via run_plugin or npx playwright.
+SOP: Report → update_response(section: "qa", data: {result, test_files, findings}).
 
-Test setup (do this automatically if not already present):
-- If no playwright.config.ts exists, create one based on the project's framework and structure
-- If no tests/e2e/ directory exists, create it
-- Detect the app's dev server command and base URL from package.json or project config
-- Ensure the dev server is running before testing (start it if needed)
+IF result=passed → auto-advances, no message needed.
+IF result=failed → classify: CRITICAL/MAJOR → ONE send_message to Engineer. MINOR → report only, no message.
 
-How to run Playwright tests:
-- Run tests: npx playwright test tests/e2e/ --reporter=line
-- Run headed (visible browser): npx playwright test tests/e2e/ --headed --reporter=line
-- Screenshot: npx playwright screenshot http://localhost:3000 /tmp/screenshot.png
-- Check URL: curl -sf -o /dev/null -w '%{http_code}' http://localhost:3000
-- Run project tests: npm test
-
-If Forge MCP tools are available (run_plugin, send_message), prefer those.
-Otherwise use bash commands directly — you have full terminal access.`,
+Rules: never fix bugs (report only), each test traces to acceptance_criterion, max 1 consolidated message, no messages during planning/writing steps.`,
     steps: [
-      { id: 'setup', label: 'Setup', prompt: 'Check the project structure. If playwright.config.ts does not exist, create one with testDir: "./tests/e2e" and baseURL from the project config. Create tests/e2e/ directory if missing. Check if the dev server is running (use check_url), start it if not.' },
-      { id: 'plan', label: 'Test Plan', prompt: 'Read the source code and any PRD/docs. Understand what pages and features exist. Create a test plan in docs/test-plan.md covering: E2E user flows, edge cases, error states, responsive behavior. Map each test to a feature.' },
-      { id: 'write-tests', label: 'Write Tests', prompt: 'Write Playwright test scripts in tests/e2e/. Cover all features from the test plan. Use page.goto(), locators, assertions. Test both happy path and error states. Use descriptive test names.' },
-      { id: 'run-tests', label: 'Run & Report', prompt: 'Run tests via run_plugin with Playwright. If tests fail, read the error output carefully. Fix test scripts if the test itself is wrong, but report to Engineer if the app has a bug. Write docs/test-report.md with results. Send bug reports to Engineer via send_message.' },
+      { id: 'find-work', label: 'Find Work', prompt: 'Read Workspace Team. Check inbox. list_requests(status: "qa"). get_request for acceptance_criteria and engineer notes.' },
+      { id: 'plan', label: 'Test Plan', prompt: 'Map each criterion to test cases (happy path + edge + error). Write docs/qa/test-plan. Skip already-tested unchanged features.' },
+      { id: 'write-tests', label: 'Write Tests', prompt: 'Write Playwright tests in tests/e2e/. Create config if missing. No messages in this step.' },
+      { id: 'execute', label: 'Execute & Report', prompt: 'Run tests. Record pass/fail per criterion. update_response(section: qa). If critical/major failures: ONE send_message to Engineer.' },
     ],
   },
   {
-    label: 'Reviewer', icon: '👁', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['docs/review.md'],
-    role: `Senior Code Reviewer — You review code for quality, security, maintainability, and correctness. You are the last gate before merge.
+    label: 'Reviewer', icon: '🔍', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['docs/review/'],
+    role: `Code Reviewer. Context auto-includes Workspace Team.
 
-Rules:
-- NEVER modify code — only review and report
-- Check against PRD requirements: is everything implemented?
-- Review architecture decisions: are they sound?
-- Check code quality: readability, naming, DRY, error handling
-- Check security: OWASP top 10, input validation, auth, secrets exposure
-- Check performance: complexity, queries, caching, memory usage
-- Check test coverage: are critical paths tested?
-- Rate severity: CRITICAL (must fix) / MAJOR (should fix) / MINOR (nice to fix)
-- Give actionable feedback: not just "this is bad" but "change X to Y because Z"`,
+SOP: Find Work → list_requests(status: "review") → get_request → read request + engineer response + QA results.
+SOP: Review each file in files_changed → check: criteria met? code quality? security (OWASP)? performance? → classify CRITICAL/MAJOR/MINOR.
+SOP: Verdict → approved (all good) / changes_requested (issues) / rejected (security/data).
+SOP: Report → update_response(section: "review", data: {result, findings}) → write docs/review/.
+
+IF approved → auto-advances to done, no message.
+IF changes_requested → ONE send_message to Engineer with top issues.
+IF rejected → send_message to Engineer AND Lead.
+
+Rules: never modify code, review only files_changed (not entire codebase), actionable feedback ("change X to Y because Z"), MINOR findings in report only.`,
     steps: [
-      { id: 'review-arch', label: 'Architecture Review', prompt: 'Read docs/prd.md and docs/architecture.md. Evaluate: Does the architecture satisfy all PRD requirements? Are there design flaws, scalability issues, or over-engineering? Document findings.' },
-      { id: 'review-code', label: 'Code Review', prompt: 'Review all changed/new files. For each file check: correctness, error handling, security (injection, auth, secrets), performance (N+1, unbounded), naming conventions, code duplication, edge cases. Use git diff to see exact changes.' },
-      { id: 'review-tests', label: 'Test Review', prompt: 'Review docs/test-report.md and test code. Check: Are all PRD acceptance criteria covered by tests? Are tests meaningful (not just asserting true)? Are edge cases tested? Any flaky test risks?' },
-      { id: 'report', label: 'Final Report', prompt: 'Write docs/review.md: Summary verdict (APPROVE / REQUEST_CHANGES / REJECT). List all findings grouped by severity (CRITICAL → MAJOR → MINOR). For each: file, line, issue, suggested fix. End with an overall assessment and recommendation.' },
+      { id: 'find-work', label: 'Find Work', prompt: 'Read Workspace Team. Check inbox. list_requests(status: "review"). get_request for full context.' },
+      { id: 'review', label: 'Code Review', prompt: 'Review each file in files_changed: criteria met? quality? security? performance? Classify CRITICAL/MAJOR/MINOR.' },
+      { id: 'report', label: 'Verdict & Report', prompt: 'Decide verdict. update_response(section: review). Write docs/review/. If changes_requested/rejected: ONE message to Engineer (+ Lead if rejected).' },
     ],
   },
   {
@@ -193,6 +175,26 @@ If reference designs or mockups exist in the project (e.g., docs/designs/), stud
       { id: 'audit', label: 'UI Audit', prompt: 'Analyze the existing UI: framework used (React/Vue/etc), component library, design tokens (colors, spacing, fonts), layout patterns. Take screenshots of existing pages to understand the current look and feel. Document the current design system.' },
       { id: 'implement', label: 'Implement UI', prompt: 'Based on the PRD, implement the UI. Write real component code. Start the dev server, take screenshots of your work, and iterate until the visual quality is high. Aim for at least 3 review cycles — screenshot, evaluate, improve.' },
       { id: 'polish', label: 'Polish & Document', prompt: 'Final polish pass: check all states (loading, empty, error, hover, disabled), responsive breakpoints, dark/light mode. Take final screenshots. Write docs/ui-spec.md documenting: component hierarchy, design decisions, interaction patterns, and accessibility notes.' },
+    ],
+  },
+  {
+    label: 'Lead', icon: '👑', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['docs/lead/'],
+    primary: true, persistentSession: true, plugins: ['playwright', 'shell-command'],
+    role: `Lead — primary coordinator. Context auto-includes Workspace Team (all agents, roles, status, missing roles).
+
+SOP: Intake → HAS Architect? delegate via create_request : break down yourself → HAS Engineer? create_request(open) : implement in src/ → HAS QA? auto-notified : test yourself → HAS Reviewer? auto-notified : review yourself.
+
+SOP: Monitor → get_status + list_requests → stuck/failed agents: send_message or take over → unclaimed requests: nudge Engineers.
+
+SOP: Quality Gate → ALL requests done + review=approved + qa=passed → write docs/lead/delivery-summary.md.
+
+Gap coverage: missing PM → you break requirements; missing Engineer → you code; missing QA → you test; missing Reviewer → you review. Every delegation uses create_request with acceptance_criteria.`,
+    steps: [
+      { id: 'intake', label: 'Intake & Analyze', prompt: 'Read Workspace Team in context. Identify present/missing roles and incoming requirements. Classify scope and plan delegation vs self-handling.' },
+      { id: 'delegate', label: 'Create Requests & Route', prompt: 'create_request for each task with acceptance_criteria. Route to Architect/Engineer or note for self-implementation. Verify with list_requests.' },
+      { id: 'cover-gaps', label: 'Cover Missing Roles', prompt: 'Implement/test/review for any missing role. update_response for each section you cover.' },
+      { id: 'monitor', label: 'Monitor & Unblock', prompt: 'get_status + list_requests. Unblock stuck agents via send_message or take over their work.' },
+      { id: 'gate', label: 'Quality Gate & Summary', prompt: 'Verify all requests done/approved/passed. Write docs/lead/delivery-summary.md.' },
     ],
   },
   {
@@ -634,6 +636,10 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
       }));
       setAvailableAgents(list);
     }).catch(() => {});
+    // Fetch saved smith templates
+    fetch('/api/smith-templates').then(r => r.json()).then(data => {
+      setSavedTemplates(data.templates || []);
+    }).catch(() => {});
     // Fetch both: plugin definitions + installed instances
     Promise.all([
       fetch('/api/plugins').then(r => r.json()),
@@ -667,6 +673,7 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
   const [watchSendTo, setWatchSendTo] = useState(initial.watch?.sendTo || '');
   const [selectedPlugins, setSelectedPlugins] = useState<string[]>(initial.plugins || []);
   const [recommendedTypes, setRecommendedTypes] = useState<string[]>([]);
+  const [savedTemplates, setSavedTemplates] = useState<{ id: string; name: string; icon: string; description?: string; config: any }[]>([]);
   const [watchDebounce, setWatchDebounce] = useState(String(initial.watch?.targets?.[0]?.debounce ?? 10));
   const [watchTargets, setWatchTargets] = useState<{ type: string; path?: string; cmd?: string; pattern?: string }[]>(
     initial.watch?.targets || []
@@ -702,7 +709,53 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
     setOutputs(p.outputs.join(', '));
     setStepsText(p.steps.map(s => `${s.label}: ${s.prompt}`).join('\n'));
     setRecommendedTypes(p.plugins || []);
-    setSelectedPlugins([]);
+    setSelectedPlugins(p.plugins || []);
+    if (p.persistentSession !== undefined) setPersistentSession(!!p.persistentSession);
+    if (p.skipPermissions !== undefined) setSkipPermissions(p.skipPermissions !== false);
+    if (p.requiresApproval !== undefined) setRequiresApproval(!!p.requiresApproval);
+    if (p.model) setAgentModel(p.model);
+    if (p.watch) {
+      setWatchEnabled(!!p.watch.enabled);
+      setWatchInterval(String(p.watch.interval || 60));
+      setWatchAction(p.watch.action || 'log');
+      setWatchPrompt(p.watch.prompt || '');
+      setWatchSendTo(p.watch.sendTo || '');
+      setWatchTargets(p.watch.targets || []);
+      setWatchDebounce(String(p.watch.targets?.[0]?.debounce ?? 10));
+    }
+  };
+
+  const applySavedTemplate = (t: { config: any }) => {
+    const c = t.config;
+    applyPreset({
+      label: c.label || '', icon: c.icon || '🤖', role: c.role || '',
+      backend: c.backend || 'cli', agentId: c.agentId, dependsOn: [],
+      workDir: c.workDir || './', outputs: c.outputs || [],
+      steps: c.steps || [], plugins: c.plugins,
+      persistentSession: c.persistentSession, skipPermissions: c.skipPermissions,
+      requiresApproval: c.requiresApproval, model: c.model,
+      watch: c.watch,
+    } as any);
+  };
+
+  const handleImportFile = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        // Support both raw config and template wrapper
+        const config = data.config || data;
+        applySavedTemplate({ config });
+      } catch {
+        alert('Invalid template file');
+      }
+    };
+    input.click();
   };
 
   const toggleDep = (id: string) => {
@@ -731,10 +784,10 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
         </div>
 
         <div className="flex flex-col gap-2.5">
-          {/* Preset quick-select (add mode only) */}
+          {/* Preset + saved templates (add mode only) */}
           {mode === 'add' && (
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] text-gray-500 uppercase">Template</label>
+              <label className="text-[9px] text-gray-500 uppercase">Presets</label>
               <div className="flex gap-1 flex-wrap">
                 {PRESET_AGENTS.map((p, i) => (
                   <button key={i} onClick={() => applyPreset(p)}
@@ -747,6 +800,22 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
                   Custom
                 </button>
               </div>
+              {savedTemplates.length > 0 && (<>
+                <label className="text-[9px] text-gray-500 uppercase mt-1">Saved Templates</label>
+                <div className="flex gap-1 flex-wrap">
+                  {savedTemplates.map(t => (
+                    <button key={t.id} onClick={() => applySavedTemplate(t)}
+                      className={`text-[9px] px-2 py-1 rounded border transition-colors ${label === t.config?.label ? 'border-[#f0883e] text-[#f0883e] bg-[#f0883e]/10' : 'border-[#30363d] text-gray-400 hover:text-white'}`}
+                      title={t.description || t.name}>
+                      {t.icon} {t.name}
+                    </button>
+                  ))}
+                </div>
+              </>)}
+              <button onClick={handleImportFile}
+                className="text-[9px] px-2 py-1 rounded border border-dashed border-[#30363d] text-gray-500 hover:text-white hover:border-gray-400 self-start mt-0.5">
+                📂 Import from file
+              </button>
             </div>
           )}
 
@@ -1176,6 +1245,26 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
         </div>
 
         <div className="flex justify-end gap-2 mt-4">
+          {mode === 'edit' && (
+            <button onClick={() => {
+              const config = {
+                label: label.trim(), icon: icon.trim() || '🤖', role: role.trim(),
+                backend, agentId, workDir: workDirVal.trim() || './',
+                outputs: outputs.split(',').map(s => s.trim()).filter(Boolean),
+                steps: parseSteps(), plugins: selectedPlugins.length > 0 ? selectedPlugins : undefined,
+                persistentSession: persistentSession || undefined, skipPermissions: persistentSession ? (skipPermissions ? undefined : false) : undefined,
+                model: agentModel || undefined, requiresApproval: requiresApproval || undefined,
+                watch: watchEnabled && watchTargets.length > 0 ? { enabled: true, interval: Math.max(10, parseInt(watchInterval) || 60), targets: watchTargets.map(t => ({ ...t, debounce: parseInt(watchDebounce) || 10 })), action: watchAction, prompt: watchPrompt || undefined, sendTo: watchSendTo || undefined } : undefined,
+              };
+              const blob = new Blob([JSON.stringify({ config, name: label.trim(), icon: icon.trim() || '🤖', exportedAt: Date.now() }, null, 2)], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url; a.download = `smith-${label.trim().toLowerCase().replace(/\s+/g, '-')}.json`; a.click();
+              URL.revokeObjectURL(url);
+            }} className="text-xs px-3 py-1.5 rounded border border-[#30363d] text-gray-400 hover:text-white mr-auto" title="Export config as file">
+              📤 Export
+            </button>
+          )}
           <button onClick={onCancel} className="text-xs px-3 py-1.5 rounded border border-[#30363d] text-gray-400 hover:text-white">Cancel</button>
           <button disabled={!label.trim()} onClick={() => {
             onConfirm({
@@ -2501,6 +2590,7 @@ interface AgentNodeData {
   onShowInbox: () => void;
   onOpenTerminal: () => void;
   onSwitchSession: () => void;
+  onSaveAsTemplate: () => void;
   onMarkIdle?: () => void;
   onMarkDone?: (notify: boolean) => void;
   onMarkFailed?: (notify: boolean) => void;
@@ -2513,7 +2603,7 @@ interface AgentNodeData {
 // and createPortal causes event routing issues. Using FloatingTerminal instead.
 
 function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
-  const { config, state, colorIdx, previewLines, projectPath, workspaceId, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory, onShowInbox, onOpenTerminal, onSwitchSession, inboxPending = 0, inboxFailed = 0 } = data;
+  const { config, state, colorIdx, previewLines, projectPath, workspaceId, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory, onShowInbox, onOpenTerminal, onSwitchSession, onSaveAsTemplate, inboxPending = 0, inboxFailed = 0 } = data;
   const c = COLORS[colorIdx % COLORS.length];
   const smithStatus = state?.smithStatus || 'down';
   const taskStatus = state?.taskStatus || 'idle';
@@ -2649,6 +2739,8 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
           className="text-[9px] text-gray-600 hover:text-purple-400 px-1" title="Memory">🧠</button>
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onShowLog(); }}
           className="text-[9px] text-gray-600 hover:text-gray-300 px-1" title="Logs">📋</button>
+        <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onSaveAsTemplate(); }}
+          className="text-[9px] text-gray-600 hover:text-yellow-400 px-1" title="Save as template">💾</button>
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onEdit(); }}
           className="text-[9px] text-gray-600 hover:text-blue-400 px-1">✏️</button>
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onRemove(); }}
@@ -2803,6 +2895,20 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
               const resolveRes = await wsApi(workspaceId, 'open_terminal', { agentId: agent.id, resolveOnly: true }).catch(() => ({})) as any;
               const currentSessionId = resolveRes?.currentSessionId ?? null;
               setTermPicker({ agent, sessName, workDir, supportsSession: resolveRes?.supportsSession ?? true, currentSessionId, initialPos });
+            },
+            onSaveAsTemplate: async () => {
+              const name = prompt('Template name:', agent.label);
+              if (!name) return;
+              const desc = prompt('Description (optional):', '');
+              try {
+                await fetch('/api/smith-templates', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ config: agent, name, icon: agent.icon, description: desc || '' }),
+                });
+              } catch {
+                alert('Failed to save template');
+              }
             },
             onSwitchSession: async () => {
               if (!workspaceId) return;

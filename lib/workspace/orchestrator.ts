@@ -932,8 +932,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
           throw new Error('Worker not created');
         }
 
-        // 3. Set smith status to active
-        entry.state.smithStatus = 'active';
+        // 3. Set smith status — persistent session agents stay 'starting' until ensurePersistentSession completes
+        entry.state.smithStatus = entry.config.persistentSession ? 'starting' : 'active';
         entry.state.error = undefined;
 
         // 4. Start message loop (delayed for persistent session agents — session must exist first)
@@ -945,10 +945,10 @@ export class WorkspaceOrchestrator extends EventEmitter {
         this.updateAgentLiveness(id);
 
         // 6. Notify frontend
-        this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'active' } satisfies WorkerEvent);
+        this.emit('event', { type: 'smith_status', agentId: id, smithStatus: entry.state.smithStatus } as any);
 
         started++;
-        console.log(`[daemon] ✓ ${entry.config.label}: active (task=${entry.state.taskStatus})`);
+        console.log(`[daemon] ✓ ${entry.config.label}: ${entry.state.smithStatus} (task=${entry.state.taskStatus})`);
       } catch (err: any) {
         entry.state.smithStatus = 'down';
         entry.state.error = `Failed to start: ${err.message}`;
@@ -962,7 +962,11 @@ export class WorkspaceOrchestrator extends EventEmitter {
     for (const [id, entry] of this.agents) {
       if (entry.config.type === 'input' || !entry.config.persistentSession) continue;
       await this.ensurePersistentSession(id, entry.config);
-      // Only start message loop if session was created successfully
+      // Set active now that session + boundSessionId are ready
+      if (entry.state.smithStatus === 'starting') {
+        entry.state.smithStatus = 'active';
+        this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'active' } as any);
+      }
       if (entry.state.smithStatus === 'active') {
         this.startMessageLoop(id);
       } else {

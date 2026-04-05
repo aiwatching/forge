@@ -69,6 +69,26 @@ const TASK_STATUS: Record<string, { label: string; color: string; glow?: boolean
 
 const PRESET_AGENTS: Omit<AgentConfig, 'id'>[] = [
   {
+    label: 'Lead', icon: '👑', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['docs/lead/'],
+    primary: true, persistentSession: true, plugins: ['playwright', 'shell-command'],
+    role: `Lead — primary coordinator (recommended for Primary smith). Context auto-includes Workspace Team (all agents, roles, status, missing roles).
+
+SOP: Intake → HAS Architect? delegate via create_request : break down yourself → HAS Engineer? create_request(open) : implement in src/ → HAS QA? auto-notified : test yourself → HAS Reviewer? auto-notified : review yourself.
+
+SOP: Monitor → get_status + list_requests → stuck/failed agents: send_message or take over → unclaimed requests: nudge Engineers.
+
+SOP: Quality Gate → ALL requests done + review=approved + qa=passed → write docs/lead/delivery-summary.md.
+
+Gap coverage: missing PM → you break requirements; missing Engineer → you code; missing QA → you test; missing Reviewer → you review. Every delegation uses create_request with acceptance_criteria.`,
+    steps: [
+      { id: 'intake', label: 'Intake & Analyze', prompt: 'Read Workspace Team in context. Identify present/missing roles and incoming requirements. Classify scope and plan delegation vs self-handling.' },
+      { id: 'delegate', label: 'Create Requests & Route', prompt: 'create_request for each task with acceptance_criteria. Route to Architect/Engineer or note for self-implementation. Verify with list_requests.' },
+      { id: 'cover-gaps', label: 'Cover Missing Roles', prompt: 'Implement/test/review for any missing role. update_response for each section you cover.' },
+      { id: 'monitor', label: 'Monitor & Unblock', prompt: 'get_status + list_requests. Unblock stuck agents via send_message or take over their work.' },
+      { id: 'gate', label: 'Quality Gate & Summary', prompt: 'Verify all requests done/approved/passed. Write docs/lead/delivery-summary.md.' },
+    ],
+  },
+  {
     label: 'PM', icon: '📋', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['docs/prd/'],
     role: `Product Manager. Context auto-includes Workspace Team.
 
@@ -175,26 +195,6 @@ If reference designs or mockups exist in the project (e.g., docs/designs/), stud
       { id: 'audit', label: 'UI Audit', prompt: 'Analyze the existing UI: framework used (React/Vue/etc), component library, design tokens (colors, spacing, fonts), layout patterns. Take screenshots of existing pages to understand the current look and feel. Document the current design system.' },
       { id: 'implement', label: 'Implement UI', prompt: 'Based on the PRD, implement the UI. Write real component code. Start the dev server, take screenshots of your work, and iterate until the visual quality is high. Aim for at least 3 review cycles — screenshot, evaluate, improve.' },
       { id: 'polish', label: 'Polish & Document', prompt: 'Final polish pass: check all states (loading, empty, error, hover, disabled), responsive breakpoints, dark/light mode. Take final screenshots. Write docs/ui-spec.md documenting: component hierarchy, design decisions, interaction patterns, and accessibility notes.' },
-    ],
-  },
-  {
-    label: 'Lead', icon: '👑', backend: 'cli', agentId: 'claude', dependsOn: [], outputs: ['docs/lead/'],
-    primary: true, persistentSession: true, plugins: ['playwright', 'shell-command'],
-    role: `Lead — primary coordinator. Context auto-includes Workspace Team (all agents, roles, status, missing roles).
-
-SOP: Intake → HAS Architect? delegate via create_request : break down yourself → HAS Engineer? create_request(open) : implement in src/ → HAS QA? auto-notified : test yourself → HAS Reviewer? auto-notified : review yourself.
-
-SOP: Monitor → get_status + list_requests → stuck/failed agents: send_message or take over → unclaimed requests: nudge Engineers.
-
-SOP: Quality Gate → ALL requests done + review=approved + qa=passed → write docs/lead/delivery-summary.md.
-
-Gap coverage: missing PM → you break requirements; missing Engineer → you code; missing QA → you test; missing Reviewer → you review. Every delegation uses create_request with acceptance_criteria.`,
-    steps: [
-      { id: 'intake', label: 'Intake & Analyze', prompt: 'Read Workspace Team in context. Identify present/missing roles and incoming requirements. Classify scope and plan delegation vs self-handling.' },
-      { id: 'delegate', label: 'Create Requests & Route', prompt: 'create_request for each task with acceptance_criteria. Route to Architect/Engineer or note for self-implementation. Verify with list_requests.' },
-      { id: 'cover-gaps', label: 'Cover Missing Roles', prompt: 'Implement/test/review for any missing role. update_response for each section you cover.' },
-      { id: 'monitor', label: 'Monitor & Unblock', prompt: 'get_status + list_requests. Unblock stuck agents via send_message or take over their work.' },
-      { id: 'gate', label: 'Quality Gate & Summary', prompt: 'Verify all requests done/approved/passed. Write docs/lead/delivery-summary.md.' },
     ],
   },
   {
@@ -791,8 +791,9 @@ function AgentConfigModal({ initial, mode, existingAgents, projectPath, onConfir
               <div className="flex gap-1 flex-wrap">
                 {PRESET_AGENTS.map((p, i) => (
                   <button key={i} onClick={() => applyPreset(p)}
-                    className={`text-[9px] px-2 py-1 rounded border transition-colors ${label === p.label ? 'border-[#58a6ff] text-[#58a6ff] bg-[#58a6ff]/10' : 'border-[#30363d] text-gray-400 hover:text-white'}`}>
-                    {p.icon} {p.label}
+                    title={p.primary ? 'Recommended for Primary smith (runs at project root, coordinates others)' : p.label}
+                    className={`text-[9px] px-2 py-1 rounded border transition-colors ${label === p.label ? 'border-[#58a6ff] text-[#58a6ff] bg-[#58a6ff]/10' : p.primary ? 'border-[#f0883e]/40 text-[#f0883e] hover:border-[#f0883e]' : 'border-[#30363d] text-gray-400 hover:text-white'}`}>
+                    {p.icon} {p.label}{p.primary ? ' ★' : ''}
                   </button>
                 ))}
                 <button onClick={() => { setLabel(''); setIcon('🤖'); setRole(''); setStepsText(''); setOutputs(''); }}

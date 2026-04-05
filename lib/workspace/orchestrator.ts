@@ -95,6 +95,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
   private agentRunningMsg = new Map<string, string>(); // agentId → messageId currently being processed
   private reconcileTick = 0; // counts health check ticks for 60s reconcile
   private _topoCache: WorkspaceTopo | null = null; // cached workspace topology
+  private roleInjectState = new Map<string, { lastInjectAt: number; msgsSinceInject: number }>(); // per-agent role reminder tracking
 
   /** Emit a log event (auto-persisted via constructor listener) */
   emitLog(agentId: string, entry: any): void {
@@ -188,6 +189,24 @@ export class WorkspaceOrchestrator extends EventEmitter {
     return null;
   }
 
+  /** Check for non-blocking output overlaps — returns a warning message if any */
+  private getOutputWarnings(config: WorkspaceAgentConfig, excludeId?: string): string | null {
+    if (config.type === 'input' || !config.outputs?.length) return null;
+    const normalize = (p: string) => p.replace(/^\.?\//, '').replace(/\/$/, '') || '.';
+    const overlaps: string[] = [];
+    for (const [id, entry] of this.agents) {
+      if (id === excludeId || entry.config.type === 'input') continue;
+      for (const out of config.outputs) {
+        for (const existing of entry.config.outputs || []) {
+          if (normalize(out) === normalize(existing)) {
+            overlaps.push(`${entry.config.label} also outputs to "${out}"`);
+          }
+        }
+      }
+    }
+    return overlaps.length ? `Output overlap (non-blocking): ${overlaps.join('; ')}` : null;
+  }
+
   /** Detect if adding dependsOn edges would create a cycle in the DAG */
   private detectCycle(agentId: string, dependsOn: string[]): string | null {
     // Build adjacency: agent → agents it depends on
@@ -249,6 +268,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
   addAgent(config: WorkspaceAgentConfig): void {
     const conflict = this.validateOutputs(config);
     if (conflict) throw new Error(conflict);
+    const warning = this.getOutputWarnings(config);
+    if (warning) console.warn(`[workspace] ${warning}`);
 
     // Check DAG cycle before adding
     const cycleErr = this.detectCycle(config.id, config.dependsOn);
@@ -342,6 +363,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
     }
     const conflict = this.validateOutputs(config, id);
     if (conflict) throw new Error(conflict);
+    const warning = this.getOutputWarnings(config, id);
+    if (warning) console.warn(`[workspace] ${warning}`);
     const cycleErr = this.detectCycle(id, config.dependsOn);
     if (cycleErr) throw new Error(cycleErr);
     this.validatePrimaryRules(config, id);
@@ -776,8 +799,8 @@ export class WorkspaceOrchestrator extends EventEmitter {
       }
     }
 
-    // Sync role → CLAUDE.md so CLI agents (Claude Code) see it as system instructions
-    this.syncRoleToClaudeMd(config);
+    // Role is now injected via buildUpstreamContext (headless) and persistent session preamble (terminal).
+    // No longer writes to CLAUDE.md — project files stay clean when daemon stops.
 
     let upstreamContext = this.buildUpstreamContext(config);
     if (userInput) {
@@ -978,6 +1001,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
       }
     }
 
+    // Migration: clean any legacy Forge blocks from CLAUDE.md files (role/topo no longer written to disk)
+    this.cleanLegacyClaudeMdBlocks();
+
     // Create persistent terminal sessions, then start their message loops
     for (const [id, entry] of this.agents) {
       if (entry.config.type === 'input' || !entry.config.persistentSession) continue;
@@ -988,6 +1014,14 @@ export class WorkspaceOrchestrator extends EventEmitter {
         this.emit('event', { type: 'smith_status', agentId: id, smithStatus: 'active' } as any);
       }
       if (entry.state.smithStatus === 'active') {
+        // Inject role preamble so Claude knows its role (replaces CLAUDE.md writing)
+        if (entry.config.role?.trim()) {
+          const preamble = this.buildRolePreamble(entry.config);
+          if (this.injectIntoSession(id, preamble)) {
+            this.markRoleInjected(id);
+            console.log(`[daemon] ${entry.config.label}: injected role preamble`);
+          }
+        }
         this.startMessageLoop(id);
       } else {
         console.log(`[daemon] ${entry.config.label}: skipped message loop (smith=${entry.state.smithStatus})`);
@@ -1140,6 +1174,20 @@ export class WorkspaceOrchestrator extends EventEmitter {
         entry.worker.stop();
         entry.worker = null;
       }
+
+      // 2b. For persistent sessions: send /clear to reset Claude's context if user is attached.
+      // This is a Claude Code slash command — no LLM call, just a local context reset.
+      if (entry.state.tmuxSession && entry.config.role?.trim()) {
+        let isAttached = false;
+        try {
+          const info = execSync(`tmux display-message -t "${entry.state.tmuxSession}" -p "#{session_attached}" 2>/dev/null`, { timeout: 3000, encoding: 'utf-8' }).trim();
+          isAttached = info !== '0';
+        } catch {}
+        if (isAttached) {
+          try { this.injectIntoSession(id, '/clear'); } catch {}
+        }
+      }
+      this.roleInjectState.delete(id);
 
       // 3. Kill tmux session (skip if user is attached to it)
       if (entry.state.tmuxSession) {
@@ -1962,74 +2010,32 @@ export class WorkspaceOrchestrator extends EventEmitter {
     return this._topoCache!;
   }
 
-  /** Sync agent role description into CLAUDE.md so CLI agents read it natively */
-  private syncRoleToClaudeMd(config: WorkspaceAgentConfig): void {
-    if (!config.role?.trim()) return;
-    const workDir = join(this.projectPath, config.workDir || '');
-    const claudeMdPath = join(workDir, 'CLAUDE.md');
+  /** Remove stale Forge blocks from all agents' CLAUDE.md files (migration cleanup).
+   *  Role is no longer written to CLAUDE.md — this just removes legacy artifacts. */
+  private cleanLegacyClaudeMdBlocks(): void {
+    const roleRegex = /<!-- forge:agent-role -->[\s\S]*?<!-- \/forge:agent-role -->\n?/;
+    const topoRegex = /<!-- forge:workspace-topo -->[\s\S]*?<!-- \/forge:workspace-topo -->\n?/;
 
-    // Build plugin docs from agent's plugins
-    let pluginDocs = '';
-    if (config.plugins?.length) {
+    for (const [, entry] of this.agents) {
+      if (entry.config.type === 'input') continue;
+      const workDir = join(this.projectPath, entry.config.workDir || '');
+      const claudeMdPath = join(workDir, 'CLAUDE.md');
+      if (!existsSync(claudeMdPath)) continue;
+
       try {
-        const { getInstalledPlugin, listInstalledPlugins } = require('../plugins/registry');
-        const installed = listInstalledPlugins();
-        const agentPlugins = config.plugins;
-        // Find all instances that match agent's plugin list (by source or direct id)
-        const relevant = installed.filter((p: any) =>
-          agentPlugins.includes(p.id) || agentPlugins.includes(p.source || p.id)
-        );
-        if (relevant.length > 0) {
-          pluginDocs = '\n\n## Available Plugins (via MCP run_plugin)\n';
-          for (const p of relevant) {
-            const def = p.definition;
-            const name = p.instanceName || def.name;
-            pluginDocs += `\n### ${def.icon} ${name} (id: "${p.id}")\n`;
-            if (def.description) pluginDocs += `${def.description}\n`;
-            pluginDocs += '\nActions:\n';
-            for (const [actionName, action] of Object.entries(def.actions) as any[]) {
-              pluginDocs += `- **${actionName}** (${action.run})`;
-              if (def.defaultAction === actionName) pluginDocs += ' [default]';
-              pluginDocs += '\n';
-            }
-            if (Object.keys(def.params).length > 0) {
-              pluginDocs += 'Params: ' + Object.entries(def.params).map(([k, v]: any) =>
-                `${k}${v.required ? '*' : ''} (${v.type})`
-              ).join(', ') + '\n';
-            }
-            pluginDocs += `\nUsage: run_plugin({ plugin: "${p.id}", action: "<action>", params: { ... } })\n`;
-          }
+        let content = readFileSync(claudeMdPath, 'utf-8');
+        const before = content;
+        if (roleRegex.test(content)) content = content.replace(roleRegex, '');
+        if (topoRegex.test(content)) content = content.replace(topoRegex, '');
+        if (content !== before) {
+          content = content.trimEnd() + (content.trim() ? '\n' : '');
+          if (content.trim()) writeFileSync(claudeMdPath, content);
+          else unlinkSync(claudeMdPath); // was only forge content, delete empty file
+          console.log(`[workspace] Cleaned legacy Forge blocks from ${claudeMdPath}`);
         }
-      } catch {}
-    }
-
-    const MARKER_START = '<!-- forge:agent-role -->';
-    const MARKER_END = '<!-- /forge:agent-role -->';
-    const roleBlock = `${MARKER_START}\n## Agent Role (managed by Forge)\n\n${config.role.trim()}${pluginDocs}\n${MARKER_END}`;
-
-    try {
-      let content = '';
-      if (existsSync(claudeMdPath)) {
-        content = readFileSync(claudeMdPath, 'utf-8');
-        // Clean up stale topo blocks from previous versions (topo now lives in memory cache)
-        const topoRegex = /<!-- forge:workspace-topo -->[\s\S]*?<!-- \/forge:workspace-topo -->\n?/;
-        if (topoRegex.test(content)) {
-          content = content.replace(topoRegex, '').trimEnd() + '\n';
-        }
-        // Replace existing forge block
-        const regex = new RegExp(`${MARKER_START}[\\s\\S]*?${MARKER_END}`);
-        if (regex.test(content)) {
-          const updated = content.replace(regex, roleBlock);
-          if (updated !== content) writeFileSync(claudeMdPath, updated);
-          return;
-        }
+      } catch (err: any) {
+        console.warn(`[workspace] Failed to clean CLAUDE.md at ${claudeMdPath}: ${err.message}`);
       }
-      // Append
-      mkdirSync(workDir, { recursive: true });
-      const separator = content && !content.endsWith('\n') ? '\n\n' : content ? '\n' : '';
-      writeFileSync(claudeMdPath, content + separator + roleBlock + '\n');
-    } catch (err) {
-      console.warn(`[workspace] Failed to sync role to CLAUDE.md for ${config.label}:`, err);
     }
   }
 
@@ -2078,17 +2084,67 @@ export class WorkspaceOrchestrator extends EventEmitter {
     return lines.join('\n');
   }
 
+  /** Build full role preamble — injected once when persistent session starts */
+  private buildRolePreamble(config: WorkspaceAgentConfig): string {
+    const roleText = (config.role || '').trim() || '(no role defined)';
+    return `=== SMITH CONTEXT (managed by Forge) ===
+You are ${config.label}. Work dir: ${config.workDir || './'}.
+
+Your role and responsibilities:
+${roleText}
+
+---
+Silently ingest this context. Do NOT respond — await an actual task.`;
+  }
+
+  /** Build short role reminder — injected periodically to combat auto-compaction */
+  private buildRoleReminder(config: WorkspaceAgentConfig): string {
+    const roleText = (config.role || '').trim();
+    // First 300 chars of role, plus label
+    const summary = roleText.length > 300 ? roleText.slice(0, 300) + '...' : roleText;
+    return `[Role reminder — you are ${config.label}]\n${summary}\n---`;
+  }
+
+  /** Check if a role reminder should be re-injected before next bus message */
+  private needsRoleReminder(agentId: string): boolean {
+    const st = this.roleInjectState.get(agentId);
+    if (!st) return false; // no preamble sent yet — session is starting
+    const now = Date.now();
+    const REMIND_EVERY_MSGS = 10;
+    const REMIND_EVERY_MS = 30 * 60 * 1000; // 30 min
+    if (st.msgsSinceInject >= REMIND_EVERY_MSGS) return true;
+    if (now - st.lastInjectAt >= REMIND_EVERY_MS) return true;
+    return false;
+  }
+
+  /** Mark that role was just injected for this agent */
+  private markRoleInjected(agentId: string): void {
+    this.roleInjectState.set(agentId, { lastInjectAt: Date.now(), msgsSinceInject: 0 });
+  }
+
+  /** Increment message counter since last role injection */
+  private incrementMsgCount(agentId: string): void {
+    const st = this.roleInjectState.get(agentId);
+    if (st) st.msgsSinceInject++;
+  }
+
   /** Build context string from upstream agents' outputs */
   private buildUpstreamContext(config: WorkspaceAgentConfig): string | undefined {
-    // Always prepend workspace team summary so every agent knows who's who
+    // Always prepend: role + workspace team summary
+    const roleBlock = config.role?.trim() ? `## Your Role (${config.label})\n${config.role.trim()}` : '';
     const topoSummary = this.buildTopoSummary(config.id);
 
+    const headerSections: string[] = [];
+    if (roleBlock) headerSections.push(roleBlock);
+    if (topoSummary) headerSections.push(topoSummary);
+    const header = headerSections.join('\n\n');
+
     if (config.dependsOn.length === 0) {
-      return topoSummary || undefined;
+      return header || undefined;
     }
 
     const sections: string[] = [];
-    if (topoSummary) sections.push(topoSummary);
+    if (header) sections.push(header);
 
     for (const depId of config.dependsOn) {
       const dep = this.agents.get(depId);
@@ -2981,7 +3037,16 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
       // Terminal mode → inject; headless → worker (claude -p)
       if (isTerminalMode) {
-        const injected = this.injectIntoSession(agentId, nextMsg.payload.content || nextMsg.payload.action);
+        // Check if role reminder needed (combats auto-compaction over long sessions)
+        let messageText = nextMsg.payload.content || nextMsg.payload.action;
+        if (this.needsRoleReminder(agentId) && entry.config.role?.trim()) {
+          messageText = this.buildRoleReminder(entry.config) + '\n\n' + messageText;
+          this.markRoleInjected(agentId);
+          console.log(`[inbox] ${entry.config.label}: prepended role reminder`);
+        } else {
+          this.incrementMsgCount(agentId);
+        }
+        const injected = this.injectIntoSession(agentId, messageText);
         if (injected) {
           entry.state.taskStatus = 'running';
           this.emit('event', { type: 'task_status', agentId, taskStatus: 'running' } as any);

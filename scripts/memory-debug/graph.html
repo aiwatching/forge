@@ -160,9 +160,13 @@ function renderGraph(result, query) {
   const visNodes = [];
   const visEdges = [];
 
-  // Collect all relevant node IDs
+  // Collect relevant node IDs (cap at 100 to avoid vis.js lag)
+  const MAX_GRAPH_NODES = 100;
   for (const n of result.direct) allIds.add(n.id);
-  for (const c of result.impact) allIds.add(c.node.id);
+  for (const c of result.impact) {
+    if (allIds.size >= MAX_GRAPH_NODES) break;
+    allIds.add(c.node.id);
+  }
 
   // Add nodes
   for (const id of allIds) {

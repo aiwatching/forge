@@ -45,6 +45,67 @@ export interface CodeGraph {
 
 // ─── AST Parsing ─────────────────────────────────────────
 
+/** Regex-based parser for Java/Python (no AST dependency) */
+function parseFileRegex(content: string, fileId: string, relPath: string, module: string): { nodes: CodeNode[]; edges: CodeEdge[] } {
+  const nodes: CodeNode[] = [{ id: fileId, type: 'file', name: basename(relPath), filePath: relPath, exported: false, module }];
+  const edges: CodeEdge[] = [];
+  const lines = content.split('\n');
+  const isJava = relPath.endsWith('.java');
+
+  if (isJava) {
+    // Java imports: import com.foo.Bar;
+    for (const line of lines) {
+      const m = line.match(/^\s*import\s+([\w.]+)\s*;/);
+      if (m) {
+        const pkg = m[1];
+        // Convert package to relative path: com.foo.Bar → com/foo/Bar
+        const importPath = pkg.replace(/\./g, '/');
+        edges.push({ from: fileId, to: importPath, type: 'imports', detail: pkg.split('.').pop() || pkg });
+      }
+    }
+
+    // Java classes: public class Foo extends Bar implements Baz
+    for (let i = 0; i < lines.length; i++) {
+      const cm = lines[i].match(/(?:public|private|protected)?\s*(?:abstract\s+|final\s+)?(?:class|interface|enum)\s+(\w+)/);
+      if (cm) {
+        const name = cm[1];
+        const classId = `${fileId}::${name}`;
+        nodes.push({ id: classId, type: 'class', name, filePath: relPath, line: i + 1, exported: true, module });
+      }
+    }
+
+    // Java methods: public void methodName(...) or public static String foo(...)
+    for (let i = 0; i < lines.length; i++) {
+      const mm = lines[i].match(/(?:public|private|protected)\s+(?:static\s+)?(?:final\s+)?(?:synchronized\s+)?(?:<[\w<>,\s]+>\s+)?(\w+)\s+(\w+)\s*\(/);
+      if (mm && !['class', 'interface', 'enum', 'if', 'for', 'while', 'switch', 'catch', 'new', 'return'].includes(mm[2])) {
+        const name = mm[2];
+        const funcId = `${fileId}::${name}`;
+        if (!nodes.some(n => n.id === funcId)) {
+          nodes.push({ id: funcId, type: 'function', name, filePath: relPath, line: i + 1, exported: true, module });
+        }
+      }
+    }
+  } else {
+    // Python imports: from foo import bar / import foo
+    for (const line of lines) {
+      let m = line.match(/^\s*from\s+([\w.]+)\s+import/);
+      if (m) { edges.push({ from: fileId, to: m[1].replace(/\./g, '/'), type: 'imports', detail: m[1] }); continue; }
+      m = line.match(/^\s*import\s+([\w.]+)/);
+      if (m) { edges.push({ from: fileId, to: m[1].replace(/\./g, '/'), type: 'imports', detail: m[1] }); }
+    }
+
+    // Python functions/classes
+    for (let i = 0; i < lines.length; i++) {
+      let m = lines[i].match(/^(?:async\s+)?def\s+(\w+)\s*\(/);
+      if (m) { nodes.push({ id: `${fileId}::${m[1]}`, type: 'function', name: m[1], filePath: relPath, line: i + 1, exported: true, module }); continue; }
+      m = lines[i].match(/^class\s+(\w+)/);
+      if (m) { nodes.push({ id: `${fileId}::${m[1]}`, type: 'class', name: m[1], filePath: relPath, line: i + 1, exported: true, module }); }
+    }
+  }
+
+  return { nodes, edges };
+}
+
 function parseFile(filePath: string, relPath: string, module: string): { nodes: CodeNode[]; edges: CodeEdge[] } {
   const content = readFileSync(filePath, 'utf-8');
   const nodes: CodeNode[] = [];
@@ -60,6 +121,11 @@ function parseFile(filePath: string, relPath: string, module: string): { nodes: 
     exported: false,
     module,
   });
+
+  // Java/Python → regex parser, JS/TS → TypeScript compiler
+  if (filePath.endsWith('.java') || filePath.endsWith('.py')) {
+    return parseFileRegex(content, fileId, relPath, module);
+  }
 
   // Parse with TypeScript compiler (handles .ts, .tsx, .js, .mjs)
   const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true,
@@ -191,12 +257,13 @@ function resolveImportPath(fromFile: string, importPath: string): string {
 function findSourceFiles(dir: string, relDir: string = ''): string[] {
   const results: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '.next') continue;
+    const skipDirs = ['node_modules', 'dist', '.next', 'build', 'target', 'out', '.git', '.idea', '.vscode', '__pycache__', '.gradle', '.mvn'];
+    if (entry.name.startsWith('.') || skipDirs.includes(entry.name)) continue;
     const full = join(dir, entry.name);
     const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
       results.push(...findSourceFiles(full, rel));
-    } else if (/\.(js|mjs|ts|tsx)$/.test(entry.name) && !/\.(test|spec|d)\.(js|ts)$/.test(entry.name)) {
+    } else if (/\.(js|mjs|ts|tsx|java|py)$/.test(entry.name) && !/\.(test|spec|d)\.(js|ts)$/.test(entry.name) && !entry.name.endsWith('Test.java')) {
       results.push(rel);
     }
   }

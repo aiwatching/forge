@@ -17,11 +17,51 @@ const graphCache = new Map(); // project path → { graph, scannedAt }
 
 // ─── AST-based Code Graph ────────────────────────────────
 
+function parseFileRegex(content, fileId, relPath, module) {
+  const nodes = [{ id: fileId, type: 'file', name: path.basename(relPath), filePath: relPath, exported: false, module }];
+  const edges = [];
+  const lines = content.split('\n');
+  const isJava = relPath.endsWith('.java');
+  if (isJava) {
+    for (const line of lines) {
+      const m = line.match(/^\s*import\s+([\w.]+)\s*;/);
+      if (m) edges.push({ from: fileId, to: m[1].replace(/\./g, '/'), type: 'imports', detail: m[1].split('.').pop() });
+    }
+    for (let i = 0; i < lines.length; i++) {
+      const cm = lines[i].match(/(?:public|private|protected)?\s*(?:abstract\s+|final\s+)?(?:class|interface|enum)\s+(\w+)/);
+      if (cm) nodes.push({ id: `${fileId}::${cm[1]}`, type: 'class', name: cm[1], filePath: relPath, line: i+1, exported: true, module });
+      const mm = lines[i].match(/(?:public|private|protected)\s+(?:static\s+)?(?:final\s+)?(?:synchronized\s+)?(?:<[\w<>,\s]+>\s+)?(\w+)\s+(\w+)\s*\(/);
+      if (mm && !['class','interface','enum','if','for','while','switch','catch','new','return'].includes(mm[2]) && !nodes.some(n => n.id === `${fileId}::${mm[2]}`))
+        nodes.push({ id: `${fileId}::${mm[2]}`, type: 'function', name: mm[2], filePath: relPath, line: i+1, exported: true, module });
+    }
+  } else {
+    for (const line of lines) {
+      let m = line.match(/^\s*from\s+([\w.]+)\s+import/);
+      if (m) { edges.push({ from: fileId, to: m[1].replace(/\./g, '/'), type: 'imports', detail: m[1] }); continue; }
+      m = line.match(/^\s*import\s+([\w.]+)/);
+      if (m) edges.push({ from: fileId, to: m[1].replace(/\./g, '/'), type: 'imports', detail: m[1] });
+    }
+    for (let i = 0; i < lines.length; i++) {
+      let m = lines[i].match(/^(?:async\s+)?def\s+(\w+)\s*\(/);
+      if (m) { nodes.push({ id: `${fileId}::${m[1]}`, type: 'function', name: m[1], filePath: relPath, line: i+1, exported: true, module }); continue; }
+      m = lines[i].match(/^class\s+(\w+)/);
+      if (m) nodes.push({ id: `${fileId}::${m[1]}`, type: 'class', name: m[1], filePath: relPath, line: i+1, exported: true, module });
+    }
+  }
+  return { nodes, edges };
+}
+
 function parseFile(filePath, relPath, module) {
   const content = fs.readFileSync(filePath, 'utf-8');
   const nodes = [];
   const edges = [];
   const fileId = relPath;
+
+  if (filePath.endsWith('.java') || filePath.endsWith('.py')) {
+    const base = { id: fileId, type: 'file', name: path.basename(relPath), filePath: relPath, exported: false, module };
+    const result = parseFileRegex(content, fileId, relPath, module);
+    return result;
+  }
 
   nodes.push({ id: fileId, type: 'file', name: path.basename(relPath), filePath: relPath, exported: false, module });
 
@@ -119,11 +159,12 @@ function scanProject(projectPath) {
   const files = [];
   function walk(dir, rel) {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (e.name.startsWith('.') || ['node_modules', 'dist', '.next'].includes(e.name)) continue;
+      const skipDirs = ['node_modules', 'dist', '.next', 'build', 'target', 'out', '.git', '.idea', '.vscode', '__pycache__', '.gradle', '.mvn'];
+      if (e.name.startsWith('.') || skipDirs.includes(e.name)) continue;
       const full = path.join(dir, e.name);
       const r = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) walk(full, r);
-      else if (/\.(js|mjs|ts|tsx)$/.test(e.name) && !/\.(test|spec|d)\.(js|ts)$/.test(e.name)) files.push(r);
+      else if (/\.(js|mjs|ts|tsx|java|py)$/.test(e.name) && !/\.(test|spec|d)\.(js|ts)$/.test(e.name) && !e.name.endsWith('Test.java')) files.push(r);
     }
   }
   walk(projectPath, '');

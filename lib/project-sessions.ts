@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { getDataDir } from '@/src/config';
+import { getDataDir } from './dirs';
 
 function getFilePath(): string {
   const dir = getDataDir();

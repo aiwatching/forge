@@ -179,11 +179,11 @@ function installForgeStopHook(forgePort: number): void {
   const backupFile = join(homedir(), '.claude', `settings.json.forge-backup-${dateStr}`);
   const daemonPort = forgePort + 2; // 8403 → 8405
 
-  // Hook reads agent context from .forge/agent-context.json in the project dir.
-  // This file is written by ensurePersistentSession for each agent's workDir.
-  // Falls back to env vars if file doesn't exist.
-  // Hook command: workspace mode → agent_done, non-workspace → terminal-bell notification
-  const hookCommand = `${FORGE_HOOK_MARKER}\nCTX_FILE="$(pwd)/.forge/agent-context.json"; if [ -f "$CTX_FILE" ]; then WS_ID=$(python3 -c "import json;print(json.load(open('$CTX_FILE')).get('workspaceId',''))" 2>/dev/null); AG_ID=$(python3 -c "import json;print(json.load(open('$CTX_FILE')).get('agentId',''))" 2>/dev/null); elif [ -n "$FORGE_WORKSPACE_ID" ]; then WS_ID="$FORGE_WORKSPACE_ID"; AG_ID="$FORGE_AGENT_ID"; fi; if [ -n "$WS_ID" ] && [ -n "$AG_ID" ]; then curl -s -X POST "http://localhost:${daemonPort}/workspace/$WS_ID/agents" -H "Content-Type: application/json" -d "{\\"action\\":\\"agent_done\\",\\"agentId\\":\\"$AG_ID\\"}" > /dev/null 2>&1 & else TAB=$(basename "$(pwd)"); curl -s -X POST "http://localhost:${forgePort}/api/terminal-bell" -H "Content-Type: application/json" -d "{\\"tabLabel\\":\\"$TAB\\"}" > /dev/null 2>&1 & fi`;
+  // Hook: only use FORGE_WORKSPACE_ID env var (set by tmux for workspace sessions).
+  // Do NOT read agent-context.json — it persists on disk and would cause false
+  // agent_done for non-workspace sessions in the same directory.
+  // Non-workspace sessions → terminal-bell notification with project name.
+  const hookCommand = `${FORGE_HOOK_MARKER}\nif [ -n "$FORGE_WORKSPACE_ID" ] && [ -n "$FORGE_AGENT_ID" ]; then curl -s -X POST "http://localhost:${daemonPort}/workspace/$FORGE_WORKSPACE_ID/agents" -H "Content-Type: application/json" -d "{\\"action\\":\\"agent_done\\",\\"agentId\\":\\"$FORGE_AGENT_ID\\"}" > /dev/null 2>&1 & else TAB=$(basename "$(pwd)"); curl -s -X POST "http://localhost:${forgePort}/api/terminal-bell" -H "Content-Type: application/json" -d "{\\"tabLabel\\":\\"$TAB\\"}" > /dev/null 2>&1 & fi`;
 
   try {
     let settings: any = {};

@@ -90,15 +90,13 @@ function createForgeMcpServer(sessionId: string): McpServer {
 
         // Block reply to agents who have a running/pending message to us.
         // The system auto-delivers completion status — use /forge-send only for NEW messages.
-        const incomingFromTarget = orch.getBus().getLog().find((m: any) =>
+        // Uses findLast to check the most recent message state (not oldest/stale ones).
+        const incomingFromTarget = orch.getBus().getLog().findLast((m: any) =>
           m.to === agentId && m.from === target.id &&
           (m.status === 'running' || m.status === 'pending')
         );
-        if (incomingFromTarget) {
-          const reason = incomingFromTarget.payload?.noReply
-            ? `Skipped: message from ${target.label} is marked no-reply.`
-            : `Skipped: you are processing a message from ${target.label}. Your completion is delivered automatically — no need to reply via send_message.`;
-          return { content: [{ type: 'text', text: reason }] };
+        if (incomingFromTarget && !incomingFromTarget.payload?.noReply) {
+          return { content: [{ type: 'text', text: `Skipped: you are processing a message from ${target.label}. Your completion is delivered automatically — no need to reply via send_message.` }] };
         }
 
         const payload: any = { action, content };

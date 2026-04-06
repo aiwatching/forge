@@ -2539,17 +2539,8 @@ Silently ingest this context. Do NOT respond — await an actual task.`;
                 url: `http://localhost:${mcpPort}/sse?workspaceId=${this.workspaceId}&agentId=${config.id}`,
               },
             };
-            // Add forge-memory MCP if memory server script exists
-            try {
-              const forgeRoot = resolve(import.meta.dirname || process.cwd(), '..', '..');
-              const memoryScript = join(forgeRoot, 'lib', 'memory', 'memory-mcp-server.ts');
-              if (existsSync(memoryScript)) {
-                mcpServers['forge-memory'] = {
-                  command: 'npx',
-                  args: ['tsx', memoryScript, this.projectPath],
-                };
-              }
-            } catch {}
+            // Memory tools (search_code, remember, recall, etc.) are built into
+            // the forge MCP server — no separate process needed.
             const mcpConfig = { mcpServers };
             mkdirSync(join(workDir, '.forge'), { recursive: true });
             writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));

@@ -379,6 +379,205 @@ function createForgeMcpServer(sessionId: string): McpServer {
     }
   );
 
+  // ── Memory Tools (code graph + knowledge store) ──────────
+
+  // Lazy-loaded per project path
+  const memoryGraphCache = new Map<string, any>();
+
+  function getMemoryGraph(projectPath: string) {
+    if (memoryGraphCache.has(projectPath)) return memoryGraphCache.get(projectPath);
+    try {
+      const { buildCodeGraph } = require('./memory/code-graph') as typeof import('./memory/code-graph');
+      const graph = buildCodeGraph(projectPath);
+      memoryGraphCache.set(projectPath, graph);
+      return graph;
+    } catch (err: any) {
+      console.error(`[memory] Failed to build graph: ${err.message}`);
+      return null;
+    }
+  }
+
+  function getMemoryKnowledge(projectPath: string): any[] {
+    try {
+      const { join } = require('node:path');
+      const { existsSync, readFileSync } = require('node:fs');
+      const fp = join(projectPath, '.forge', 'memory', 'knowledge.json');
+      if (!existsSync(fp)) return [];
+      return JSON.parse(readFileSync(fp, 'utf-8'));
+    } catch { return []; }
+  }
+
+  function saveMemoryKnowledge(projectPath: string, entries: any[]) {
+    const { join } = require('node:path');
+    const { writeFileSync, mkdirSync } = require('node:fs');
+    const dir = join(projectPath, '.forge', 'memory');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'knowledge.json'), JSON.stringify(entries, null, 2));
+  }
+
+  server.tool(
+    'search_code',
+    'Find related files, functions, and dependencies via AST code graph. Returns direct matches + impact chain. Use before modifying code to understand blast radius.',
+    { query: z.string().describe('Search query — function name, file name, module name (English code identifiers)') },
+    async ({ query }) => {
+      const { workspaceId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context' }] };
+      try {
+        const orch = getOrch(workspaceId);
+        const graph = getMemoryGraph(orch.projectPath);
+        if (!graph) return { content: [{ type: 'text', text: 'Error: Failed to build code graph' }] };
+
+        const { findAffectedBy } = require('./memory/code-graph') as typeof import('./memory/code-graph');
+        const result = findAffectedBy(graph, query);
+        const lines: string[] = [];
+        if (result.directMatches.length > 0) {
+          lines.push(`## Direct matches (${result.directMatches.length})`);
+          for (const n of result.directMatches.slice(0, 15)) {
+            lines.push(`- [${n.type}] **${n.name}**${n.exported ? ' (exported)' : ''} — ${n.filePath}${n.line ? ':' + n.line : ''}`);
+          }
+        }
+        if (result.impactChain.length > 0) {
+          lines.push(`\n## Impact chain (${result.impactChain.length})`);
+          for (const c of result.impactChain.slice(0, 20)) {
+            lines.push(`- depth=${c.depth} [${c.node.type}] ${c.node.name} — ${c.node.filePath}${c.node.line ? ':' + c.node.line : ''}`);
+          }
+        }
+        if (result.directMatches.length === 0) lines.push('No matches found.');
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
+      } catch (err: any) { return { content: [{ type: 'text', text: `Error: ${err.message}` }] }; }
+    }
+  );
+
+  server.tool(
+    'get_file_context',
+    'Get full context for a file: imports, importers, exports, and attached knowledge. Call before modifying a file.',
+    { file_path: z.string().describe('Relative file path (e.g. "lib/workspace/orchestrator.ts")') },
+    async ({ file_path }) => {
+      const { workspaceId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context' }] };
+      try {
+        const orch = getOrch(workspaceId);
+        const graph = getMemoryGraph(orch.projectPath);
+        if (!graph) return { content: [{ type: 'text', text: 'Error: No code graph' }] };
+        const entries = getMemoryKnowledge(orch.projectPath);
+
+        const fileNode = graph.nodes.find((n: any) => n.type === 'file' && (n.filePath === file_path || n.filePath.endsWith(file_path)));
+        if (!fileNode) return { content: [{ type: 'text', text: `File "${file_path}" not found in graph.` }] };
+
+        const lines: string[] = [`## ${fileNode.filePath} (module: ${fileNode.module})`];
+        const imports = graph.edges.filter((e: any) => e.from === fileNode.id && e.type === 'imports');
+        if (imports.length > 0) { lines.push(`\n### Imports (${imports.length})`); for (const e of imports) lines.push(`- ${e.to}${e.detail ? ' — ' + e.detail : ''}`); }
+        const importedBy = graph.edges.filter((e: any) => e.to === fileNode.id && e.type === 'imports');
+        if (importedBy.length > 0) { lines.push(`\n### Imported by (${importedBy.length})`); for (const e of importedBy) lines.push(`- ${e.from}`); }
+        const exports = graph.edges.filter((e: any) => e.from === fileNode.id && e.type === 'exports');
+        if (exports.length > 0) { lines.push(`\n### Exports (${exports.length})`); for (const e of exports) lines.push(`- ${e.detail || e.to}`); }
+
+        const ICONS: Record<string, string> = { decision: '🎯', bug: '🐛', constraint: '⚠️', experience: '💡', note: '📝' };
+        const fileKnowledge = entries.filter((k: any) => k.file && k.status === 'active' && (fileNode.filePath.includes(k.file) || k.file.includes(fileNode.filePath)));
+        if (fileKnowledge.length > 0) {
+          lines.push(`\n### Knowledge (${fileKnowledge.length})`);
+          for (const k of fileKnowledge) lines.push(`- ${ICONS[k.type] || '📝'} **${k.title}**\n  ${k.content.slice(0, 200)}`);
+        }
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
+      } catch (err: any) { return { content: [{ type: 'text', text: `Error: ${err.message}` }] }; }
+    }
+  );
+
+  server.tool(
+    'remember',
+    'Store knowledge about the project (design decisions, known bugs, constraints). Persists across sessions.',
+    {
+      title: z.string().describe('One-line summary'),
+      content: z.string().describe('Full description'),
+      type: z.enum(['decision', 'bug', 'constraint', 'experience', 'note']),
+      file: z.string().optional().describe('Anchor to file path'),
+      tags: z.array(z.string()).optional(),
+    },
+    async ({ title, content, type, file, tags }) => {
+      const { workspaceId, agentId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context' }] };
+      try {
+        const orch = getOrch(workspaceId);
+        const entries = getMemoryKnowledge(orch.projectPath);
+        const existing = entries.find((e: any) => e.title === title && e.file === file && e.status === 'active');
+        if (existing) {
+          existing.content = content; existing.type = type; existing.tags = tags || existing.tags; existing.updatedAt = Date.now();
+          saveMemoryKnowledge(orch.projectPath, entries);
+          return { content: [{ type: 'text', text: `Updated: "${title}" (id: ${existing.id})` }] };
+        }
+        const entry = { id: `k-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, type, title, content, file, tags: tags || [], status: 'active', createdAt: Date.now(), updatedAt: Date.now(), createdBy: agentId };
+        entries.push(entry);
+        saveMemoryKnowledge(orch.projectPath, entries);
+        return { content: [{ type: 'text', text: `Remembered: "${title}" [${type}]${file ? ' → ' + file : ''} (id: ${entry.id})` }] };
+      } catch (err: any) { return { content: [{ type: 'text', text: `Error: ${err.message}` }] }; }
+    }
+  );
+
+  server.tool(
+    'recall',
+    'Retrieve stored project knowledge. Search by keyword, filter by file or type.',
+    {
+      query: z.string().optional().describe('Keyword search'),
+      file: z.string().optional().describe('Filter by file'),
+      type: z.enum(['decision', 'bug', 'constraint', 'experience', 'note']).optional(),
+    },
+    async ({ query, file, type }) => {
+      const { workspaceId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context' }] };
+      try {
+        const orch = getOrch(workspaceId);
+        let entries = getMemoryKnowledge(orch.projectPath).filter((e: any) => e.status === 'active');
+        if (type) entries = entries.filter((e: any) => e.type === type);
+        if (file) entries = entries.filter((e: any) => e.file && (e.file.includes(file) || file.includes(e.file)));
+        if (query) {
+          const terms = query.toLowerCase().split(/\s+/);
+          entries = entries.filter((e: any) => { const h = `${e.title} ${e.content} ${(e.tags||[]).join(' ')} ${e.file||''}`.toLowerCase(); return terms.every((t: string) => h.includes(t)); });
+        }
+        entries = entries.slice(0, 20);
+        if (entries.length === 0) return { content: [{ type: 'text', text: 'No knowledge found.' }] };
+        const ICONS: Record<string, string> = { decision: '🎯', bug: '🐛', constraint: '⚠️', experience: '💡', note: '📝' };
+        const lines = entries.map((e: any) => `${ICONS[e.type]||'📝'} **${e.title}**\n  ${e.content.slice(0,300)}\n  ${e.file?'file: '+e.file:''} | id: ${e.id}`);
+        return { content: [{ type: 'text', text: `Found ${entries.length}:\n\n${lines.join('\n\n')}` }] };
+      } catch (err: any) { return { content: [{ type: 'text', text: `Error: ${err.message}` }] }; }
+    }
+  );
+
+  server.tool(
+    'forget',
+    'Delete a knowledge entry by ID.',
+    { id: z.string() },
+    async ({ id }) => {
+      const { workspaceId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context' }] };
+      try {
+        const orch = getOrch(workspaceId);
+        const entries = getMemoryKnowledge(orch.projectPath);
+        const idx = entries.findIndex((e: any) => e.id === id);
+        if (idx < 0) return { content: [{ type: 'text', text: `Not found: ${id}` }] };
+        const removed = entries.splice(idx, 1)[0];
+        saveMemoryKnowledge(orch.projectPath, entries);
+        return { content: [{ type: 'text', text: `Deleted: "${removed.title}"` }] };
+      } catch (err: any) { return { content: [{ type: 'text', text: `Error: ${err.message}` }] }; }
+    }
+  );
+
+  server.tool(
+    'rescan_code',
+    'Force rescan project code graph after creating new files or making structural changes.',
+    {},
+    async () => {
+      const { workspaceId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context' }] };
+      try {
+        const orch = getOrch(workspaceId);
+        memoryGraphCache.delete(orch.projectPath);
+        const t0 = Date.now();
+        const graph = getMemoryGraph(orch.projectPath);
+        return { content: [{ type: 'text', text: `Rescanned in ${Date.now()-t0}ms: ${graph?.nodes?.length || 0} nodes, ${graph?.edges?.length || 0} edges` }] };
+      } catch (err: any) { return { content: [{ type: 'text', text: `Error: ${err.message}` }] }; }
+    }
+  );
+
   // ── get_pipeline_status ────────────────────────
   server.tool(
     'get_pipeline_status',

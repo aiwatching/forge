@@ -171,12 +171,26 @@ function scanProject(projectPath) {
 
 function queryGraph(graph, query) {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const matchNode = (n, mode) => {
-    const h = `${n.id} ${n.name} ${n.filePath} ${n.module || ''}`.toLowerCase();
-    return mode === 'and' ? terms.every(t => h.includes(t)) : terms.some(t => h.includes(t));
+
+  // Split camelCase/snake_case: "scheduleAutoSync" → "schedule auto sync scheduleautosync"
+  const splitId = (name) => {
+    const words = name.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_\-./]/g, ' ').toLowerCase();
+    return `${words} ${name.toLowerCase()}`;
   };
-  let direct = graph.nodes.filter(n => matchNode(n, 'and'));
-  if (direct.length === 0) direct = graph.nodes.filter(n => matchNode(n, 'or'));
+
+  const scoreNode = (n) => {
+    const haystack = `${splitId(n.name)} ${splitId(n.filePath)} ${n.module || ''}`.toLowerCase();
+    const words = haystack.split(/\s+/);
+    let matched = 0;
+    for (const t of terms) {
+      if (haystack.includes(t) || words.some(w => w.startsWith(t) || t.startsWith(w))) matched++;
+    }
+    return matched;
+  };
+
+  const scored = graph.nodes.map(n => ({ node: n, score: scoreNode(n) })).filter(s => s.score > 0).sort((a, b) => b.score - a.score);
+  let direct = scored.filter(s => s.score >= terms.length).map(s => s.node);
+  if (direct.length === 0) { const max = scored[0]?.score || 0; direct = scored.filter(s => s.score === max).map(s => s.node); }
 
   const visited = new Set();
   const impact = [];

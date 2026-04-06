@@ -2533,14 +2533,24 @@ Silently ingest this context. Do NOT respond — await an actual task.`;
           try {
             const mcpPort = Number(process.env.MCP_PORT) || 8406;
             const mcpConfigPath = join(workDir, '.forge', 'mcp.json');
-            const mcpConfig = {
-              mcpServers: {
-                forge: {
-                  type: 'sse',
-                  url: `http://localhost:${mcpPort}/sse?workspaceId=${this.workspaceId}&agentId=${config.id}`,
-                },
+            const mcpServers: Record<string, any> = {
+              forge: {
+                type: 'sse',
+                url: `http://localhost:${mcpPort}/sse?workspaceId=${this.workspaceId}&agentId=${config.id}`,
               },
             };
+            // Add forge-memory MCP if memory server script exists
+            try {
+              const forgeRoot = resolve(import.meta.dirname || process.cwd(), '..', '..');
+              const memoryScript = join(forgeRoot, 'lib', 'memory', 'memory-mcp-server.ts');
+              if (existsSync(memoryScript)) {
+                mcpServers['forge-memory'] = {
+                  command: 'npx',
+                  args: ['tsx', memoryScript, this.projectPath],
+                };
+              }
+            } catch {}
+            const mcpConfig = { mcpServers };
             mkdirSync(join(workDir, '.forge'), { recursive: true });
             writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
             mcpConfigFlag = ` --mcp-config "${mcpConfigPath}"`;

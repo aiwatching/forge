@@ -243,11 +243,13 @@ export function findAffectedBy(graph: CodeGraph, query: string): {
 } {
   const q = query.toLowerCase();
 
-  // Find direct matches (node name or file path contains query terms)
+  // Find direct matches — AND logic: all terms must match
+  // Supports: "workspace orchestrator" = both must appear
+  //           "file::func" = exact node ID match
   const terms = q.split(/\s+/).filter(Boolean);
   const directMatches = graph.nodes.filter(n => {
-    const haystack = `${n.id} ${n.name} ${n.filePath}`.toLowerCase();
-    return terms.some(t => haystack.includes(t));
+    const haystack = `${n.id} ${n.name} ${n.filePath} ${n.module}`.toLowerCase();
+    return terms.every(t => haystack.includes(t));
   });
 
   // BFS: find everything connected to direct matches (2 hops)
@@ -283,6 +285,77 @@ export function findAffectedBy(graph: CodeGraph, query: string): {
   bfs(directMatches.map(n => n.id), 3);
 
   return { directMatches, impactChain };
+}
+
+// ─── Incremental update ──────────────────────────────────
+
+/**
+ * Incrementally update graph by re-parsing only changed files.
+ * Removes old nodes/edges for changed files, re-parses them, merges back.
+ */
+export function incrementalUpdate(
+  existing: CodeGraph,
+  projectPath: string,
+  changedFiles: string[],
+): CodeGraph {
+  // Filter to source files only
+  const sourceExts = /\.(js|mjs|ts|tsx)$/;
+  const sourceFiles = changedFiles.filter(f => sourceExts.test(f) && !/\.(test|spec|d)\.(js|ts)$/.test(f));
+
+  if (sourceFiles.length === 0) return existing;
+
+  // Remove old nodes/edges for changed files
+  const changedSet = new Set(sourceFiles);
+  const nodes = existing.nodes.filter(n => !changedSet.has(n.filePath));
+  const edges = existing.edges.filter(e => {
+    const fromFile = e.from.split('::')[0];
+    return !changedSet.has(fromFile);
+  });
+
+  // Re-parse changed files
+  for (const relPath of sourceFiles) {
+    const fullPath = join(projectPath, relPath);
+    if (!existsSync(fullPath)) continue; // file deleted
+    const parts = relPath.split('/');
+    const module = parts.length > 1 ? parts[0] : '_root';
+    const result = parseFile(fullPath, relPath, module);
+    nodes.push(...result.nodes);
+    edges.push(...result.edges);
+  }
+
+  // Resolve import targets (same as full scan)
+  const nodeIds = new Set(nodes.map(n => n.id));
+  for (const edge of edges) {
+    if (!nodeIds.has(edge.to)) {
+      for (const ext of ['.ts', '.tsx', '.js', '.mjs', '/index.ts', '/index.js']) {
+        if (nodeIds.has(edge.to + ext)) { edge.to = edge.to + ext; break; }
+      }
+      if (edge.type === 'calls') {
+        const parts = edge.to.split('::');
+        if (parts.length === 2) {
+          for (const ext of ['.ts', '.tsx', '.js', '.mjs']) {
+            if (nodeIds.has(parts[0] + ext + '::' + parts[1])) { edge.to = parts[0] + ext + '::' + parts[1]; break; }
+          }
+        }
+      }
+    }
+  }
+
+  // Dedup edges
+  const seen = new Set<string>();
+  const uniqueEdges = edges.filter(e => {
+    const k = `${e.from}→${e.to}→${e.type}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  return {
+    nodes,
+    edges: uniqueEdges,
+    files: [...new Set([...existing.files.filter(f => !changedSet.has(f)), ...sourceFiles.filter(f => existsSync(join(projectPath, f)))])],
+    scannedAt: Date.now(),
+  };
 }
 
 // ─── Pretty print ────────────────────────────────────────

@@ -173,7 +173,7 @@ function queryGraph(graph, query) {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   const direct = graph.nodes.filter(n => {
     const h = `${n.id} ${n.name} ${n.filePath}`.toLowerCase();
-    return terms.some(t => h.includes(t));
+    return terms.every(t => h.includes(t));
   });
 
   const visited = new Set();

@@ -24,7 +24,7 @@ import { z } from 'zod';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execSync } from 'node:child_process';
-import { buildCodeGraph, findAffectedBy, printGraphStats } from './code-graph.js';
+import { buildCodeGraph, incrementalUpdate, findAffectedBy, printGraphStats } from './code-graph.js';
 import type { CodeGraph } from './code-graph.js';
 
 // ─── Config ──────────────────────────────────────────────
@@ -125,16 +125,28 @@ function ensureGraph(): CodeGraph {
     return graph;
   }
 
-  // Need rescan (full or incremental)
+  // Incremental scan if few files changed, otherwise full rescan
   if (cached && meta.lastScanCommit) {
     const changed = getChangedFiles(meta.lastScanCommit);
     if (changed.length > 0 && changed.length < 50) {
-      // TODO: incremental rescan of changed files only
-      // For now, full rescan
+      console.error(`[forge-memory] Incremental update: ${changed.length} files changed`);
+      graph = incrementalUpdate(cached, PROJECT_PATH, changed);
+      saveGraph(graph);
+      saveMeta({
+        projectPath: PROJECT_PATH,
+        lastScanCommit: currentCommit,
+        lastScanAt: Date.now(),
+        nodeCount: graph.nodes.length,
+        edgeCount: graph.edges.length,
+      });
+      if (meta.lastScanCommit && currentCommit !== meta.lastScanCommit) {
+        markStaleKnowledge(meta.lastScanCommit);
+      }
+      return graph;
     }
   }
 
-  // Full scan
+  // Full scan (first time or too many changes)
   graph = buildCodeGraph(PROJECT_PATH);
   saveGraph(graph);
   saveMeta({

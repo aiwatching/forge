@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forge Code Graph</title>
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, sans-serif; background: #0d1117; color: #e6edf3; }
+.header { padding: 8px 16px; border-bottom: 1px solid #21262d; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.header h1 { font-size: 15px; color: #58a6ff; white-space: nowrap; }
+.search-bar { display: flex; gap: 6px; flex: 1; min-width: 250px; }
+.search-bar input { flex: 1; background: #161b22; border: 1px solid #30363d; color: #e6edf3; padding: 5px 10px; border-radius: 5px; font-size: 12px; }
+.search-bar input:focus { outline: none; border-color: #58a6ff; }
+.search-bar button, .btn { background: #238636; color: white; border: none; padding: 5px 12px; border-radius: 5px; cursor: pointer; font-size: 11px; white-space: nowrap; }
+.btn.secondary { background: #30363d; }
+.btn.secondary:hover { background: #484f58; }
+.project-bar { display: flex; align-items: center; gap: 6px; }
+.project-bar input { background: #161b22; border: 1px solid #30363d; color: #e6edf3; padding: 5px 8px; border-radius: 5px; font-size: 11px; width: 280px; }
+.stats { font-size: 10px; color: #8b949e; white-space: nowrap; }
+
+.main { display: flex; height: calc(100vh - 44px); }
+.panel { overflow-y: auto; border-right: 1px solid #21262d; }
+.panel-list { width: 320px; padding: 8px; }
+.panel-graph { flex: 1; position: relative; }
+.panel-detail { width: 380px; padding: 8px; overflow-y: auto; background: #0a0e14; }
+
+#graph-container { width: 100%; height: 100%; background: #0d1117; }
+
+.section h2 { font-size: 11px; text-transform: uppercase; color: #8b949e; letter-spacing: 0.5px; margin: 10px 0 6px; }
+.section h2 .count { background: #30363d; padding: 1px 5px; border-radius: 8px; font-size: 9px; }
+
+.card { background: #161b22; border: 1px solid #21262d; border-radius: 5px; padding: 6px 8px; margin-bottom: 4px; cursor: pointer; font-size: 11px; }
+.card:hover { border-color: #58a6ff; }
+.card.active { border-color: #58a6ff; }
+.badge { display: inline-block; font-size: 8px; text-transform: uppercase; padding: 1px 4px; border-radius: 2px; margin-right: 4px; }
+.badge.file { background: #1f6feb20; color: #58a6ff; }
+.badge.function { background: #23863620; color: #3fb950; }
+.badge.class { background: #a371f720; color: #a371f7; }
+.card .name { font-weight: 600; color: #e6edf3; }
+.card .meta { color: #484f58; font-size: 10px; margin-top: 2px; }
+.depth { font-size: 8px; background: #30363d; color: #8b949e; padding: 1px 4px; border-radius: 8px; float: right; }
+
+.edge-item { font-size: 10px; padding: 2px 0; display: flex; gap: 4px; align-items: flex-start; }
+.edge-type { font-size: 8px; text-transform: uppercase; padding: 1px 4px; border-radius: 2px; white-space: nowrap; }
+.edge-type.imports { background: #58a6ff20; color: #58a6ff; }
+.edge-type.calls { background: #3fb95020; color: #3fb950; }
+.edge-type.exports { background: #a371f720; color: #a371f7; }
+
+.code-view { background: #0d1117; border: 1px solid #21262d; border-radius: 5px; padding: 8px; font-family: 'Menlo', monospace; font-size: 11px; line-height: 1.4; white-space: pre; overflow-x: auto; max-height: 50vh; color: #c9d1d9; }
+.code-view .ln { display: inline-block; width: 36px; text-align: right; color: #484f58; margin-right: 8px; user-select: none; }
+.code-view .hl { background: #ffd70025; display: block; }
+.code-path { font-size: 11px; color: #58a6ff; margin-bottom: 4px; font-family: monospace; }
+.empty { text-align: center; color: #484f58; padding: 30px; font-size: 12px; }
+.legend { position: absolute; bottom: 8px; left: 8px; background: #161b22e0; border: 1px solid #21262d; border-radius: 6px; padding: 6px 10px; font-size: 10px; color: #8b949e; }
+.legend span { margin-right: 10px; }
+.legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Code Graph</h1>
+  <div class="project-bar">
+    <input id="project-path" type="text" placeholder="/path/to/project" />
+    <button class="btn secondary" onclick="switchProject()">Switch</button>
+    <button class="btn secondary" onclick="rescan()">Rescan</button>
+  </div>
+  <div class="search-bar">
+    <input id="query" type="text" placeholder="Search... (e.g. orchestrator, workspace, auth)" />
+    <button class="btn" onclick="search()">Search</button>
+  </div>
+  <div class="stats" id="stats"></div>
+</div>
+
+<div class="main">
+  <div class="panel panel-list" id="list-panel">
+    <div class="empty">Search to explore</div>
+  </div>
+  <div class="panel panel-graph">
+    <div id="graph-container"></div>
+    <div class="legend">
+      <span><span class="dot" style="background:#58a6ff"></span>File</span>
+      <span><span class="dot" style="background:#3fb950"></span>Function</span>
+      <span><span class="dot" style="background:#a371f7"></span>Class</span>
+      <span style="margin-left:10px">Edge: <span style="color:#58a6ff">import</span> <span style="color:#3fb950">call</span> <span style="color:#a371f7">export</span></span>
+    </div>
+  </div>
+  <div class="panel panel-detail" id="detail-panel">
+    <div class="empty">Click a node to view</div>
+  </div>
+</div>
+
+<script>
+let graphData = null;
+let network = null;
+const COLORS = { file: '#58a6ff', function: '#3fb950', class: '#a371f7', variable: '#f0883e' };
+const EDGE_COLORS = { imports: '#58a6ff60', calls: '#3fb95060', exports: '#a371f760', depends_on: '#f0883e60' };
+
+async function init() {
+  const proj = await fetch('/api/project').then(r => r.json());
+  document.getElementById('project-path').value = proj.project;
+  const stats = await fetch('/api/stats').then(r => r.json());
+  document.getElementById('stats').textContent = `${stats.files}f ${stats.functions}fn ${stats.classes}cls | ${stats.totalNodes}n ${stats.totalEdges}e`;
+}
+
+async function switchProject() {
+  const p = document.getElementById('project-path').value.trim();
+  if (!p) return;
+  const r = await fetch(`/api/switch?project=${encodeURIComponent(p)}`).then(r => r.json());
+  if (r.error) { alert(r.error); return; }
+  graphData = null;
+  init();
+  document.getElementById('list-panel').innerHTML = '<div class="empty">Project switched. Search to explore.</div>';
+  if (network) { network.destroy(); network = null; }
+}
+
+async function rescan() {
+  await fetch('/api/rescan');
+  graphData = null;
+  init();
+}
+
+async function search() {
+  const q = document.getElementById('query').value;
+  if (!q) return;
+  if (!graphData) graphData = await fetch('/api/graph').then(r => r.json());
+  const result = await fetch(`/api/query?q=${encodeURIComponent(q)}`).then(r => r.json());
+  renderList(result, q);
+  renderGraph(result, q);
+}
+
+function renderList(result, query) {
+  const panel = document.getElementById('list-panel');
+  let html = '';
+  if (result.direct.length > 0) {
+    html += `<div class="section"><h2>Direct <span class="count">${result.direct.length}</span></h2>`;
+    for (const n of result.direct) html += cardHtml(n);
+    html += '</div>';
+  }
+  if (result.impact.length > 0) {
+    html += `<div class="section"><h2>Impact <span class="count">${result.impact.length}</span></h2>`;
+    for (const c of result.impact) html += cardHtml(c.node, c.depth);
+    html += '</div>';
+  }
+  if (!result.direct.length && !result.impact.length) html = '<div class="empty">No results</div>';
+  panel.innerHTML = html;
+}
+
+function cardHtml(node, depth) {
+  const d = depth ? `<span class="depth">depth ${depth}</span>` : '';
+  return `<div class="card" onclick="selectNode('${node.id}')" id="card-${CSS.escape(node.id)}">
+    <span class="badge ${node.type}">${node.type}</span><span class="name">${node.name}</span>${d}
+    <div class="meta">${node.filePath}${node.line ? ':' + node.line : ''}</div>
+  </div>`;
+}
+
+function renderGraph(result, query) {
+  const allIds = new Set();
+  const visNodes = [];
+  const visEdges = [];
+
+  // Collect all relevant node IDs
+  for (const n of result.direct) allIds.add(n.id);
+  for (const c of result.impact) allIds.add(c.node.id);
+
+  // Add nodes
+  for (const id of allIds) {
+    const node = graphData.nodes.find(n => n.id === id);
+    if (!node) continue;
+    const isDirect = result.direct.some(n => n.id === id);
+    visNodes.push({
+      id: node.id,
+      label: node.name + (node.line ? ':' + node.line : ''),
+      color: { background: COLORS[node.type] || '#8b949e', border: isDirect ? '#fff' : COLORS[node.type] || '#8b949e' },
+      borderWidth: isDirect ? 2 : 1,
+      font: { color: '#e6edf3', size: 11 },
+      shape: node.type === 'file' ? 'box' : node.type === 'class' ? 'diamond' : 'dot',
+      size: node.type === 'file' ? 20 : isDirect ? 15 : 10,
+      title: `${node.id}\n${node.type}${node.exported ? ' (exported)' : ''}`,
+    });
+  }
+
+  // Add edges between visible nodes only
+  for (const e of graphData.edges) {
+    if (allIds.has(e.from) && allIds.has(e.to)) {
+      visEdges.push({
+        from: e.from, to: e.to,
+        arrows: 'to',
+        color: { color: EDGE_COLORS[e.type] || '#48505880' },
+        label: e.type,
+        font: { color: '#484f58', size: 8, strokeWidth: 0 },
+        smooth: { type: 'curvedCW', roundness: 0.2 },
+      });
+    }
+  }
+
+  const container = document.getElementById('graph-container');
+  if (network) network.destroy();
+  network = new vis.Network(container, {
+    nodes: new vis.DataSet(visNodes),
+    edges: new vis.DataSet(visEdges),
+  }, {
+    physics: { solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: -40, centralGravity: 0.005, springLength: 120 } },
+    interaction: { hover: true, tooltipDelay: 100 },
+    layout: { improvedLayout: visNodes.length < 80 },
+    nodes: { font: { face: '-apple-system, sans-serif' } },
+    edges: { font: { align: 'middle' } },
+  });
+
+  network.on('click', params => {
+    if (params.nodes.length > 0) selectNode(params.nodes[0]);
+  });
+}
+
+async function selectNode(nodeId) {
+  document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
+  const card = document.getElementById('card-' + CSS.escape(nodeId));
+  if (card) card.classList.add('active');
+  if (network) network.selectNodes([nodeId]);
+
+  const node = graphData.nodes.find(n => n.id === nodeId);
+  if (!node) return;
+  const panel = document.getElementById('detail-panel');
+  let html = `<div class="section"><h2>${node.type}: ${node.name}</h2>
+    <div style="font-size:11px;color:#8b949e;margin-bottom:8px">${node.filePath}${node.line ? ':' + node.line : ''} | module: ${node.module}${node.exported ? ' | exported' : ''}</div></div>`;
+
+  // Edges
+  const from = graphData.edges.filter(e => e.from === nodeId);
+  const to = graphData.edges.filter(e => e.to === nodeId);
+  if (from.length + to.length > 0) {
+    html += '<div class="section"><h2>Relationships</h2>';
+    for (const e of from) html += `<div class="edge-item"><span class="edge-type ${e.type}">${e.type}</span><span>→ ${e.to}${e.detail ? ' (' + e.detail.slice(0,40) + ')' : ''}</span></div>`;
+    for (const e of to) html += `<div class="edge-item"><span class="edge-type ${e.type}">${e.type}</span><span>← ${e.from}${e.detail ? ' (' + e.detail.slice(0,40) + ')' : ''}</span></div>`;
+    html += '</div>';
+  }
+
+  // Code
+  try {
+    const code = await fetch(`/api/file?path=${encodeURIComponent(node.filePath)}`).then(r => r.text());
+    const lines = code.split('\n');
+    const hl = node.line || 0;
+    const start = Math.max(0, hl - 8);
+    const end = Math.min(lines.length, hl + 25);
+    html += `<div class="section"><div class="code-path">${node.filePath}:${hl}</div><div class="code-view">`;
+    for (let i = start; i < end; i++) {
+      const escaped = lines[i].replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      html += `<span class="${i + 1 === hl ? 'hl' : ''}"><span class="ln">${i + 1}</span>${escaped}\n</span>`;
+    }
+    html += '</div></div>';
+  } catch {}
+
+  panel.innerHTML = html;
+}
+
+document.getElementById('query').addEventListener('keypress', e => { if (e.key === 'Enter') search(); });
+init();
+</script>
+</body>
+</html>

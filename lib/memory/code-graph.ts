@@ -285,6 +285,46 @@ export function buildCodeGraph(projectPath: string): CodeGraph {
     allEdges.push(...edges);
   }
 
+  // Resolve import targets to actual file nodes
+  const nodeIds = new Set(allNodes.map(n => n.id));
+
+  // Build suffix index for Java: "com/bsc/api/Foo" → "module/src/main/java/com/bsc/api/Foo.java"
+  const suffixMap = new Map<string, string>();
+  for (const n of allNodes) {
+    if (n.type !== 'file') continue;
+    // Strip extension and common prefixes for matching
+    const stripped = n.id.replace(/\.(java|py|ts|tsx|js|mjs)$/, '');
+    suffixMap.set(stripped, n.id);
+    // Also map by last N segments: com/bsc/api/Foo → match
+    const parts = stripped.split('/');
+    for (let i = 1; i < parts.length; i++) {
+      const suffix = parts.slice(i).join('/');
+      if (!suffixMap.has(suffix)) suffixMap.set(suffix, n.id);
+    }
+  }
+
+  for (const edge of allEdges) {
+    if (nodeIds.has(edge.to)) continue;
+    // Try direct extensions
+    for (const ext of ['.ts', '.tsx', '.js', '.mjs', '.java', '.py', '/index.ts', '/index.js']) {
+      if (nodeIds.has(edge.to + ext)) { edge.to = edge.to + ext; break; }
+    }
+    // Try suffix matching (for Java package imports)
+    if (!nodeIds.has(edge.to)) {
+      const resolved = suffixMap.get(edge.to);
+      if (resolved) edge.to = resolved;
+    }
+    // Resolve call targets
+    if (!nodeIds.has(edge.to) && edge.type === 'calls') {
+      const parts = edge.to.split('::');
+      if (parts.length === 2) {
+        for (const ext of ['.ts', '.tsx', '.js', '.mjs', '.java', '.py']) {
+          if (nodeIds.has(parts[0] + ext + '::' + parts[1])) { edge.to = parts[0] + ext + '::' + parts[1]; break; }
+        }
+      }
+    }
+  }
+
   // Deduplicate edges
   const edgeSet = new Set<string>();
   const uniqueEdges = allEdges.filter(e => {

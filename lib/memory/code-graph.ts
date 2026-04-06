@@ -243,18 +243,44 @@ export function findAffectedBy(graph: CodeGraph, query: string): {
 } {
   const q = query.toLowerCase();
 
-  // Find direct matches — AND first, fallback to OR if no AND results
-  const terms = q.split(/\s+/).filter(Boolean);
-  const matchNode = (n: CodeNode, mode: 'and' | 'or') => {
-    const haystack = `${n.id} ${n.name} ${n.filePath} ${n.module}`.toLowerCase();
-    return mode === 'and'
-      ? terms.every(t => haystack.includes(t))
-      : terms.some(t => haystack.includes(t));
+  // Split camelCase/snake_case identifiers into searchable words
+  // "scheduleAutoSync" → "schedule auto sync scheduleautosync"
+  const splitIdentifier = (name: string): string => {
+    const words = name
+      .replace(/([a-z])([A-Z])/g, '$1 $2')  // camelCase → camel Case
+      .replace(/[_\-./]/g, ' ')              // snake_case, paths → spaces
+      .toLowerCase();
+    return `${words} ${name.toLowerCase()}`; // original + split
   };
-  let directMatches = graph.nodes.filter(n => matchNode(n, 'and'));
+
+  const terms = q.split(/\s+/).filter(Boolean);
+
+  // Build searchable haystack per node (with split identifiers)
+  const matchNode = (n: CodeNode): number => {
+    const haystack = `${splitIdentifier(n.name)} ${splitIdentifier(n.filePath)} ${n.module}`.toLowerCase();
+    let matched = 0;
+    for (const t of terms) {
+      // Prefix match: "scheduler" matches "schedule", "sync" matches "syncSource"
+      const words = haystack.split(/\s+/);
+      if (haystack.includes(t) || words.some(w => w.startsWith(t) || t.startsWith(w))) {
+        matched++;
+      }
+    }
+    return matched;
+  };
+
+  // Score all nodes, return those matching ALL terms (or most terms)
+  const scored = graph.nodes
+    .map(n => ({ node: n, score: matchNode(n) }))
+    .filter(s => s.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  // Tier 1: nodes matching ALL terms
+  let directMatches = scored.filter(s => s.score >= terms.length).map(s => s.node);
+  // Tier 2: if none match all, take nodes matching most terms
   if (directMatches.length === 0) {
-    // Fallback: OR matching
-    directMatches = graph.nodes.filter(n => matchNode(n, 'or'));
+    const maxScore = scored[0]?.score || 0;
+    directMatches = scored.filter(s => s.score === maxScore).map(s => s.node);
   }
 
   // BFS: find everything connected to direct matches (2 hops)

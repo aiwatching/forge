@@ -384,15 +384,18 @@ function createForgeMcpServer(sessionId: string): McpServer {
   // Lazy-loaded per project path
   const memoryGraphCache = new Map<string, any>();
 
-  function getMemoryGraph(projectPath: string) {
+  async function getMemoryGraph(projectPath: string) {
     if (memoryGraphCache.has(projectPath)) return memoryGraphCache.get(projectPath);
     try {
-      const { buildCodeGraph } = require('./memory/code-graph') as typeof import('./memory/code-graph');
+      console.log(`[memory] Building code graph for: ${projectPath}`);
+      const { buildCodeGraph } = await import('./memory/code-graph.js');
       const graph = buildCodeGraph(projectPath);
+      console.log(`[memory] Graph built: ${graph.nodes.length} nodes, ${graph.edges.length} edges`);
       memoryGraphCache.set(projectPath, graph);
       return graph;
     } catch (err: any) {
       console.error(`[memory] Failed to build graph: ${err.message}`);
+      console.error(`[memory] Stack: ${err.stack?.split('\n').slice(0, 3).join('\n')}`);
       return null;
     }
   }
@@ -424,10 +427,10 @@ function createForgeMcpServer(sessionId: string): McpServer {
       if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context' }] };
       try {
         const orch = getOrch(workspaceId);
-        const graph = getMemoryGraph(orch.projectPath);
+        const graph = await getMemoryGraph(orch.projectPath);
         if (!graph) return { content: [{ type: 'text', text: 'Error: Failed to build code graph' }] };
 
-        const { findAffectedBy } = require('./memory/code-graph') as typeof import('./memory/code-graph');
+        const { findAffectedBy } = await import('./memory/code-graph.js');
         const result = findAffectedBy(graph, query);
         const lines: string[] = [];
         if (result.directMatches.length > 0) {
@@ -457,7 +460,7 @@ function createForgeMcpServer(sessionId: string): McpServer {
       if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context' }] };
       try {
         const orch = getOrch(workspaceId);
-        const graph = getMemoryGraph(orch.projectPath);
+        const graph = await getMemoryGraph(orch.projectPath);
         if (!graph) return { content: [{ type: 'text', text: 'Error: No code graph' }] };
         const entries = getMemoryKnowledge(orch.projectPath);
 
@@ -572,7 +575,7 @@ function createForgeMcpServer(sessionId: string): McpServer {
         const orch = getOrch(workspaceId);
         memoryGraphCache.delete(orch.projectPath);
         const t0 = Date.now();
-        const graph = getMemoryGraph(orch.projectPath);
+        const graph = await getMemoryGraph(orch.projectPath);
         return { content: [{ type: 'text', text: `Rescanned in ${Date.now()-t0}ms: ${graph?.nodes?.length || 0} nodes, ${graph?.edges?.length || 0} edges` }] };
       } catch (err: any) { return { content: [{ type: 'text', text: `Error: ${err.message}` }] }; }
     }

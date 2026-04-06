@@ -182,7 +182,8 @@ function installForgeStopHook(forgePort: number): void {
   // Hook reads agent context from .forge/agent-context.json in the project dir.
   // This file is written by ensurePersistentSession for each agent's workDir.
   // Falls back to env vars if file doesn't exist.
-  const hookCommand = `${FORGE_HOOK_MARKER}\nCTX_FILE="$(pwd)/.forge/agent-context.json"; if [ -f "$CTX_FILE" ]; then WS_ID=$(python3 -c "import json;print(json.load(open('$CTX_FILE')).get('workspaceId',''))" 2>/dev/null); AG_ID=$(python3 -c "import json;print(json.load(open('$CTX_FILE')).get('agentId',''))" 2>/dev/null); elif [ -n "$FORGE_WORKSPACE_ID" ]; then WS_ID="$FORGE_WORKSPACE_ID"; AG_ID="$FORGE_AGENT_ID"; fi; if [ -n "$WS_ID" ] && [ -n "$AG_ID" ]; then curl -s -X POST "http://localhost:${daemonPort}/workspace/$WS_ID/agents" -H "Content-Type: application/json" -d "{\\"action\\":\\"agent_done\\",\\"agentId\\":\\"$AG_ID\\"}" > /dev/null 2>&1 & fi`;
+  // Hook command: workspace mode → agent_done, non-workspace → terminal-bell notification
+  const hookCommand = `${FORGE_HOOK_MARKER}\nCTX_FILE="$(pwd)/.forge/agent-context.json"; if [ -f "$CTX_FILE" ]; then WS_ID=$(python3 -c "import json;print(json.load(open('$CTX_FILE')).get('workspaceId',''))" 2>/dev/null); AG_ID=$(python3 -c "import json;print(json.load(open('$CTX_FILE')).get('agentId',''))" 2>/dev/null); elif [ -n "$FORGE_WORKSPACE_ID" ]; then WS_ID="$FORGE_WORKSPACE_ID"; AG_ID="$FORGE_AGENT_ID"; fi; if [ -n "$WS_ID" ] && [ -n "$AG_ID" ]; then curl -s -X POST "http://localhost:${daemonPort}/workspace/$WS_ID/agents" -H "Content-Type: application/json" -d "{\\"action\\":\\"agent_done\\",\\"agentId\\":\\"$AG_ID\\"}" > /dev/null 2>&1 & else curl -s -X POST "http://localhost:${forgePort}/api/terminal-bell" -H "Content-Type: application/json" -d "{\\"tabLabel\\":\\"Claude Code\\"}" > /dev/null 2>&1 & fi`;
 
   try {
     let settings: any = {};

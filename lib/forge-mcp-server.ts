@@ -117,9 +117,10 @@ function createForgeMcpServer(sessionId: string): McpServer {
         const snapshot = orch.getSnapshot();
         const getLabel = (id: string) => snapshot.agents.find((a: any) => a.id === id)?.label || id;
 
-        const formatted = messages.map((m: any) =>
-          `[${m.status}] From ${getLabel(m.from)}: ${m.payload?.content || m.payload?.action || '(no content)'} (${m.id.slice(0, 8)})`
-        ).join('\n');
+        const formatted = messages.map((m: any) => {
+          const refInfo = m.payload?.ref ? ` [ref: ${m.payload.ref}]` : '';
+          return `[${m.status}] From ${getLabel(m.from)}: ${m.payload?.content || m.payload?.action || '(no content)'}${refInfo} (${m.id.slice(0, 8)})`;
+        }).join('\n');
 
         return { content: [{ type: 'text', text: formatted }] };
       } catch (err: any) {
@@ -157,7 +158,7 @@ function createForgeMcpServer(sessionId: string): McpServer {
   // ── get_status ────────────────────────────
   server.tool(
     'get_status',
-    'Get status of all agents in the workspace',
+    'Get live status of all agents in the workspace (from topology cache)',
     {},
     async () => {
       const { workspaceId } = ctx();
@@ -165,18 +166,15 @@ function createForgeMcpServer(sessionId: string): McpServer {
 
       try {
         const orch = getOrch(workspaceId);
-        const snapshot = orch.getSnapshot();
-        const states = orch.getAllAgentStates();
+        const topo = orch.getWorkspaceTopo();
 
-        const lines = snapshot.agents
-          .filter((a: any) => a.type !== 'input')
-          .map((a: any) => {
-            const s = states[a.id];
-            const smith = s?.smithStatus || 'down';
-            const task = s?.taskStatus || 'idle';
-            const icon = smith === 'active' ? (task === 'running' ? '🔵' : task === 'done' ? '✅' : task === 'failed' ? '🔴' : '🟢') : '⬚';
-            return `${icon} ${a.label}: smith=${smith} task=${task}${s?.error ? ` error=${s.error}` : ''}`;
-          });
+        const lines = topo.agents.map((a: any) => {
+          const icon = a.smithStatus === 'active'
+            ? (a.taskStatus === 'running' ? '🔵' : a.taskStatus === 'done' ? '✅' : a.taskStatus === 'failed' ? '🔴' : '🟢')
+            : '⬚';
+          return `${icon} ${a.label}: smith=${a.smithStatus} task=${a.taskStatus}`;
+        });
+        lines.unshift(`Flow: ${topo.flow}\n`);
 
         return { content: [{ type: 'text', text: lines.join('\n') || 'No agents configured.' }] };
       } catch (err: any) {
@@ -188,7 +186,7 @@ function createForgeMcpServer(sessionId: string): McpServer {
   // ── get_agents ────────────────────────────
   server.tool(
     'get_agents',
-    'Get all agents in the workspace with their roles and relationships. Use this to understand who does what before sending messages.',
+    'Get workspace topology — all agents, their roles, relationships, current status, and execution flow. Cached and auto-refreshed on any agent change. Call this to understand the full team composition before planning work.',
     {},
     async () => {
       const { workspaceId, agentId } = ctx();
@@ -196,24 +194,35 @@ function createForgeMcpServer(sessionId: string): McpServer {
 
       try {
         const orch = getOrch(workspaceId);
-        const snapshot = orch.getSnapshot();
+        const topo = orch.getWorkspaceTopo();
 
-        const agents = snapshot.agents
-          .filter((a: any) => a.type !== 'input')
-          .map((a: any) => {
-            const deps = a.dependsOn
-              .map((depId: string) => snapshot.agents.find((d: any) => d.id === depId)?.label || depId)
-              .join(', ');
-            const isMe = a.id === agentId;
-            return [
-              `${a.icon} ${a.label}${isMe ? ' (you)' : ''}${a.primary ? ' [PRIMARY]' : ''}`,
-              `  Role: ${a.role || '(no role defined)'}`,
-              deps ? `  Depends on: ${deps}` : null,
-              a.workDir && a.workDir !== './' ? `  Work dir: ${a.workDir}` : null,
-            ].filter(Boolean).join('\n');
-          });
+        const lines: string[] = [];
+        lines.push(`## Workspace Topology (${topo.agents.length} agents)`);
+        lines.push(`Flow: ${topo.flow}\n`);
 
-        return { content: [{ type: 'text', text: agents.join('\n\n') || 'No agents configured.' }] };
+        // Identify present and missing standard roles
+        const labels = new Set(topo.agents.map((a: any) => a.label.toLowerCase()));
+        const standardRoles = ['architect', 'engineer', 'qa', 'reviewer', 'pm', 'lead'];
+        const present = standardRoles.filter(r => labels.has(r));
+        const missing = standardRoles.filter(r => !labels.has(r));
+        if (missing.length > 0) {
+          lines.push(`Present roles: ${present.join(', ') || 'none'}`);
+          lines.push(`Missing roles: ${missing.join(', ')} — these responsibilities must be covered by existing agents\n`);
+        }
+
+        for (const a of topo.agents as any[]) {
+          const isMe = a.id === agentId;
+          lines.push(`### ${a.icon} ${a.label}${isMe ? ' ← YOU' : ''}${a.primary ? ' [PRIMARY]' : ''}`);
+          lines.push(`Status: smith=${a.smithStatus} task=${a.taskStatus}`);
+          lines.push(`Role: ${a.roleSummary}`);
+          if (a.dependsOn.length > 0) lines.push(`Depends on: ${a.dependsOn.join(', ')}`);
+          if (a.workDir !== './') lines.push(`Work dir: ${a.workDir}`);
+          if (a.outputs.length > 0) lines.push(`Outputs: ${a.outputs.join(', ')}`);
+          if (a.steps.length > 0) lines.push(`Steps: ${a.steps.join(' → ')}`);
+          lines.push('');
+        }
+
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
       } catch (err: any) {
         return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
       }
@@ -400,6 +409,211 @@ function createForgeMcpServer(sessionId: string): McpServer {
       }
     }
   );
+
+  // ─── Request/Response Document Tools ─────────────────────
+
+  server.tool(
+    'create_request',
+    'Create a new request document for implementation. Auto-notifies downstream agents via DAG.',
+    {
+      title: z.string().describe('Short title for the request'),
+      description: z.string().describe('Detailed description of what to implement'),
+      type: z.enum(['feature', 'bugfix', 'refactor', 'task']).optional().describe('Request type (default: feature)'),
+      modules: z.array(z.object({
+        name: z.string(),
+        description: z.string(),
+        acceptance_criteria: z.array(z.string()),
+      })).describe('Feature modules with acceptance criteria'),
+      batch: z.string().optional().describe('Batch name to group related requests (default: auto-generated from date)'),
+      priority: z.enum(['high', 'medium', 'low']).optional().describe('Priority level (default: medium)'),
+    },
+    async (params) => {
+      const { workspaceId, agentId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context.' }] };
+      try {
+        const orch = getOrch(workspaceId);
+        const { createRequest } = await import('./workspace/requests') as any;
+        const batch = params.batch || `delivery-${new Date().toISOString().slice(0, 10)}`;
+        const agentLabel = orch.getSnapshot().agents.find((a: any) => a.id === agentId)?.label || agentId;
+
+        const ref = createRequest(orch.projectPath, {
+          title: params.title,
+          description: params.description,
+          type: params.type || 'feature',
+          modules: params.modules,
+          batch,
+          priority: params.priority || 'medium',
+          status: 'open',
+          assigned_to: '',
+          created_by: agentLabel,
+        });
+
+        // Auto-notify downstream agents via DAG
+        const snapshot = orch.getSnapshot();
+        const notified: string[] = [];
+        for (const agent of snapshot.agents) {
+          if (agent.type === 'input') continue;
+          if (!agent.dependsOn?.includes(agentId)) continue;
+          orch.getBus().send(agentId, agent.id, 'notify', {
+            action: 'new_request',
+            content: `New request: ${params.title} [${params.priority || 'medium'}] — ${params.modules.length} module(s). Use list_requests and claim_request to pick it up.`,
+            ref,
+          });
+          notified.push(agent.label);
+        }
+
+        return { content: [{ type: 'text', text: `Created request: ${ref}\nBatch: ${batch}\nModules: ${params.modules.length}\nNotified: ${notified.length > 0 ? notified.join(', ') : '(no downstream agents)'}` }] };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
+      }
+    }
+  );
+
+  server.tool(
+    'claim_request',
+    'Claim an open request for implementation. Prevents other agents from working on the same request.',
+    {
+      request_id: z.string().describe('Request ID to claim (e.g., REQ-20260403-001)'),
+    },
+    async (params) => {
+      const { workspaceId, agentId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context.' }] };
+      try {
+        const orch = getOrch(workspaceId);
+        const { claimRequest } = await import('./workspace/requests') as any;
+        const agentLabel = orch.getSnapshot().agents.find((a: any) => a.id === agentId)?.label || agentId;
+
+        const result = claimRequest(orch.projectPath, params.request_id, agentLabel);
+        if (!result.ok) {
+          return { content: [{ type: 'text', text: `Cannot claim ${params.request_id}: already claimed by ${result.claimedBy}. Use list_requests(status: "open") to find available requests.` }] };
+        }
+        return { content: [{ type: 'text', text: `Claimed ${params.request_id}. Status: in_progress. You can now implement it and use update_response when done.` }] };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
+      }
+    }
+  );
+
+  server.tool(
+    'update_response',
+    'Update a response document with your work results. Auto-advances status and notifies downstream agents via DAG.',
+    {
+      request_id: z.string().describe('Request ID (e.g., REQ-20260403-001)'),
+      section: z.enum(['engineer', 'review', 'qa']).describe('Which section to update'),
+      data: z.object({
+        files_changed: z.array(z.string()).optional().describe('Files modified (engineer)'),
+        notes: z.string().optional().describe('Implementation notes (engineer)'),
+        result: z.string().optional().describe('Result: approved/changes_requested/rejected (review) or passed/failed (qa)'),
+        findings: z.array(z.object({
+          severity: z.string(),
+          description: z.string(),
+        })).optional().describe('Issues found (review/qa)'),
+        test_files: z.array(z.string()).optional().describe('Test files run (qa)'),
+      }).describe('Response data for your section'),
+    },
+    async (params) => {
+      const { workspaceId, agentId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context.' }] };
+      try {
+        const orch = getOrch(workspaceId);
+        const { updateResponse, getRequest } = await import('./workspace/requests') as any;
+
+        const ref = updateResponse(orch.projectPath, params.request_id, params.section, params.data);
+        const updated = getRequest(orch.projectPath, params.request_id);
+        const newStatus = updated?.request?.status || 'unknown';
+
+        // Auto-notify downstream agents via DAG
+        const snapshot = orch.getSnapshot();
+        const notified: string[] = [];
+        for (const agent of snapshot.agents) {
+          if (agent.type === 'input') continue;
+          if (!agent.dependsOn?.includes(agentId)) continue;
+          orch.getBus().send(agentId, agent.id, 'notify', {
+            action: 'response_updated',
+            content: `${params.section} completed for ${params.request_id} → status: ${newStatus}. Use get_request to review details.`,
+            ref,
+          });
+          notified.push(agent.label);
+        }
+
+        return { content: [{ type: 'text', text: `Updated ${params.request_id} [${params.section}] → status: ${newStatus}\nNotified: ${notified.length > 0 ? notified.join(', ') : '(no downstream agents)'}` }] };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
+      }
+    }
+  );
+
+  server.tool(
+    'list_requests',
+    'List all request documents in the project, optionally filtered by batch or status.',
+    {
+      batch: z.string().optional().describe('Filter by batch/delivery name'),
+      status: z.enum(['open', 'in_progress', 'review', 'qa', 'done', 'rejected']).optional().describe('Filter by status'),
+    },
+    async (params) => {
+      const { workspaceId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context.' }] };
+      try {
+        const orch = getOrch(workspaceId);
+        const { listRequests, getBatchStatus } = await import('./workspace/requests') as any;
+
+        const requests = listRequests(orch.projectPath, { batch: params.batch, status: params.status as any });
+        if (requests.length === 0) {
+          return { content: [{ type: 'text', text: params.batch || params.status ? 'No requests match the filter.' : 'No requests found. Use create_request to create one.' }] };
+        }
+
+        const lines = requests.map((r: any) =>
+          `[${r.status}] ${r.id}: ${r.title} (${r.priority}) — ${r.modules?.length || 0} module(s)${r.assigned_to ? ` → ${r.assigned_to}` : ''}`
+        );
+
+        // Add batch summary if filtering by batch
+        if (params.batch) {
+          const bs = getBatchStatus(orch.projectPath, params.batch);
+          lines.push(`\nBatch "${params.batch}": ${bs.done}/${bs.total} done${bs.allDone ? ' ✓ ALL COMPLETE' : ''}`);
+        }
+
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
+      }
+    }
+  );
+
+  server.tool(
+    'get_request',
+    'Get full details of a request document and its response.',
+    {
+      request_id: z.string().describe('Request ID (e.g., REQ-20260403-001)'),
+    },
+    async (params) => {
+      const { workspaceId } = ctx();
+      if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context.' }] };
+      try {
+        const orch = getOrch(workspaceId);
+        const { getRequest } = await import('./workspace/requests') as any;
+
+        const result = getRequest(orch.projectPath, params.request_id);
+        if (!result) return { content: [{ type: 'text', text: `Request "${params.request_id}" not found.` }] };
+
+        const YAML = (await import('yaml')).default;
+        let text = `# Request: ${result.request.title}\n\n`;
+        text += YAML.stringify(result.request);
+        if (result.response) {
+          text += `\n---\n# Response\n\n`;
+          text += YAML.stringify(result.response);
+        } else {
+          text += `\n---\nNo response yet.`;
+        }
+
+        return { content: [{ type: 'text', text }] };
+      } catch (err: any) {
+        return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
+      }
+    }
+  );
+
+  // Update get_inbox to show ref field
+  // (Already handled — ref is part of payload, shown via content)
 
   return server;
 }

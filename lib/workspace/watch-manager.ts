@@ -212,7 +212,7 @@ const lastSessionFile = new Map<string, string>();
 
 function detectSessionChanges(projectPath: string, pattern: string | undefined, prevLineCount: number, contextChars = 500, sessionId?: string): { changes: WatchChange | null; lineCount: number } {
   const claudeHome = join(homedir(), '.claude', 'projects');
-  const encoded = projectPath.replace(/\//g, '-');
+  const encoded = projectPath.replace(/[^a-zA-Z0-9]/g, '-');
   const sessionDir = join(claudeHome, encoded);
   if (!existsSync(sessionDir)) return { changes: null, lineCount: prevLineCount };
 

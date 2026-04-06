@@ -147,6 +147,7 @@ export interface BusMessage {
     content?: string;                // natural language message
     files?: string[];                // related file paths
     replyTo?: string;                // reply to which message ID
+    ref?: string;                    // path to request/response document (reference-based notification)
   };
   timestamp: number;
   // Delivery tracking

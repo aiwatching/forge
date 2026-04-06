@@ -688,7 +688,7 @@ async function handleSmith(id: string, body: any, res: ServerResponse): Promise<
         const agentConfig = agentId ? orch.getSnapshot().agents.find(a => a.id === agentId) : null;
         const agentWorkDir = agentConfig?.workDir && agentConfig.workDir !== './' && agentConfig.workDir !== '.'
           ? join(orch.projectPath, agentConfig.workDir) : orch.projectPath;
-        const encoded = resolve(agentWorkDir).replace(/\//g, '-');
+        const encoded = resolve(agentWorkDir).replace(/[^a-zA-Z0-9]/g, '-');
         const sessDir = join(homedir(), '.claude', 'projects', encoded);
         const entries = readdirSync(sessDir);
         const files = entries

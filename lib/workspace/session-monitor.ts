@@ -28,8 +28,8 @@ export interface SessionMonitorEvent {
 }
 
 const POLL_INTERVAL = 3000;      // check every 3s
-const IDLE_THRESHOLD = 3540000;  // 59min of no file change → check for result entry
-const STABLE_THRESHOLD = 3600000; // 60min of no change → force done (fallback if hook missed) [59min check + 1min grace]
+const IDLE_THRESHOLD = 29 * 60 * 1000;   // 29min of no file change → check for result entry
+const STABLE_THRESHOLD = 30 * 60 * 1000; // 30min of no change → force done (fallback if hook missed)
 
 export class SessionFileMonitor extends EventEmitter {
   private timers = new Map<string, NodeJS.Timeout>();
@@ -108,7 +108,8 @@ export class SessionFileMonitor extends EventEmitter {
   static resolveSessionPath(projectPath: string, workDir: string | undefined, sessionId: string): string {
     const fullPath = workDir && workDir !== './' && workDir !== '.'
       ? join(projectPath, workDir) : projectPath;
-    const encoded = resolve(fullPath).replace(/\//g, '-');
+    // Claude Code encodes paths by replacing all non-alphanumeric chars with '-'
+    const encoded = resolve(fullPath).replace(/[^a-zA-Z0-9]/g, '-');
     return join(homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
   }
 

@@ -1129,7 +1129,7 @@ async function handleDocs(chatId: number, input: string) {
   }
 
   // /docs — show summary of latest Claude session for docs
-  const hash = docRoot.replace(/\//g, '-');
+  const hash = docRoot.replace(/[^a-zA-Z0-9]/g, '-');
   const claudeDir = join(getHome(), '.claude', 'projects', hash);
 
   if (!existsSync(claudeDir)) {

@@ -205,6 +205,14 @@ function getGraph(projectPath) {
   return graph;
 }
 
+// Validate project path
+if (!fs.existsSync(currentProject)) {
+  console.error(`Error: Project path not found: ${currentProject}`);
+  console.error(`\nUsage: node scripts/memory-debug/graph-server.cjs /path/to/your/project`);
+  console.error(`Example: node scripts/memory-debug/graph-server.cjs /Users/zliu/IdeaProjects/forge-skills-manager`);
+  process.exit(1);
+}
+
 // Initial scan
 let graph = getGraph(currentProject);
 

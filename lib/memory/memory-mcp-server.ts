@@ -270,15 +270,30 @@ server.tool(
       for (const e of exports) lines.push(`- ${e.detail || e.to}`);
     }
 
-    // Attached knowledge
-    const knowledge = entries.filter(k => k.file && (fileNode.filePath.includes(k.file) || k.file.includes(fileNode.filePath)));
-    if (knowledge.length > 0) {
-      const ICONS: Record<string, string> = { decision: '🎯', bug: '🐛', constraint: '⚠️', experience: '💡', note: '📝' };
-      lines.push(`\n### Knowledge (${knowledge.length})`);
-      for (const k of knowledge) {
+    // Attached knowledge — this file + imported files
+    const ICONS: Record<string, string> = { decision: '🎯', bug: '🐛', constraint: '⚠️', experience: '💡', note: '📝' };
+    const thisFileKnowledge = entries.filter(k => k.file && (fileNode.filePath.includes(k.file) || k.file.includes(fileNode.filePath)));
+    if (thisFileKnowledge.length > 0) {
+      lines.push(`\n### Knowledge — this file (${thisFileKnowledge.length})`);
+      for (const k of thisFileKnowledge) {
         const stale = k.status === 'stale' ? ' [STALE]' : '';
         lines.push(`- ${ICONS[k.type] || '📝'} **${k.title}**${stale}`);
         lines.push(`  ${k.content.slice(0, 200)}`);
+      }
+    }
+
+    // Knowledge from imported files (causal chain awareness)
+    const importedFiles = imports.map(e => e.to);
+    const relatedKnowledge = entries.filter(k => {
+      if (!k.file || thisFileKnowledge.includes(k)) return false;
+      return importedFiles.some(f => k.file!.includes(f) || f.includes(k.file!));
+    });
+    if (relatedKnowledge.length > 0) {
+      lines.push(`\n### Knowledge — imported files (${relatedKnowledge.length})`);
+      for (const k of relatedKnowledge.slice(0, 10)) {
+        const stale = k.status === 'stale' ? ' [STALE]' : '';
+        lines.push(`- ${ICONS[k.type] || '📝'} **${k.title}** (${k.file})${stale}`);
+        lines.push(`  ${k.content.slice(0, 150)}`);
       }
     }
 
@@ -392,10 +407,30 @@ server.tool(
   }
 );
 
+// Tool: rescan
+server.tool(
+  'rescan_code',
+  'Force rescan the project code graph. Use after creating new files or making significant structural changes (new modules, renamed files).',
+  {},
+  async () => {
+    const t0 = Date.now();
+    graph = null; // force full rescan
+    const meta = loadMeta();
+    meta.lastScanCommit = undefined; // clear cache
+    saveMeta(meta);
+    const g = ensureGraph();
+    return { content: [{ type: 'text', text: `Rescanned in ${Date.now() - t0}ms: ${g.nodes.length} nodes, ${g.edges.length} edges, ${g.files.length} files` }] };
+  }
+);
+
 // ─── Start ───────────────────────────────────────────────
 
 async function main() {
-  // Pre-scan on startup
+  if (!existsSync(PROJECT_PATH)) {
+    console.error(`[forge-memory] Error: Project not found: ${PROJECT_PATH}`);
+    console.error(`[forge-memory] Usage: pnpm tsx lib/memory/memory-mcp-server.ts /path/to/project`);
+    process.exit(1);
+  }
   console.error(`[forge-memory] Project: ${PROJECT_PATH}`);
   const t0 = Date.now();
   ensureGraph();

@@ -171,10 +171,12 @@ function scanProject(projectPath) {
 
 function queryGraph(graph, query) {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const direct = graph.nodes.filter(n => {
-    const h = `${n.id} ${n.name} ${n.filePath}`.toLowerCase();
-    return terms.every(t => h.includes(t));
-  });
+  const matchNode = (n, mode) => {
+    const h = `${n.id} ${n.name} ${n.filePath} ${n.module || ''}`.toLowerCase();
+    return mode === 'and' ? terms.every(t => h.includes(t)) : terms.some(t => h.includes(t));
+  };
+  let direct = graph.nodes.filter(n => matchNode(n, 'and'));
+  if (direct.length === 0) direct = graph.nodes.filter(n => matchNode(n, 'or'));
 
   const visited = new Set();
   const impact = [];

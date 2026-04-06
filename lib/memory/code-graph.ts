@@ -243,14 +243,19 @@ export function findAffectedBy(graph: CodeGraph, query: string): {
 } {
   const q = query.toLowerCase();
 
-  // Find direct matches — AND logic: all terms must match
-  // Supports: "workspace orchestrator" = both must appear
-  //           "file::func" = exact node ID match
+  // Find direct matches — AND first, fallback to OR if no AND results
   const terms = q.split(/\s+/).filter(Boolean);
-  const directMatches = graph.nodes.filter(n => {
+  const matchNode = (n: CodeNode, mode: 'and' | 'or') => {
     const haystack = `${n.id} ${n.name} ${n.filePath} ${n.module}`.toLowerCase();
-    return terms.every(t => haystack.includes(t));
-  });
+    return mode === 'and'
+      ? terms.every(t => haystack.includes(t))
+      : terms.some(t => haystack.includes(t));
+  };
+  let directMatches = graph.nodes.filter(n => matchNode(n, 'and'));
+  if (directMatches.length === 0) {
+    // Fallback: OR matching
+    directMatches = graph.nodes.filter(n => matchNode(n, 'or'));
+  }
 
   // BFS: find everything connected to direct matches (2 hops)
   const visited = new Set<string>();

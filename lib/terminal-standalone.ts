@@ -271,9 +271,9 @@ wss.on('connection', (ws: WebSocket) => {
       term = null;
     }
 
-    // Ensure mouse mode is off and scrollback is set (for old sessions too)
+    // Ensure mouse mode is on (enables trackpad scrolling) and scrollback is set
     try {
-      execSync(`${TMUX} set-option -t ${name} mouse off 2>/dev/null`);
+      execSync(`${TMUX} set-option -t ${name} mouse on 2>/dev/null`);
       execSync(`${TMUX} set-option -t ${name} history-limit 50000 2>/dev/null`);
     } catch {}
 

@@ -1077,10 +1077,10 @@ async function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
       continue;
     }
 
-    // Use git worktree for isolated execution (agent/prompt mode only).
-    // Shell mode steps manage their own execution context (some already create worktrees manually).
+    // All pipeline steps run in git worktree for isolated execution.
+    // This ensures the user's working directory is never affected,
+    // and avoids "uncommitted changes" conflicts.
     let effectivePath = projectInfo.path;
-    if (nodeDef.mode !== 'shell') {
     const branchName = nodeDef.branch ? resolveTemplate(nodeDef.branch, ctx) : `pipeline/${pipeline.id.slice(0, 8)}`;
     try {
       const { execSync } = require('node:child_process');
@@ -1096,12 +1096,10 @@ async function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
         execSync(`git worktree add "${worktreePath}" ${branchName}`, { cwd: projectInfo.path, stdio: 'pipe' });
         console.log(`[pipeline] Created worktree: ${worktreePath} (branch: ${branchName})`);
       } catch {
-        // Worktree might already exist — verify it's valid
         const { existsSync } = require('node:fs');
         if (existsSync(worktreePath)) {
           console.log(`[pipeline] Reusing worktree: ${worktreePath}`);
         } else {
-          // Try removing stale worktree entry and recreate
           try { execSync(`git worktree remove "${worktreePath}" --force`, { cwd: projectInfo.path, stdio: 'pipe' }); } catch {}
           execSync(`git worktree add "${worktreePath}" ${branchName}`, { cwd: projectInfo.path, stdio: 'pipe' });
           console.log(`[pipeline] Recreated worktree: ${worktreePath}`);
@@ -1109,14 +1107,11 @@ async function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
       }
 
       effectivePath = worktreePath;
-      // Store worktree path for cleanup
       (nodeState as any).worktreePath = worktreePath;
       (nodeState as any).worktreeBranch = branchName;
     } catch (e: any) {
       console.warn(`[pipeline] Worktree creation failed, falling back to project dir: ${e.message}`);
-      // Fallback: use project directory directly (legacy behavior)
     }
-    } // end if (nodeDef.mode !== 'shell')
 
     // ── Plugin mode: execute plugin action directly ──
     if (nodeDef.mode === 'plugin' && nodeDef.plugin) {

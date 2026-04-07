@@ -633,25 +633,38 @@ function createForgeMcpServer(sessionId: string): McpServer {
         let currentCommit: string | undefined;
         try { currentCommit = execSync('git rev-parse HEAD', { cwd: projectPath, encoding: 'utf-8' }).trim().slice(0, 12); } catch {}
 
-        if (!lastCommit || lastCommit === currentCommit) {
-          // No changes or no previous scan — check for untracked files
-          let untrackedCount = 0;
-          try { untrackedCount = execSync('git ls-files --others --exclude-standard', { cwd: projectPath, encoding: 'utf-8' }).trim().split('\n').filter(Boolean).length; } catch {}
-          if (untrackedCount === 0 && lastCommit === currentCommit) {
+        // Quick check: any dirty files at all?
+        if (lastCommit === currentCommit) {
+          let dirtyCount = 0;
+          try { dirtyCount += execSync('git diff --name-only', { cwd: projectPath, encoding: 'utf-8' }).trim().split('\n').filter(Boolean).length; } catch {}
+          try { dirtyCount += execSync('git ls-files --others --exclude-standard', { cwd: projectPath, encoding: 'utf-8' }).trim().split('\n').filter(Boolean).length; } catch {}
+          if (dirtyCount === 0) {
             return { content: [{ type: 'text', text: 'Graph is up to date (no changes since last scan).' }] };
           }
         }
 
-        // Get changed files
+        // Get ALL changed files: committed + modified (unstaged) + untracked
         let changedFiles: string[] = [];
+        // Committed changes since last scan
         if (lastCommit) {
           try { changedFiles = execSync(`git diff --name-only ${lastCommit}..HEAD`, { cwd: projectPath, encoding: 'utf-8' }).trim().split('\n').filter(Boolean); } catch {}
         }
-        // Also include untracked source files
+        // Modified but not committed (working tree changes)
+        try {
+          const modified = execSync('git diff --name-only', { cwd: projectPath, encoding: 'utf-8' }).trim().split('\n').filter(Boolean);
+          changedFiles.push(...modified);
+        } catch {}
+        // Staged but not committed
+        try {
+          const staged = execSync('git diff --name-only --cached', { cwd: projectPath, encoding: 'utf-8' }).trim().split('\n').filter(Boolean);
+          changedFiles.push(...staged);
+        } catch {}
+        // Untracked new files
         try {
           const untracked = execSync('git ls-files --others --exclude-standard', { cwd: projectPath, encoding: 'utf-8' }).trim().split('\n').filter(Boolean);
-          changedFiles = [...new Set([...changedFiles, ...untracked])];
+          changedFiles.push(...untracked);
         } catch {}
+        changedFiles = [...new Set(changedFiles)];
 
         if (changedFiles.length === 0) {
           return { content: [{ type: 'text', text: 'No file changes detected.' }] };

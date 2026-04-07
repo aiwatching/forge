@@ -1577,6 +1577,69 @@ function MemoryPanel({ projectPath }: { projectPath: string }) {
   const EDGE_COLORS: Record<string, string> = { imports: '#58a6ff', calls: '#3fb950', exports: '#a371f7' };
   const K_ICONS: Record<string, string> = { decision: '🎯', bug: '🐛', constraint: '⚠️', experience: '💡', note: '📝' };
 
+  // vis-network graph rendering
+  const graphContainerRef = useRef<HTMLDivElement>(null);
+  const networkRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!results || !graphData || !graphContainerRef.current) return;
+    // Load vis-network from CDN if not already loaded
+    const loadVis = () => {
+      if ((window as any).vis) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        if (document.getElementById('vis-network-cdn')) { resolve(); return; }
+        const script = document.createElement('script');
+        script.id = 'vis-network-cdn';
+        script.src = 'https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js';
+        script.onload = () => resolve();
+        document.head.appendChild(script);
+      });
+    };
+    loadVis().then(() => {
+      const vis = (window as any).vis;
+      if (!vis) return;
+      const allIds = new Set<string>();
+      results.directMatches.forEach(n => allIds.add(n.id));
+      results.impactChain.forEach(c => allIds.add(c.node.id));
+      const visNodes = new vis.DataSet(
+        [...allIds].map(id => {
+          const node = graphData.nodes.find((n: any) => n.id === id);
+          if (!node) return null;
+          const isDirect = results.directMatches.some((n: any) => n.id === id);
+          return {
+            id: node.id, label: node.name + (node.line ? ':' + node.line : ''),
+            color: { background: TYPE_COLORS[node.type] || '#8b949e', border: isDirect ? '#fff' : (TYPE_COLORS[node.type] || '#8b949e') },
+            borderWidth: isDirect ? 2 : 1,
+            font: { color: '#e6edf3', size: 10 },
+            shape: node.type === 'file' ? 'box' : node.type === 'class' ? 'diamond' : 'dot',
+            size: node.type === 'file' ? 16 : isDirect ? 12 : 8,
+          };
+        }).filter(Boolean)
+      );
+      const visEdges = new vis.DataSet(
+        graphData.edges.filter((e: any) => allIds.has(e.from) && allIds.has(e.to)).map((e: any) => ({
+          from: e.from, to: e.to, arrows: 'to',
+          color: { color: (EDGE_COLORS[e.type] || '#484f58') + '80' },
+          font: { color: '#484f58', size: 7, strokeWidth: 0 },
+          smooth: { type: 'curvedCW', roundness: 0.2 },
+        }))
+      );
+      if (networkRef.current) networkRef.current.destroy();
+      networkRef.current = new vis.Network(graphContainerRef.current, { nodes: visNodes, edges: visEdges }, {
+        physics: { solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: -30, springLength: 100 } },
+        interaction: { hover: true },
+        layout: { improvedLayout: visNodes.length < 60 },
+      });
+      networkRef.current.on('click', (p: any) => {
+        if (p.nodes.length > 0) {
+          const node = graphData.nodes.find((n: any) => n.id === p.nodes[0]);
+          if (node) selectNode(node);
+        }
+      });
+    });
+    return () => { if (networkRef.current) { networkRef.current.destroy(); networkRef.current = null; } };
+  }, [results, graphData]);
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Header */}
@@ -1637,8 +1700,20 @@ function MemoryPanel({ projectPath }: { projectPath: string }) {
           )}
         </div>
 
+        {/* Middle: graph visualization */}
+        {results && (results.directMatches.length > 0 || results.impactChain.length > 0) && (
+          <div className="flex-1 relative border-r border-[var(--border)]">
+            <div ref={graphContainerRef} className="w-full h-full" style={{ background: 'var(--bg-primary)' }} />
+            <div className="absolute bottom-1 left-1 text-[7px] text-[var(--text-secondary)] bg-[var(--bg-secondary)] px-1.5 py-0.5 rounded opacity-70">
+              <span className="inline-block w-1.5 h-1.5 rounded-full mr-0.5" style={{ background: '#58a6ff' }} />file
+              <span className="inline-block w-1.5 h-1.5 rounded-full ml-2 mr-0.5" style={{ background: '#3fb950' }} />fn
+              <span className="inline-block w-1.5 h-1.5 rounded-full ml-2 mr-0.5" style={{ background: '#a371f7' }} />class
+            </div>
+          </div>
+        )}
+
         {/* Right: detail + code */}
-        <div className="flex-1 overflow-y-auto p-2">
+        <div className="w-80 overflow-y-auto p-2">
           {!selectedNode && <div className="text-[10px] text-[var(--text-secondary)] text-center py-8">Click a result to view details</div>}
 
           {selectedNode && (

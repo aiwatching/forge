@@ -105,7 +105,7 @@ export function sendToClaudeSession(
   const child = spawn(resolvedClaude, args, {
     cwd: managed.info.projectPath,
     env,
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe'],  // ignore stdin — prompt is in args, no stdin needed
   });
 
   managed.child = child;

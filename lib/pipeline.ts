@@ -311,6 +311,7 @@ function parseWorkflow(raw: string): Workflow {
       mode: n.mode || (n.plugin ? 'plugin' : 'claude'),
       agent: n.agent || undefined,
       branch: n.branch || undefined,
+      worktree: n.worktree !== undefined ? n.worktree : undefined,
       plugin: n.plugin || undefined,
       pluginAction: n.plugin_action || n.pluginAction || undefined,
       pluginParams: n.plugin_params || n.pluginParams || n.params || undefined,

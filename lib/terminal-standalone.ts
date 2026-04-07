@@ -384,15 +384,19 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
 
-        case 'tmux-command': {
-          // Execute tmux command directly (e.g. toggle mouse)
-          if (parsed.command) {
-            try {
-              execSync(`${TMUX} ${parsed.command}`, { timeout: 3000 });
-              ws.send(JSON.stringify({ type: 'tmux-command-result', ok: true }));
-            } catch (e: any) {
-              ws.send(JSON.stringify({ type: 'tmux-command-result', ok: false, error: e.message }));
+        case 'tmux-mouse': {
+          // Toggle mouse for ALL tmux sessions (global + per-session)
+          const val = parsed.mouse ? 'on' : 'off';
+          try {
+            execSync(`${TMUX} set -g mouse ${val}`, { timeout: 3000 });
+            // Also apply to every existing session (overrides per-session setting)
+            const sessions = listTmuxSessions();
+            for (const s of sessions) {
+              try { execSync(`${TMUX} set-option -t "${s.name}" mouse ${val}`, { timeout: 1000 }); } catch {}
             }
+            ws.send(JSON.stringify({ type: 'tmux-mouse-result', ok: true, mouse: parsed.mouse }));
+          } catch (e: any) {
+            ws.send(JSON.stringify({ type: 'tmux-mouse-result', ok: false, error: e.message }));
           }
           break;
         }

@@ -176,7 +176,7 @@ function MouseToggle() {
       const wsUrl = getWsUrl();
       const ws = new WebSocket(wsUrl);
       ws.onopen = () => {
-        ws.send(JSON.stringify({ type: 'tmux-command', command: `set -g mouse ${next ? 'on' : 'off'}` }));
+        ws.send(JSON.stringify({ type: 'tmux-mouse', mouse: next }));
         setTimeout(() => ws.close(), 300);
       };
       ws.onerror = () => ws.close();

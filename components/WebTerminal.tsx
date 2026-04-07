@@ -165,6 +165,40 @@ function collectAllSessionNames(tabs: TabState[]): string[] {
   return tabs.flatMap(t => collectSessionNames(t.tree));
 }
 
+// ─── Mouse Toggle Button ─────────────────────────────────────
+
+function MouseToggle() {
+  const [mouseOn, setMouseOn] = useState(true);
+
+  const toggle = async () => {
+    const next = !mouseOn;
+    try {
+      // Toggle mouse for ALL tmux sessions
+      const wsUrl = getWsUrl();
+      const ws = new WebSocket(wsUrl);
+      ws.onopen = () => {
+        // Send tmux command to toggle mouse globally
+        ws.send(JSON.stringify({ type: 'input', data: `tmux set -g mouse ${next ? 'on' : 'off'}\n` }));
+        setTimeout(() => ws.close(), 500);
+      };
+      ws.onerror = () => ws.close();
+    } catch {}
+    setMouseOn(next);
+  };
+
+  return (
+    <div className="flex items-center gap-1 mr-2">
+      <button onClick={toggle} title={mouseOn ? 'Mouse: ON (scroll=trackpad, copy=Shift+drag)' : 'Mouse: OFF (scroll=Ctrl+B [, copy=drag)'}
+        className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${mouseOn ? 'border-green-600/40 text-green-400 bg-green-500/10' : 'border-gray-600 text-gray-500'}`}>
+        🖱️ {mouseOn ? 'ON' : 'OFF'}
+      </button>
+      <span className="text-[8px] text-gray-600">
+        {mouseOn ? 'scroll: trackpad · copy: Shift+drag' : 'scroll: Ctrl+B [ · copy: drag'}
+      </span>
+    </div>
+  );
+}
+
 // ─── Pending commands for new terminal panes ────────────────
 
 const pendingCommands = new Map<number, string>();
@@ -736,7 +770,7 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
 
         {/* Toolbar */}
         <div className="flex items-center gap-1 px-2 ml-auto">
-          <span className="text-[9px] text-gray-600 mr-2">Ctrl+Shift+C/V to copy/paste</span>
+          <MouseToggle />
           <button onClick={() => onSplit('vertical')} className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-white hover:bg-[var(--term-border)] rounded">
             Split Right
           </button>

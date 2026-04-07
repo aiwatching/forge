@@ -96,7 +96,6 @@ export function sendToClaudeSession(
     cwd: managed.info.projectPath,
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
-    shell: '/bin/zsh',
   });
 
   managed.child = child;

@@ -198,14 +198,44 @@ nodes:
 **How it works:**
 - If `branch` is specified, a worktree is created at `<project>/.forge/worktrees/<branch>/`
 - If `branch` is omitted, an auto-generated branch `pipeline/<id>` is used
-- The task runs inside the worktree, not the project root
+- **All step modes** (shell, agent, prompt, plugin) run inside the worktree
 - After completion, the worktree is preserved for review
 - Clean up: `git worktree remove <path>` after reviewing changes
+
+**Shell steps in worktree:**
+
+Shell steps receive 3 environment variables for worktree context:
+
+| Variable | Value | Example |
+|----------|-------|---------|
+| `FORGE_WORKTREE` | Worktree path (current working directory) | `/project/.forge/worktrees/pipeline-abc12345` |
+| `FORGE_WORKTREE_BRANCH` | Branch name for this worktree | `pipeline/abc12345` or `feature/my-feature` |
+| `FORGE_PROJECT_ROOT` | Original project root path | `/Users/me/projects/my-app` |
+
+Use these when shell scripts need to reference the original repo:
+
+```yaml
+nodes:
+  push-changes:
+    mode: shell
+    prompt: |
+      git add -A && git commit -m "Pipeline changes" &&
+      git push origin "$FORGE_WORKTREE_BRANCH"
+```
+
+To operate on the original repo from a shell step:
+```yaml
+  check-main:
+    mode: shell
+    prompt: |
+      cd "$FORGE_PROJECT_ROOT" && git log --oneline -5
+```
 
 **Benefits:**
 - Your working directory stays clean during pipeline execution
 - Multiple pipelines can run in parallel on the same project
 - Changes are isolated on branches, easy to review/merge/discard
+- All step modes use the same isolation — consistent behavior
 
 ## Parallel Execution
 

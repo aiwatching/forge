@@ -85,18 +85,27 @@ export function sendToClaudeSession(
     args.push('--resume', continueId);
   }
 
-  // Message goes last
-  args.push(message);
+  // Message passed as CLI arg (pushed above).
+  // Spawn without shell to prevent zsh from interpreting special chars
+  // in the message (${}, backticks, quotes in code diffs).
 
   // Remove CLAUDECODE env var to avoid nesting detection
   const env = { ...process.env };
   delete env.CLAUDECODE;
 
-  const child = spawn(claudePath, args, {
+  // Resolve full path so spawn works without shell for PATH lookup
+  let resolvedClaude = claudePath;
+  if (!claudePath.startsWith('/')) {
+    try {
+      const { execSync: execS } = require('node:child_process');
+      resolvedClaude = execS(`which ${claudePath}`, { encoding: 'utf-8', env }).trim() || claudePath;
+    } catch {}
+  }
+
+  const child = spawn(resolvedClaude, args, {
     cwd: managed.info.projectPath,
     env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    shell: '/bin/zsh',
+    stdio: ['ignore', 'pipe', 'pipe'],  // ignore stdin — prompt is in args, no stdin needed
   });
 
   managed.child = child;

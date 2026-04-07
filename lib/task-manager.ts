@@ -292,10 +292,12 @@ function executeTask(task: Task): Promise<void> {
     const agentId = (task as any).agent || settings.defaultAgent || 'claude';
     const adapter = getAgent(agentId);
 
-    // Model: per-task override > agent scene model > global fallback
+    // Model priority: per-task override > agent scene model > global taskModel
+    // "default" means "no override" — fall through to next level
     const agentCfg = settings.agents?.[agentId];
-    const isPipeline = (() => { try { const { pipelineTaskIds: p } = require('./pipeline'); return p.has(task.id); } catch { return false; } })();
-    const model = taskModelOverrides.get(task.id) || (isPipeline ? agentCfg?.models?.task : agentCfg?.models?.task) || agentCfg?.models?.task || settings.taskModel;
+    const agentModel = agentCfg?.models?.task;
+    const effectiveAgentModel = agentModel && agentModel !== 'default' ? agentModel : null;
+    const model = taskModelOverrides.get(task.id) || effectiveAgentModel || settings.taskModel;
     const supportsModel = adapter.config.capabilities?.supportsModel;
     const spawnOpts = adapter.buildTaskSpawn({
       projectPath: task.projectPath,

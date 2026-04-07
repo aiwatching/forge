@@ -395,23 +395,46 @@ function createForgeMcpServer(sessionId: string): McpServer {
   );
 
   // ── Memory Tools (code graph + knowledge store) ──────────
+  // Heavy AST scanning runs in a worker thread to avoid blocking terminal/MCP.
 
-  // Lazy-loaded per project path
   const memoryGraphCache = new Map<string, any>();
+
+  async function runGraphWorker(action: string, data: any): Promise<any> {
+    const { Worker } = await import('node:worker_threads');
+    const { join } = await import('node:path');
+    const workerPath = join(import.meta.dirname || __dirname, 'memory', 'graph-worker.ts');
+
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(workerPath, {
+        workerData: { action, ...data },
+        execArgv: ['--require', require.resolve('tsx/cjs'), '--import', `file://${require.resolve('tsx/esm')}`],
+      });
+      worker.on('message', (msg) => {
+        if (msg.ok) resolve(msg.result);
+        else reject(new Error(msg.error));
+      });
+      worker.on('error', reject);
+      worker.on('exit', (code) => { if (code !== 0) reject(new Error(`Worker exited with code ${code}`)); });
+    });
+  }
 
   async function getMemoryGraph(projectPath: string) {
     if (memoryGraphCache.has(projectPath)) return memoryGraphCache.get(projectPath);
     try {
-      console.log(`[memory] Building code graph for: ${projectPath}`);
-      const { buildCodeGraph } = await import('./memory/code-graph.js');
-      const graph = buildCodeGraph(projectPath);
+      console.log(`[memory] Building code graph in worker thread: ${projectPath}`);
+      const graph = await runGraphWorker('build', { projectPath });
       console.log(`[memory] Graph built: ${graph.nodes.length} nodes, ${graph.edges.length} edges`);
       memoryGraphCache.set(projectPath, graph);
       return graph;
     } catch (err: any) {
-      console.error(`[memory] Failed to build graph: ${err.message}`);
-      console.error(`[memory] Stack: ${err.stack?.split('\n').slice(0, 3).join('\n')}`);
-      return null;
+      console.error(`[memory] Worker failed: ${err.message}`);
+      // Fallback: run in main thread for small projects
+      try {
+        const { buildCodeGraph } = await import('./memory/code-graph.js');
+        const graph = buildCodeGraph(projectPath);
+        memoryGraphCache.set(projectPath, graph);
+        return graph;
+      } catch { return null; }
     }
   }
 

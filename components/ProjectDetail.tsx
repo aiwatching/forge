@@ -84,7 +84,7 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [diffFile, setDiffFile] = useState<string | null>(null);
   const [projectSkills, setProjectSkills] = useState<{ name: string; displayName: string; type: string; scope: string; version: string; installedVersion: string; hasUpdate: boolean; source: 'registry' | 'local' }[]>([]);
   const [showSkillsDetail, setShowSkillsDetail] = useState(false);
-  const [projectTab, setProjectTab] = useState<'workspace' | 'sessions' | 'code' | 'skills' | 'claudemd' | 'pipelines'>('code');
+  const [projectTab, setProjectTab] = useState<'workspace' | 'sessions' | 'code' | 'skills' | 'claudemd' | 'pipelines' | 'memory'>('code');
   const wsViewRef = useRef<import('./WorkspaceView').WorkspaceViewHandle>(null);
   // Pipeline bindings state
   const [pipelineBindings, setPipelineBindings] = useState<{ id: number; workflowName: string; enabled: boolean; config: any; lastRunAt: string | null; nextRunAt: string | null }[]>([]);
@@ -612,6 +612,14 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
             >
               Pipelines
               {pipelineBindings.length > 0 && <span className="ml-1 text-[8px] text-[var(--text-secondary)]">({pipelineBindings.length})</span>}
+            </button>
+            <button
+              onClick={() => setProjectTab('memory')}
+              className={`text-[9px] px-2 py-0.5 rounded transition-colors ${
+                projectTab === 'memory' ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              Memory
             </button>
           </div>
         </div>
@@ -1360,6 +1368,11 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
         </div>
       )}
 
+      {/* Memory tab */}
+      {projectTab === 'memory' && (
+        <MemoryPanel projectPath={projectPath} />
+      )}
+
       {/* Git panel — bottom (code tab only) */}
       {projectTab === 'code' && gitInfo && (
         <div className="border-t border-[var(--border)] shrink-0">
@@ -1503,6 +1516,181 @@ const FileTreeNode = memo(function FileTreeNode({ node, depth, selected, onSelec
     </button>
   );
 });
+
+// ─── Memory Panel ────────────────────────────────────────
+
+function MemoryPanel({ projectPath }: { projectPath: string }) {
+  const [query, setQuery] = useState('');
+  const [stats, setStats] = useState<any>(null);
+  const [results, setResults] = useState<{ directMatches: any[]; impactChain: any[] } | null>(null);
+  const [knowledge, setKnowledge] = useState<any[]>([]);
+  const [selectedNode, setSelectedNode] = useState<any>(null);
+  const [nodeEdges, setNodeEdges] = useState<any[]>([]);
+  const [codePreview, setCodePreview] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [graphData, setGraphData] = useState<any>(null);
+
+  const api = (action: string, extra = '') =>
+    fetch(`/api/memory?project=${encodeURIComponent(projectPath)}&action=${action}${extra}`).then(r => r.json());
+
+  useEffect(() => {
+    api('stats').then(setStats).catch(() => {});
+    api('knowledge').then(d => setKnowledge(d.entries || [])).catch(() => {});
+  }, [projectPath]);
+
+  const search = async () => {
+    if (!query.trim()) return;
+    setLoading(true);
+    try {
+      if (!graphData) setGraphData(await api('graph'));
+      const r = await api('query', `&q=${encodeURIComponent(query)}`);
+      setResults(r);
+      setSelectedNode(null);
+      setCodePreview(null);
+    } catch {} finally { setLoading(false); }
+  };
+
+  const selectNode = async (node: any) => {
+    setSelectedNode(node);
+    if (graphData) {
+      setNodeEdges([
+        ...graphData.edges.filter((e: any) => e.from === node.id).map((e: any) => ({ ...e, dir: '→' })),
+        ...graphData.edges.filter((e: any) => e.to === node.id).map((e: any) => ({ ...e, dir: '←' })),
+      ]);
+    }
+    try {
+      const code = await fetch(`/api/memory?project=${encodeURIComponent(projectPath)}&action=file&file=${encodeURIComponent(node.filePath)}`).then(r => r.text());
+      setCodePreview(code);
+    } catch { setCodePreview(null); }
+  };
+
+  const rescan = async () => {
+    setLoading(true);
+    try {
+      const r = await api('rescan');
+      setStats({ ...stats, totalNodes: r.nodes, totalEdges: r.edges });
+      setGraphData(null);
+    } catch {} finally { setLoading(false); }
+  };
+
+  const TYPE_COLORS: Record<string, string> = { file: '#58a6ff', function: '#3fb950', class: '#a371f7' };
+  const EDGE_COLORS: Record<string, string> = { imports: '#58a6ff', calls: '#3fb950', exports: '#a371f7' };
+  const K_ICONS: Record<string, string> = { decision: '🎯', bug: '🐛', constraint: '⚠️', experience: '💡', note: '📝' };
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-2 p-2 border-b border-[var(--border)]">
+        <input value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && search()}
+          placeholder="Search code relationships... (e.g. orchestrator, sync adapter)"
+          className="flex-1 text-xs bg-[var(--bg-primary)] border border-[var(--border)] rounded px-2 py-1 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]" />
+        <button onClick={search} disabled={loading} className="text-[9px] px-2 py-1 rounded bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50">Search</button>
+        <button onClick={rescan} disabled={loading} className="text-[9px] px-2 py-1 rounded border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]">Rescan</button>
+        {stats && <span className="text-[8px] text-[var(--text-secondary)]">{stats.files}f {stats.functions}fn {stats.totalNodes}n {stats.totalEdges}e</span>}
+      </div>
+
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left: results */}
+        <div className="w-72 border-r border-[var(--border)] overflow-y-auto p-2 space-y-1">
+          {!results && knowledge.length === 0 && <div className="text-[10px] text-[var(--text-secondary)] text-center py-8">Search to explore code relationships</div>}
+
+          {results && results.directMatches.length > 0 && (
+            <div>
+              <div className="text-[8px] text-[var(--text-secondary)] uppercase mb-1">Direct ({results.directMatches.length})</div>
+              {results.directMatches.slice(0, 20).map((n: any) => (
+                <button key={n.id} onClick={() => selectNode(n)}
+                  className={`w-full text-left text-[10px] px-1.5 py-1 rounded hover:bg-[var(--bg-secondary)] ${selectedNode?.id === n.id ? 'bg-[var(--bg-secondary)]' : ''}`}>
+                  <span className="inline-block w-1.5 h-1.5 rounded-full mr-1" style={{ background: TYPE_COLORS[n.type] || '#8b949e' }} />
+                  <span className="font-medium text-[var(--text-primary)]">{n.name}</span>
+                  {n.exported && <span className="text-[7px] text-[var(--text-secondary)] ml-1">exp</span>}
+                  <div className="text-[8px] text-[var(--text-secondary)] ml-3">{n.filePath}{n.line ? ':' + n.line : ''}</div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {results && results.impactChain.length > 0 && (
+            <div className="mt-2">
+              <div className="text-[8px] text-[var(--text-secondary)] uppercase mb-1">Impact ({results.impactChain.length})</div>
+              {results.impactChain.slice(0, 15).map((c: any) => (
+                <button key={c.node.id} onClick={() => selectNode(c.node)}
+                  className={`w-full text-left text-[10px] px-1.5 py-1 rounded hover:bg-[var(--bg-secondary)] ${selectedNode?.id === c.node.id ? 'bg-[var(--bg-secondary)]' : ''}`}>
+                  <span className="inline-block w-1.5 h-1.5 rounded-full mr-1" style={{ background: TYPE_COLORS[c.node.type] || '#8b949e' }} />
+                  <span className="text-[var(--text-primary)]">{c.node.name}</span>
+                  <span className="text-[7px] text-[var(--text-secondary)] ml-1">d{c.depth}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {knowledge.length > 0 && (
+            <div className="mt-3 pt-2 border-t border-[var(--border)]">
+              <div className="text-[8px] text-[var(--text-secondary)] uppercase mb-1">Knowledge ({knowledge.filter((k: any) => k.status === 'active').length})</div>
+              {knowledge.filter((k: any) => k.status === 'active').slice(0, 10).map((k: any) => (
+                <div key={k.id} className="text-[10px] px-1.5 py-1 rounded bg-[var(--bg-primary)] mb-1 border border-[var(--border)]">
+                  <span>{K_ICONS[k.type] || '📝'} </span>
+                  <span className="text-[var(--text-primary)]">{k.title}</span>
+                  {k.file && <div className="text-[8px] text-[var(--text-secondary)] ml-4">{k.file}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Right: detail + code */}
+        <div className="flex-1 overflow-y-auto p-2">
+          {!selectedNode && <div className="text-[10px] text-[var(--text-secondary)] text-center py-8">Click a result to view details</div>}
+
+          {selectedNode && (
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-[var(--text-primary)]">
+                <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ background: TYPE_COLORS[selectedNode.type] || '#8b949e' }} />
+                {selectedNode.name}
+                <span className="text-[9px] text-[var(--text-secondary)] ml-2">{selectedNode.type} · {selectedNode.filePath}{selectedNode.line ? ':' + selectedNode.line : ''}</span>
+              </div>
+
+              {nodeEdges.length > 0 && (
+                <div className="space-y-0.5">
+                  <div className="text-[8px] text-[var(--text-secondary)] uppercase">Relationships ({nodeEdges.length})</div>
+                  {nodeEdges.slice(0, 20).map((e: any, i: number) => (
+                    <div key={i} className="text-[9px] flex items-center gap-1">
+                      <span className="text-[7px] px-1 rounded" style={{ background: (EDGE_COLORS[e.type] || '#484f58') + '30', color: EDGE_COLORS[e.type] || '#8b949e' }}>{e.type}</span>
+                      <span className="text-[var(--text-secondary)]">{e.dir}</span>
+                      <span className="text-[var(--text-primary)]">{e.dir === '→' ? e.to : e.from}</span>
+                      {e.detail && <span className="text-[var(--text-secondary)]">({e.detail.slice(0, 30)})</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {codePreview && (
+                <div className="mt-2">
+                  <div className="text-[8px] text-[var(--text-secondary)] mb-1">{selectedNode.filePath}</div>
+                  <pre className="text-[10px] font-mono bg-[var(--bg-primary)] border border-[var(--border)] rounded p-2 overflow-x-auto max-h-[50vh] text-[var(--text-primary)]">
+                    {(() => {
+                      const lines = codePreview.split('\n');
+                      const hl = selectedNode.line || 0;
+                      const start = Math.max(0, hl - 8);
+                      const end = Math.min(lines.length, hl + 25);
+                      return lines.slice(start, end).map((line, i) => {
+                        const num = start + i + 1;
+                        const isHl = num === hl;
+                        return <div key={i} style={isHl ? { background: '#ffd70020' } : {}}>
+                          <span className="inline-block w-8 text-right text-[var(--text-secondary)] mr-2 select-none">{num}</span>
+                          {line}
+                        </div>;
+                      });
+                    })()}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Agent Terminal Button ───────────────────────────────
 

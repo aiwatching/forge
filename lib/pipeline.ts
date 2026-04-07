@@ -1077,12 +1077,13 @@ async function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
       continue;
     }
 
-    // All pipeline steps run in git worktree for isolated execution.
-    // This ensures the user's working directory is never affected,
-    // and avoids "uncommitted changes" conflicts.
+    // Agent/prompt steps run in git worktree for isolated execution.
+    // Shell steps run in the project directory directly — they often
+    // do git operations (checkout, push, merge) that break in worktrees.
     let effectivePath = projectInfo.path;
+    const useWorktree = nodeDef.mode !== 'shell' && nodeDef.mode !== 'plugin';
     const branchName = nodeDef.branch ? resolveTemplate(nodeDef.branch, ctx) : `pipeline/${pipeline.id.slice(0, 8)}`;
-    try {
+    if (useWorktree) try {
       const { execSync } = require('node:child_process');
       const worktreePath = `${projectInfo.path}/.forge/worktrees/${branchName.replace(/\//g, '-')}`;
       const { mkdirSync } = require('node:fs');

@@ -1181,12 +1181,8 @@ async function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
       agent: nodeDef.agent || undefined,
     });
     pipelineTaskIds.add(task.id);
-    if (taskMode !== 'shell') {
-      const pipelineModel = loadSettings().pipelineModel;
-      if (pipelineModel && pipelineModel !== 'default') {
-        taskModelOverrides.set(task.id, pipelineModel);
-      }
-    }
+    // Pipeline tasks use the same model selection as normal tasks:
+    // agent model > global taskModel. No separate pipelineModel override.
 
     nodeState.status = 'running';
     nodeState.taskId = task.id;

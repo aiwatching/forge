@@ -1077,13 +1077,11 @@ async function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
       continue;
     }
 
-    // Agent/prompt steps run in git worktree for isolated execution.
-    // Shell steps run in the project directory directly — they often
-    // do git operations (checkout, push, merge) that break in worktrees.
+    // All steps run in git worktree for isolated execution.
+    // Shell steps receive worktree info via env vars (FORGE_WORKTREE, FORGE_WORKTREE_BRANCH, FORGE_PROJECT_ROOT).
     let effectivePath = projectInfo.path;
-    const useWorktree = nodeDef.mode !== 'shell' && nodeDef.mode !== 'plugin';
     const branchName = nodeDef.branch ? resolveTemplate(nodeDef.branch, ctx) : `pipeline/${pipeline.id.slice(0, 8)}`;
-    if (useWorktree) try {
+    try {
       const { execSync } = require('node:child_process');
       const worktreePath = `${projectInfo.path}/.forge/worktrees/${branchName.replace(/\//g, '-')}`;
       const { mkdirSync } = require('node:fs');
@@ -1163,11 +1161,18 @@ async function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
     }
 
     // ── Shell/Agent mode: create task ──
+    // Inject worktree info into shell prompt so git commands work correctly
     const taskMode = nodeDef.mode === 'shell' ? 'shell' : 'prompt';
+    let effectivePrompt = prompt;
+    if (taskMode === 'shell' && effectivePath !== projectInfo.path) {
+      // Prepend env vars so shell scripts know they're in a worktree
+      const envPrefix = `export FORGE_WORKTREE="${effectivePath}" FORGE_WORKTREE_BRANCH="${(nodeState as any).worktreeBranch || branchName}" FORGE_PROJECT_ROOT="${projectInfo.path}" && `;
+      effectivePrompt = envPrefix + prompt;
+    }
     const task = createTask({
       projectName: projectInfo.name,
       projectPath: effectivePath,
-      prompt,
+      prompt: effectivePrompt,
       mode: taskMode as any,
       agent: nodeDef.agent || undefined,
     });

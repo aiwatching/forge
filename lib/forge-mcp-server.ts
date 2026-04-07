@@ -604,17 +604,78 @@ function createForgeMcpServer(sessionId: string): McpServer {
 
   server.tool(
     'rescan_code',
-    'Force rescan project code graph after creating new files or making structural changes.',
-    {},
-    async () => {
+    'Update the code graph. By default does incremental update (only changed files). Use force=true for full rescan.',
+    {
+      force: z.boolean().optional().describe('Force full rescan instead of incremental update'),
+    },
+    async ({ force }) => {
       const { workspaceId } = ctx();
       if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context' }] };
       try {
         const orch = getOrch(workspaceId);
-        memoryGraphCache.delete(orch.projectPath);
+        const projectPath = orch.projectPath;
         const t0 = Date.now();
-        const graph = await getMemoryGraph(orch.projectPath);
-        return { content: [{ type: 'text', text: `Rescanned in ${Date.now()-t0}ms: ${graph?.nodes?.length || 0} nodes, ${graph?.edges?.length || 0} edges` }] };
+
+        if (force) {
+          // Full rescan
+          memoryGraphCache.delete(projectPath);
+          const graph = await getMemoryGraph(projectPath);
+          return { content: [{ type: 'text', text: `Full rescan in ${Date.now()-t0}ms: ${graph?.nodes?.length || 0} nodes, ${graph?.edges?.length || 0} edges` }] };
+        }
+
+        // Incremental: find changed files since last scan
+        const { existsSync, readFileSync, writeFileSync, mkdirSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const { execSync } = await import('node:child_process');
+        const metaPath = join(projectPath, '.forge', 'memory', 'meta.json');
+        let lastCommit: string | undefined;
+        try { lastCommit = JSON.parse(readFileSync(metaPath, 'utf-8')).lastScanCommit; } catch {}
+        let currentCommit: string | undefined;
+        try { currentCommit = execSync('git rev-parse HEAD', { cwd: projectPath, encoding: 'utf-8' }).trim().slice(0, 12); } catch {}
+
+        if (!lastCommit || lastCommit === currentCommit) {
+          // No changes or no previous scan — check for untracked files
+          let untrackedCount = 0;
+          try { untrackedCount = execSync('git ls-files --others --exclude-standard', { cwd: projectPath, encoding: 'utf-8' }).trim().split('\n').filter(Boolean).length; } catch {}
+          if (untrackedCount === 0 && lastCommit === currentCommit) {
+            return { content: [{ type: 'text', text: 'Graph is up to date (no changes since last scan).' }] };
+          }
+        }
+
+        // Get changed files
+        let changedFiles: string[] = [];
+        if (lastCommit) {
+          try { changedFiles = execSync(`git diff --name-only ${lastCommit}..HEAD`, { cwd: projectPath, encoding: 'utf-8' }).trim().split('\n').filter(Boolean); } catch {}
+        }
+        // Also include untracked source files
+        try {
+          const untracked = execSync('git ls-files --others --exclude-standard', { cwd: projectPath, encoding: 'utf-8' }).trim().split('\n').filter(Boolean);
+          changedFiles = [...new Set([...changedFiles, ...untracked])];
+        } catch {}
+
+        if (changedFiles.length === 0) {
+          return { content: [{ type: 'text', text: 'No file changes detected.' }] };
+        }
+
+        const existing = memoryGraphCache.get(projectPath);
+        if (existing && changedFiles.length < 500) {
+          // Incremental update in worker
+          try {
+            const updated = await runGraphWorker('incremental', { existingGraph: existing, projectPath, changedFiles });
+            memoryGraphCache.set(projectPath, updated);
+            // Save meta
+            mkdirSync(join(projectPath, '.forge', 'memory'), { recursive: true });
+            writeFileSync(metaPath, JSON.stringify({ projectPath, lastScanCommit: currentCommit, lastScanAt: Date.now(), nodeCount: updated.nodes.length, edgeCount: updated.edges.length }, null, 2));
+            return { content: [{ type: 'text', text: `Incremental update in ${Date.now()-t0}ms: ${changedFiles.length} files changed → ${updated.nodes.length} nodes, ${updated.edges.length} edges` }] };
+          } catch {}
+        }
+
+        // Fallback: full rescan
+        memoryGraphCache.delete(projectPath);
+        const graph = await getMemoryGraph(projectPath);
+        mkdirSync(join(projectPath, '.forge', 'memory'), { recursive: true });
+        writeFileSync(metaPath, JSON.stringify({ projectPath, lastScanCommit: currentCommit, lastScanAt: Date.now(), nodeCount: graph?.nodes?.length, edgeCount: graph?.edges?.length }, null, 2));
+        return { content: [{ type: 'text', text: `Full rescan in ${Date.now()-t0}ms: ${graph?.nodes?.length || 0} nodes, ${graph?.edges?.length || 0} edges` }] };
       } catch (err: any) { return { content: [{ type: 'text', text: `Error: ${err.message}` }] }; }
     }
   );

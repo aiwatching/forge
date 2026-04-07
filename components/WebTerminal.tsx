@@ -188,13 +188,13 @@ function MouseToggle() {
 
   return (
     <div className="flex items-center gap-1 mr-2">
-      <button onClick={toggle} title={mouseOn ? 'Mouse: ON (scroll=trackpad, copy=Shift+drag)' : 'Mouse: OFF (scroll=Ctrl+B [, copy=drag)'}
-        className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${mouseOn ? 'border-green-600/40 text-green-400 bg-green-500/10' : 'border-gray-600 text-gray-500'}`}>
-        🖱️ {mouseOn ? 'ON' : 'OFF'}
-      </button>
       <span className="text-[8px] text-gray-600">
         {mouseOn ? 'scroll: trackpad · copy: Shift+drag' : 'scroll: Ctrl+B [ · copy: drag'}
       </span>
+      <button onClick={toggle} title={mouseOn ? 'Click to disable mouse (easier text select)' : 'Click to enable mouse (trackpad scroll)'}
+        className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${mouseOn ? 'border-green-600/40 text-green-400 bg-green-500/10' : 'border-gray-600 text-gray-500'}`}>
+        🖱️ {mouseOn ? 'ON' : 'OFF'}
+      </button>
     </div>
   );
 }

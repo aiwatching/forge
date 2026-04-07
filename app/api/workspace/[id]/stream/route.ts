@@ -1,3 +1,6 @@
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 const WORKSPACE_PORT = Number(process.env.WORKSPACE_PORT) || 8405;
 const DAEMON_URL = `http://localhost:${WORKSPACE_PORT}`;
 

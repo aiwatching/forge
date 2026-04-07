@@ -6,7 +6,7 @@
  */
 
 import { WorkspaceOrchestrator, type OrchestratorEvent } from './orchestrator';
-import { loadWorkspace, saveWorkspace } from './persistence';
+import { loadWorkspace } from './persistence';
 import type { WorkspaceState, WorkspaceAgentConfig } from './types';
 
 // Persist across HMR in dev mode

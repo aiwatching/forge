@@ -60,14 +60,15 @@ function createForgeMcpServer(sessionId: string): McpServer {
   // ── send_message ──────────────────────────
   server.tool(
     'send_message',
-    'Send a message to another agent in the workspace',
+    'Send a message to another agent in the workspace. Set noReply=true for notifications that do not need a response.',
     {
       to: z.string().describe('Target agent — name like "Reviewer", or description like "the one who does testing"'),
       content: z.string().describe('Message content'),
       action: z.string().optional().describe('Message type: fix_request, update_notify, question, review, info_request'),
+      noReply: z.boolean().optional().describe('If true, recipient should not reply to this message'),
     },
     async (params) => {
-      const { to, content, action = 'update_notify' } = params;
+      const { to, content, action = 'update_notify', noReply } = params;
       const { workspaceId, agentId } = ctx();
       if (!workspaceId) return { content: [{ type: 'text', text: 'Error: No workspace context.' }] };
 
@@ -87,8 +88,21 @@ function createForgeMcpServer(sessionId: string): McpServer {
           return { content: [{ type: 'text', text: `No agent matches "${to}". Available: ${available}` }] };
         }
 
-        orch.getBus().send(agentId, target.id, 'notify', { action, content });
-        return { content: [{ type: 'text', text: `Message sent to ${target.label}` }] };
+        // Block reply to agents who have a running/pending message to us.
+        // The system auto-delivers completion status — use /forge-send only for NEW messages.
+        // Uses findLast to check the most recent message state (not oldest/stale ones).
+        const incomingFromTarget = orch.getBus().getLog().findLast((m: any) =>
+          m.to === agentId && m.from === target.id &&
+          (m.status === 'running' || m.status === 'pending')
+        );
+        if (incomingFromTarget && !incomingFromTarget.payload?.noReply) {
+          return { content: [{ type: 'text', text: `Skipped: you are processing a message from ${target.label}. Your completion is delivered automatically — no need to reply via send_message.` }] };
+        }
+
+        const payload: any = { action, content };
+        if (noReply) payload.noReply = true;
+        orch.getBus().send(agentId, target.id, 'notify', payload);
+        return { content: [{ type: 'text', text: `Message sent to ${target.label}${noReply ? ' (no-reply)' : ''}` }] };
       } catch (err: any) {
         return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
       }
@@ -118,8 +132,9 @@ function createForgeMcpServer(sessionId: string): McpServer {
         const getLabel = (id: string) => snapshot.agents.find((a: any) => a.id === id)?.label || id;
 
         const formatted = messages.map((m: any) => {
+          const noReplyTag = m.payload?.noReply ? ' [no-reply]' : '';
           const refInfo = m.payload?.ref ? ` [ref: ${m.payload.ref}]` : '';
-          return `[${m.status}] From ${getLabel(m.from)}: ${m.payload?.content || m.payload?.action || '(no content)'}${refInfo} (${m.id.slice(0, 8)})`;
+          return `[${m.status}] From ${getLabel(m.from)}${noReplyTag}: ${m.payload?.content || m.payload?.action || '(no content)'}${refInfo} (${m.id.slice(0, 8)})`;
         }).join('\n');
 
         return { content: [{ type: 'text', text: formatted }] };

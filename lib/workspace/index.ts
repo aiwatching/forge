@@ -41,8 +41,10 @@ export {
 } from './manager';
 
 // Persistence
+// NOTE: saveWorkspace is intentionally NOT exported here.
+// The workspace daemon is the exclusive writer of state.json.
+// All mutations must go through the daemon's HTTP API to prevent race conditions.
 export {
-  saveWorkspace,
   loadWorkspace,
   listWorkspaces,
   findWorkspaceByProject,

@@ -736,7 +736,7 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
 
         {/* Toolbar */}
         <div className="flex items-center gap-1 px-2 ml-auto">
-          <span className="text-[9px] text-gray-600 mr-2">Shift+drag to copy</span>
+          <span className="text-[9px] text-gray-600 mr-2">Ctrl+Shift+C/V to copy/paste</span>
           <button onClick={() => onSplit('vertical')} className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-white hover:bg-[var(--term-border)] rounded">
             Split Right
           </button>
@@ -1552,6 +1552,32 @@ const MemoTerminalPane = memo(function TerminalPane({
       if (event.key === 'Escape' && event.type === 'keydown') {
         setShowSearch(false);
         searchAddonRef.current?.clearDecorations();
+      }
+      // Ctrl+Shift+C / Cmd+Shift+C → copy selection to clipboard
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'C' && event.type === 'keydown') {
+        const sel = term.getSelection();
+        if (sel) {
+          if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(sel);
+          } else {
+            const ta = document.createElement('textarea');
+            ta.value = sel;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          }
+        }
+        return false;
+      }
+      // Ctrl+Shift+V / Cmd+Shift+V → paste from clipboard
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'V' && event.type === 'keydown') {
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.readText().then(text => { if (text) term.paste(text); });
+        }
+        return false;
       }
       return true;
     });

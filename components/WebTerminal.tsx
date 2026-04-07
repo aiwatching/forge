@@ -67,7 +67,9 @@ async function loadSharedState(): Promise<{ tabs: TabState[]; activeTabId: numbe
     if (!res.ok) return null;
     const d = await res.json();
     if (d && Array.isArray(d.tabs) && d.tabs.length > 0 && typeof d.activeTabId === 'number') {
-      return { tabs: d.tabs, activeTabId: d.activeTabId, sessionLabels: d.sessionLabels || {} };
+      // Always start with bell disabled — user can enable manually per tab
+      const tabs = d.tabs.map((t: any) => ({ ...t, bellEnabled: false }));
+      return { tabs, activeTabId: d.activeTabId, sessionLabels: d.sessionLabels || {} };
     }
     return null;
   } catch {

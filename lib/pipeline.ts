@@ -1077,8 +1077,10 @@ async function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
       continue;
     }
 
-    // Use git worktree for isolated execution (doesn't affect user's working directory)
+    // Use git worktree for isolated execution (agent/prompt mode only).
+    // Shell mode steps manage their own execution context (some already create worktrees manually).
     let effectivePath = projectInfo.path;
+    if (nodeDef.mode !== 'shell') {
     const branchName = nodeDef.branch ? resolveTemplate(nodeDef.branch, ctx) : `pipeline/${pipeline.id.slice(0, 8)}`;
     try {
       const { execSync } = require('node:child_process');
@@ -1114,6 +1116,7 @@ async function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
       console.warn(`[pipeline] Worktree creation failed, falling back to project dir: ${e.message}`);
       // Fallback: use project directory directly (legacy behavior)
     }
+    } // end if (nodeDef.mode !== 'shell')
 
     // ── Plugin mode: execute plugin action directly ──
     if (nodeDef.mode === 'plugin' && nodeDef.plugin) {

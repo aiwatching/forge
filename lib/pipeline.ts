@@ -1077,25 +1077,42 @@ async function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
       continue;
     }
 
-    // Auto checkout branch if specified
-    if (nodeDef.branch) {
-      const branchName = resolveTemplate(nodeDef.branch, ctx);
+    // Use git worktree for isolated execution (doesn't affect user's working directory)
+    let effectivePath = projectInfo.path;
+    const branchName = nodeDef.branch ? resolveTemplate(nodeDef.branch, ctx) : `pipeline/${pipeline.id.slice(0, 8)}`;
+    try {
+      const { execSync } = require('node:child_process');
+      const worktreePath = `${projectInfo.path}/.forge/worktrees/${branchName.replace(/\//g, '-')}`;
+      const { mkdirSync } = require('node:fs');
+      mkdirSync(`${projectInfo.path}/.forge/worktrees`, { recursive: true });
+
+      // Create branch if needed
+      try { execSync(`git branch ${branchName}`, { cwd: projectInfo.path, stdio: 'pipe' }); } catch {}
+
+      // Create or reuse worktree
       try {
-        const { execSync } = require('node:child_process');
-        // Create branch if not exists, or switch to it
-        try {
-          execSync(`git checkout -b ${branchName}`, { cwd: projectInfo.path, stdio: 'pipe' });
-        } catch {
-          execSync(`git checkout ${branchName}`, { cwd: projectInfo.path, stdio: 'pipe' });
+        execSync(`git worktree add "${worktreePath}" ${branchName}`, { cwd: projectInfo.path, stdio: 'pipe' });
+        console.log(`[pipeline] Created worktree: ${worktreePath} (branch: ${branchName})`);
+      } catch {
+        // Worktree might already exist — verify it's valid
+        const { existsSync } = require('node:fs');
+        if (existsSync(worktreePath)) {
+          console.log(`[pipeline] Reusing worktree: ${worktreePath}`);
+        } else {
+          // Try removing stale worktree entry and recreate
+          try { execSync(`git worktree remove "${worktreePath}" --force`, { cwd: projectInfo.path, stdio: 'pipe' }); } catch {}
+          execSync(`git worktree add "${worktreePath}" ${branchName}`, { cwd: projectInfo.path, stdio: 'pipe' });
+          console.log(`[pipeline] Recreated worktree: ${worktreePath}`);
         }
-        console.log(`[pipeline] Checked out branch: ${branchName}`);
-      } catch (e: any) {
-        nodeState.status = 'failed';
-        nodeState.error = `Branch checkout failed: ${e.message}`;
-        savePipeline(pipeline);
-        notifyStep(pipeline, nodeId, 'failed', nodeState.error);
-        continue;
       }
+
+      effectivePath = worktreePath;
+      // Store worktree path for cleanup
+      (nodeState as any).worktreePath = worktreePath;
+      (nodeState as any).worktreeBranch = branchName;
+    } catch (e: any) {
+      console.warn(`[pipeline] Worktree creation failed, falling back to project dir: ${e.message}`);
+      // Fallback: use project directory directly (legacy behavior)
     }
 
     // ── Plugin mode: execute plugin action directly ──
@@ -1150,7 +1167,7 @@ async function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
     const taskMode = nodeDef.mode === 'shell' ? 'shell' : 'prompt';
     const task = createTask({
       projectName: projectInfo.name,
-      projectPath: projectInfo.path,
+      projectPath: effectivePath,
       prompt,
       mode: taskMode as any,
       agent: nodeDef.agent || undefined,
@@ -1192,6 +1209,15 @@ function checkPipelineCompletion(pipeline: Pipeline) {
       const { syncRunStatus } = require('./pipeline-scheduler');
       syncRunStatus(pipeline.id);
     } catch {}
+
+    // Log worktree info for user review
+    for (const [nodeId, state] of Object.entries(pipeline.nodes)) {
+      const wt = (state as any).worktreePath;
+      const branch = (state as any).worktreeBranch;
+      if (wt && branch) {
+        console.log(`[pipeline] Worktree preserved: ${wt} (branch: ${branch}) — review changes, then: git worktree remove "${wt}"`);
+      }
+    }
 
     // Release project lock
     const workflow = getWorkflow(pipeline.workflowName);

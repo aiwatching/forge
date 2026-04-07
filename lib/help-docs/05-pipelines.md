@@ -185,15 +185,27 @@ nodes:
 
 ## Branch Auto-checkout
 
-Nodes can auto-checkout a git branch before execution:
+Pipeline steps automatically use **git worktree** for isolated execution. Each step gets its own working copy — your main working directory is never affected.
 
 ```yaml
 nodes:
   work:
     project: my-app
-    branch: "feature/{{input.feature_name}}"
+    branch: "feature/{{input.feature_name}}"   # optional: custom branch name
     prompt: "Implement the feature"
 ```
+
+**How it works:**
+- If `branch` is specified, a worktree is created at `<project>/.forge/worktrees/<branch>/`
+- If `branch` is omitted, an auto-generated branch `pipeline/<id>` is used
+- The task runs inside the worktree, not the project root
+- After completion, the worktree is preserved for review
+- Clean up: `git worktree remove <path>` after reviewing changes
+
+**Benefits:**
+- Your working directory stays clean during pipeline execution
+- Multiple pipelines can run in parallel on the same project
+- Changes are isolated on branches, easy to review/merge/discard
 
 ## Parallel Execution
 

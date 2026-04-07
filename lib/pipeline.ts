@@ -34,6 +34,7 @@ export interface WorkflowNode {
   mode?: 'claude' | 'shell' | 'plugin';  // default: 'claude', 'shell' runs command, 'plugin' runs plugin action
   agent?: string;              // agent ID (default: from settings)
   branch?: string;             // auto checkout this branch before running (supports templates)
+  worktree?: boolean;          // default: true. Set false to skip worktree isolation (run in project dir directly)
   // Plugin mode fields
   plugin?: string;             // plugin ID (e.g., 'jenkins', 'docker')
   pluginAction?: string;       // action name (e.g., 'trigger', 'build'), defaults to plugin's defaultAction
@@ -1077,11 +1078,13 @@ async function scheduleReadyNodes(pipeline: Pipeline, workflow: Workflow) {
       continue;
     }
 
-    // All steps run in git worktree for isolated execution.
-    // Shell steps receive worktree info via env vars (FORGE_WORKTREE, FORGE_WORKTREE_BRANCH, FORGE_PROJECT_ROOT).
+    // All pipeline steps use worktree for isolated execution.
+    // Shell steps receive env vars: FORGE_WORKTREE, FORGE_WORKTREE_BRANCH, FORGE_PROJECT_ROOT.
+    // Set worktree: false on a node to skip (e.g. read-only gh commands that don't need isolation).
     let effectivePath = projectInfo.path;
+    const useWorktree = nodeDef.worktree !== false;
     const branchName = nodeDef.branch ? resolveTemplate(nodeDef.branch, ctx) : `pipeline/${pipeline.id.slice(0, 8)}`;
-    try {
+    if (useWorktree) try {
       const { execSync } = require('node:child_process');
       const worktreePath = `${projectInfo.path}/.forge/worktrees/${branchName.replace(/\//g, '-')}`;
       const { mkdirSync } = require('node:fs');

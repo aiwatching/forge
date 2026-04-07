@@ -170,16 +170,14 @@ function collectAllSessionNames(tabs: TabState[]): string[] {
 function MouseToggle() {
   const [mouseOn, setMouseOn] = useState(true);
 
-  const toggle = async () => {
+  const toggle = () => {
     const next = !mouseOn;
     try {
-      // Toggle mouse for ALL tmux sessions
       const wsUrl = getWsUrl();
       const ws = new WebSocket(wsUrl);
       ws.onopen = () => {
-        // Send tmux command to toggle mouse globally
-        ws.send(JSON.stringify({ type: 'input', data: `tmux set -g mouse ${next ? 'on' : 'off'}\n` }));
-        setTimeout(() => ws.close(), 500);
+        ws.send(JSON.stringify({ type: 'tmux-command', command: `set -g mouse ${next ? 'on' : 'off'}` }));
+        setTimeout(() => ws.close(), 300);
       };
       ws.onerror = () => ws.close();
     } catch {}

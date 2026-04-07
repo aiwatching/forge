@@ -384,6 +384,19 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
 
+        case 'tmux-command': {
+          // Execute tmux command directly (e.g. toggle mouse)
+          if (parsed.command) {
+            try {
+              execSync(`${TMUX} ${parsed.command}`, { timeout: 3000 });
+              ws.send(JSON.stringify({ type: 'tmux-command-result', ok: true }));
+            } catch (e: any) {
+              ws.send(JSON.stringify({ type: 'tmux-command-result', ok: false, error: e.message }));
+            }
+          }
+          break;
+        }
+
         case 'load-state': {
           const state = loadTerminalState();
           ws.send(JSON.stringify({ type: 'terminal-state', data: state }));

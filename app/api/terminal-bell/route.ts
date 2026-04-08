@@ -4,8 +4,13 @@ import { addNotification } from '@/lib/notifications';
 
 export async function POST(req: Request) {
   const { tabLabel } = await req.json();
-
   const label = tabLabel || 'Terminal';
+
+  // Check settings — terminal bell notifications can be disabled
+  const settings = loadSettings();
+  if ((settings as any).terminalBellEnabled === false) {
+    return NextResponse.json({ ok: true, skipped: true });
+  }
 
   // In-app notification
   try {
@@ -13,7 +18,6 @@ export async function POST(req: Request) {
   } catch {}
 
   // Telegram notification
-  const settings = loadSettings();
   const { telegramBotToken, telegramChatId } = settings;
   if (telegramBotToken && telegramChatId) {
     try {

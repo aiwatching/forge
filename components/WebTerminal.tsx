@@ -67,7 +67,9 @@ async function loadSharedState(): Promise<{ tabs: TabState[]; activeTabId: numbe
     if (!res.ok) return null;
     const d = await res.json();
     if (d && Array.isArray(d.tabs) && d.tabs.length > 0 && typeof d.activeTabId === 'number') {
-      return { tabs: d.tabs, activeTabId: d.activeTabId, sessionLabels: d.sessionLabels || {} };
+      // Always start with bell disabled — user can enable manually per tab
+      const tabs = d.tabs.map((t: any) => ({ ...t, bellEnabled: false }));
+      return { tabs, activeTabId: d.activeTabId, sessionLabels: d.sessionLabels || {} };
     }
     return null;
   } catch {
@@ -163,6 +165,38 @@ function collectSessionNames(tree: SplitNode): string[] {
 
 function collectAllSessionNames(tabs: TabState[]): string[] {
   return tabs.flatMap(t => collectSessionNames(t.tree));
+}
+
+// ─── Mouse Toggle Button ─────────────────────────────────────
+
+function MouseToggle() {
+  const [mouseOn, setMouseOn] = useState(true);
+
+  const toggle = () => {
+    const next = !mouseOn;
+    try {
+      const wsUrl = getWsUrl();
+      const ws = new WebSocket(wsUrl);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'tmux-mouse', mouse: next }));
+        setTimeout(() => ws.close(), 300);
+      };
+      ws.onerror = () => ws.close();
+    } catch {}
+    setMouseOn(next);
+  };
+
+  return (
+    <div className="flex items-center gap-1 mr-2">
+      <span className="text-[8px] text-gray-600">
+        {mouseOn ? 'scroll: trackpad · copy: Shift+drag' : 'scroll: Ctrl+B [ · copy: drag'}
+      </span>
+      <button onClick={toggle} title={mouseOn ? 'Click to disable mouse (easier text select)' : 'Click to enable mouse (trackpad scroll)'}
+        className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${mouseOn ? 'border-green-600/40 text-green-400 bg-green-500/10' : 'border-gray-600 text-gray-500'}`}>
+        🖱️ {mouseOn ? 'ON' : 'OFF'}
+      </button>
+    </div>
+  );
 }
 
 // ─── Pending commands for new terminal panes ────────────────
@@ -736,7 +770,7 @@ const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(function Web
 
         {/* Toolbar */}
         <div className="flex items-center gap-1 px-2 ml-auto">
-          <span className="text-[9px] text-gray-600 mr-2">Ctrl+Shift+C/V to copy/paste</span>
+          <MouseToggle />
           <button onClick={() => onSplit('vertical')} className="text-[10px] px-2 py-0.5 text-gray-400 hover:text-white hover:bg-[var(--term-border)] rounded">
             Split Right
           </button>

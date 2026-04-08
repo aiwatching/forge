@@ -271,9 +271,9 @@ wss.on('connection', (ws: WebSocket) => {
       term = null;
     }
 
-    // Ensure mouse mode is off and scrollback is set (for old sessions too)
+    // Ensure mouse mode is on (enables trackpad scrolling) and scrollback is set
     try {
-      execSync(`${TMUX} set-option -t ${name} mouse off 2>/dev/null`);
+      execSync(`${TMUX} set-option -t ${name} mouse on 2>/dev/null`);
       execSync(`${TMUX} set-option -t ${name} history-limit 50000 2>/dev/null`);
     } catch {}
 
@@ -380,6 +380,23 @@ wss.on('connection', (ws: WebSocket) => {
           if (parsed.sessionName) {
             killTmuxSession(parsed.sessionName);
             ws.send(JSON.stringify({ type: 'sessions', sessions: listTmuxSessions() }));
+          }
+          break;
+        }
+
+        case 'tmux-mouse': {
+          // Toggle mouse for ALL tmux sessions (global + per-session)
+          const val = parsed.mouse ? 'on' : 'off';
+          try {
+            execSync(`${TMUX} set -g mouse ${val}`, { timeout: 3000 });
+            // Also apply to every existing session (overrides per-session setting)
+            const sessions = listTmuxSessions();
+            for (const s of sessions) {
+              try { execSync(`${TMUX} set-option -t "${s.name}" mouse ${val}`, { timeout: 1000 }); } catch {}
+            }
+            ws.send(JSON.stringify({ type: 'tmux-mouse-result', ok: true, mouse: parsed.mouse }));
+          } catch (e: any) {
+            ws.send(JSON.stringify({ type: 'tmux-mouse-result', ok: false, error: e.message }));
           }
           break;
         }

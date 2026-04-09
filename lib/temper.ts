@@ -164,9 +164,17 @@ export interface TemperStatus {
 }
 
 export async function getTemperStatus(projectPath: string): Promise<TemperStatus> {
-  const bin = await findTemperBin();
   const enabled = isTemperEnabled(projectPath);
 
+  // Fast path: if not enabled AND no .temper dir, skip bin detection entirely
+  const temperDir = join(projectPath, '.temper');
+  if (!enabled && !existsSync(temperDir)) {
+    // Only do a cheap sync check for binary
+    const bin = findTemperBinSync();
+    return { installed: bin !== null, enabled: false, initialized: false, bin };
+  }
+
+  const bin = await findTemperBin();
   if (!bin) {
     return { installed: false, enabled, initialized: false, bin: null };
   }
@@ -182,7 +190,6 @@ export async function getTemperStatus(projectPath: string): Promise<TemperStatus
   }
 
   // Check initialized by reading files directly (no exec)
-  const temperDir = join(projectPath, '.temper');
   const initialized = existsSync(join(temperDir, 'graph.json')) || existsSync(join(temperDir, 'knowledge.db'));
 
   if (!initialized) {

@@ -24,10 +24,12 @@ const NPM_PACKAGE = '@aion0/temper';
 // ─── Binary detection ─────────────────────────────────────
 
 let _cachedBin: string | null | undefined;
+let _cachedVersion: string | undefined;
 
 /** Reset cache (after install) */
 export function resetBinCache() {
   _cachedBin = undefined;
+  _cachedVersion = undefined;
 }
 
 /**
@@ -169,32 +171,40 @@ export async function getTemperStatus(projectPath: string): Promise<TemperStatus
     return { installed: false, enabled, initialized: false, bin: null };
   }
 
-  // Get version
-  let version: string | undefined;
-  try {
-    const { stdout } = await execFileAsync(bin, ['--version'], { timeout: 3000 });
-    version = stdout.trim();
-  } catch {}
+  // Get version (cached)
+  let version = _cachedVersion;
+  if (!version) {
+    try {
+      const { stdout } = await execFileAsync(bin, ['--version'], { timeout: 3000 });
+      version = stdout.trim();
+      _cachedVersion = version;
+    } catch {}
+  }
 
   // Check initialized by reading files directly (no exec)
   const temperDir = join(projectPath, '.temper');
-  const graphPath = join(temperDir, 'graph.json');
-  const initialized = existsSync(graphPath) || existsSync(join(temperDir, 'knowledge.db'));
+  const initialized = existsSync(join(temperDir, 'graph.json')) || existsSync(join(temperDir, 'knowledge.db'));
 
   if (!initialized) {
     return { installed: true, enabled, initialized: false, bin, version };
   }
 
-  // Read stats directly from graph.json instead of exec
-  const graphData = readTemperGraph(projectPath);
-  if (graphData) {
-    return {
-      installed: true, enabled, initialized: true, bin, version,
-      stats: { ...graphData.stats, knowledgeEntries: 0, modules: 0 },
-    };
+  // Read stats from meta.json only (tiny file) — NOT graph.json which can be 60MB+
+  let stats: TemperStatus['stats'] | undefined;
+  const metaPath = join(temperDir, 'meta.json');
+  if (existsSync(metaPath)) {
+    try {
+      const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
+      stats = {
+        files: 0, functions: 0, classes: 0,
+        nodes: meta.node_count || 0,
+        edges: meta.edge_count || 0,
+        knowledgeEntries: 0, modules: 0,
+      };
+    } catch {}
   }
 
-  return { installed: true, enabled, initialized: true, bin, version };
+  return { installed: true, enabled, initialized: true, bin, version, stats };
 }
 
 // ─── Init (scan + suggest modules) ──────────────────────
@@ -249,6 +259,26 @@ export function readTemperGraph(projectPath: string): {
   const graphPath = join(temperDir, 'graph.json');
   if (!existsSync(graphPath)) return null;
 
+  // Skip parsing graph.json if it's too large (>10MB) — use meta.json instead
+  try {
+    const { statSync } = require('node:fs');
+    const size = statSync(graphPath).size;
+    if (size > 10 * 1024 * 1024) {
+      // Read meta.json only for large projects
+      let meta: any = {};
+      const metaPath = join(temperDir, 'meta.json');
+      if (existsSync(metaPath)) {
+        try { meta = JSON.parse(readFileSync(metaPath, 'utf-8')); } catch {}
+      }
+      return {
+        meta,
+        stats: { files: 0, functions: 0, classes: 0, nodes: meta.node_count || 0, edges: meta.edge_count || 0 },
+        nodeTypes: {},
+        edgeTypes: {},
+      };
+    }
+  } catch {}
+
   try {
     const graph = JSON.parse(readFileSync(graphPath, 'utf-8'));
     const nodes: any[] = graph.nodes || [];
@@ -299,6 +329,12 @@ export function readTemperModuleGraph(projectPath: string): {
   const temperDir = join(projectPath, '.temper');
   const graphPath = join(temperDir, 'graph.json');
   if (!existsSync(graphPath)) return null;
+
+  // Skip if graph.json is too large (>20MB) — would freeze the browser
+  try {
+    const { statSync } = require('node:fs');
+    if (statSync(graphPath).size > 20 * 1024 * 1024) return null;
+  } catch {}
 
   try {
     const graph = JSON.parse(readFileSync(graphPath, 'utf-8'));

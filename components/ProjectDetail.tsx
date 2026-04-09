@@ -1760,7 +1760,17 @@ function TemperIndicator({ status, projectPath, activeAction, onAction }: {
   if (!status.installed) {
     return (
       <button
-        onClick={() => onAction('install')}
+        onClick={() => {
+          if (window.confirm(
+            'Install code memory (@aion0/temper)?\n\n' +
+            'This will run: npm install -g @aion0/temper\n\n' +
+            'Temper is an AST-based code graph tool that provides persistent memory for AI agents. ' +
+            'It scans your project source files and stores structural data in a local .temper/ directory.\n\n' +
+            'Note: Installation may take a moment and will add a global npm package.'
+          )) {
+            onAction('install');
+          }
+        }}
         disabled={busy}
         className="text-[9px] px-2 py-0.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50"
         title="Install code memory (@aion0/temper)"

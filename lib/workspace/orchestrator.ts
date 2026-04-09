@@ -40,6 +40,7 @@ import {
   addObservation, addSessionSummary, parseStepToObservations, buildSessionSummary,
 } from './smith-memory';
 import { getFixedSession } from '../project-sessions';
+import { getTemperMcpConfig } from '../temper';
 
 // ─── Workspace Topology Cache ────────────────────────────
 
@@ -2533,14 +2534,16 @@ Silently ingest this context. Do NOT respond — await an actual task.`;
           try {
             const mcpPort = Number(process.env.MCP_PORT) || 8406;
             const mcpConfigPath = join(workDir, '.forge', 'mcp.json');
-            const mcpConfig = {
-              mcpServers: {
-                forge: {
-                  type: 'sse',
-                  url: `http://localhost:${mcpPort}/sse?workspaceId=${this.workspaceId}&agentId=${config.id}`,
-                },
+            const mcpServers: Record<string, any> = {
+              forge: {
+                type: 'sse',
+                url: `http://localhost:${mcpPort}/sse?workspaceId=${this.workspaceId}&agentId=${config.id}`,
               },
             };
+            // Inject Temper MCP server if project has been initialized
+            const temperCfg = getTemperMcpConfig(this.projectPath);
+            if (temperCfg) mcpServers.temper = temperCfg;
+            const mcpConfig = { mcpServers };
             mkdirSync(join(workDir, '.forge'), { recursive: true });
             writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
             mcpConfigFlag = ` --mcp-config "${mcpConfigPath}"`;

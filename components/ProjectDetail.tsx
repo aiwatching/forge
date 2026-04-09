@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef, memo, lazy, Suspense } from 'react';
+import dynamic from 'next/dynamic';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
 
 import { TerminalSessionPickerLazy, fetchProjectSessions } from './TerminalLauncher';
@@ -84,7 +85,8 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [diffFile, setDiffFile] = useState<string | null>(null);
   const [projectSkills, setProjectSkills] = useState<{ name: string; displayName: string; type: string; scope: string; version: string; installedVersion: string; hasUpdate: boolean; source: 'registry' | 'local' }[]>([]);
   const [showSkillsDetail, setShowSkillsDetail] = useState(false);
-  const [projectTab, setProjectTab] = useState<'workspace' | 'sessions' | 'code' | 'skills' | 'claudemd' | 'pipelines'>('code');
+  const [projectTab, setProjectTab] = useState<'workspace' | 'sessions' | 'code' | 'skills' | 'claudemd' | 'pipelines' | 'temper'>('code');
+  const [temperData, setTemperData] = useState<any>(null);
   const wsViewRef = useRef<import('./WorkspaceView').WorkspaceViewHandle>(null);
   // Pipeline bindings state
   const [pipelineBindings, setPipelineBindings] = useState<{ id: number; workflowName: string; enabled: boolean; config: any; lastRunAt: string | null; nextRunAt: string | null }[]>([]);
@@ -114,6 +116,8 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [skillEditing, setSkillEditing] = useState(false);
   const [skillEditContent, setSkillEditContent] = useState('');
   const [skillSaving, setSkillSaving] = useState(false);
+  const [temperStatus, setTemperStatus] = useState<{ installed: boolean; enabled: boolean; initialized: boolean; version?: string; stats?: any } | null>(null);
+  const [temperAction, setTemperAction] = useState<string | null>(null);
 
   // Fetch git info
   const fetchGitInfo = useCallback(async () => {
@@ -414,6 +418,9 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
     fetchTree();
     // Fetch project-level fixed session
     fetchBoundSession();
+    // Fetch temper status
+    fetch(`/api/temper?project=${encodeURIComponent(projectPath)}&action=status`)
+      .then(r => r.json()).then(setTemperStatus).catch(() => {});
   }, [projectPath, fetchGitInfo, fetchTree]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchBoundSession = useCallback(() => {
@@ -438,7 +445,11 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
     if (projectTab === 'skills') fetchProjectSkills();
     if (projectTab === 'pipelines') fetchPipelineBindings();
     if (projectTab === 'claudemd') fetchClaudeMd();
-  }, [projectTab, fetchProjectSkills, fetchPipelineBindings, fetchClaudeMd]);
+    if (projectTab === 'temper') {
+      fetch(`/api/temper?project=${encodeURIComponent(projectPath)}&action=data`)
+        .then(r => r.json()).then(setTemperData).catch(() => {});
+    }
+  }, [projectTab, fetchProjectSkills, fetchPipelineBindings, fetchClaudeMd, projectPath]);
 
   // Auto-refresh pipeline runs while any is running
   useEffect(() => {
@@ -613,6 +624,49 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
               Pipelines
               {pipelineBindings.length > 0 && <span className="ml-1 text-[8px] text-[var(--text-secondary)]">({pipelineBindings.length})</span>}
             </button>
+            {/* Memory tab button — show when enabled (scanning or initialized) */}
+            {temperStatus?.enabled && (
+              <button
+                onClick={() => setProjectTab('temper')}
+                className={`text-[9px] px-2 py-0.5 rounded transition-colors ${
+                  projectTab === 'temper' ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                {temperAction === 'init' ? <span className="animate-pulse">Memory...</span> : 'Memory'}
+                {temperStatus.stats?.nodes ? <span className="ml-1 text-[8px] text-[var(--text-secondary)]">({temperStatus.stats.nodes})</span> : null}
+              </button>
+            )}
+            {/* Temper status indicator */}
+            {temperStatus && (
+              <TemperIndicator
+                status={temperStatus}
+                projectPath={projectPath}
+                activeAction={temperAction}
+                onAction={async (action) => {
+                  setTemperAction(action);
+                  try {
+                    const r = await fetch('/api/temper', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ projectPath, action }),
+                    });
+                    const result = await r.json();
+                    if (result.error) {
+                      console.error('Temper action failed:', result.error);
+                    }
+                    const s = await fetch(`/api/temper?project=${encodeURIComponent(projectPath)}&action=status`).then(r => r.json());
+                    setTemperStatus(s);
+                    // Refresh data after scan completes
+                    if (action === 'init' && !result.error) {
+                      const d = await fetch(`/api/temper?project=${encodeURIComponent(projectPath)}&action=data`).then(r => r.json());
+                      setTemperData(d);
+                    }
+                  } catch (e) {
+                    console.error('Temper action error:', e);
+                  } finally { setTemperAction(null); }
+                }}
+              />
+            )}
           </div>
         </div>
         {projectTab === 'code' && gitInfo?.lastCommit && (
@@ -1360,6 +1414,24 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
         </div>
       )}
 
+      {/* Memory (Temper) tab */}
+      {projectTab === 'temper' && (
+        <div className="flex-1 min-h-0 flex flex-col p-3 gap-2">
+          {temperAction === 'init' ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-2">
+              <div className="w-5 h-5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+              <span className="text-[10px] text-[var(--text-secondary)]">Initializing memory...</span>
+              <span className="text-[8px] text-[var(--text-secondary)]">Scanning code & generating modules</span>
+            </div>
+          ) : (
+            <TemperPanel data={temperData} projectPath={projectPath} onRefresh={() => {
+              fetch(`/api/temper?project=${encodeURIComponent(projectPath)}&action=data`)
+                .then(r => r.json()).then(setTemperData).catch(() => {});
+            }} />
+          )}
+        </div>
+      )}
+
       {/* Git panel — bottom (code tab only) */}
       {projectTab === 'code' && gitInfo && (
         <div className="border-t border-[var(--border)] shrink-0">
@@ -1503,6 +1575,242 @@ const FileTreeNode = memo(function FileTreeNode({ node, depth, selected, onSelec
     </button>
   );
 });
+
+// ─── Temper Panel (tab content) ──────────────────────────
+
+const MemoryGraph = dynamic(() => import('./MemoryGraph'), { ssr: false });
+
+const KNOWLEDGE_ICONS: Record<string, string> = {
+  decision: '🎯', bug: '🐛', constraint: '⚠️', experience: '💡', note: '📝',
+};
+
+function TemperPanel({ data, projectPath, onRefresh }: {
+  data: any;
+  projectPath: string;
+  onRefresh: () => void;
+}) {
+  const [knowledgeFilter, setKnowledgeFilter] = useState<string>('');
+  const [expandedModule, setExpandedModule] = useState<string | null>(null);
+  const [memoryView, setMemoryView] = useState<'graph' | 'knowledge' | 'experiences'>('graph');
+
+  if (!data) {
+    return <div className="text-[10px] text-[var(--text-secondary)] p-4">Loading...</div>;
+  }
+
+  const { graph, moduleGraph, modules, knowledge, experiences, causal } = data;
+
+  return (
+    <div className="flex flex-col flex-1 min-h-0 gap-2">
+      {/* Header: stats bar + view toggle */}
+      <div className="flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-3">
+          {graph && <>
+            <span className="text-[9px] text-[var(--text-secondary)]"><span className="font-mono text-[var(--text-primary)]">{graph.stats.files}</span> files</span>
+            <span className="text-[9px] text-[var(--text-secondary)]"><span className="font-mono text-[var(--text-primary)]">{graph.stats.functions}</span> fn</span>
+            <span className="text-[9px] text-[var(--text-secondary)]"><span className="font-mono text-[var(--text-primary)]">{graph.stats.edges}</span> edges</span>
+          </>}
+          {graph?.meta?.last_scan_at && (
+            <span className="text-[8px] text-[var(--text-secondary)]">
+              {new Date(graph.meta.last_scan_at * 1000).toLocaleDateString()}
+              {graph.meta.last_scan_commit && <span className="ml-1 font-mono">{graph.meta.last_scan_commit.slice(0, 7)}</span>}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          {(['graph', 'knowledge', 'experiences'] as const).map(v => (
+            <button key={v} onClick={() => setMemoryView(v)}
+              className={`text-[8px] px-1.5 py-0.5 rounded ${memoryView === v ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+            >
+              {v === 'graph' ? 'Graph' : v === 'knowledge' ? `Knowledge${knowledge?.length ? ` (${knowledge.length})` : ''}` : `Exp${experiences?.length ? ` (${experiences.length})` : ''}`}
+            </button>
+          ))}
+          <button onClick={onRefresh} className="text-[8px] px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)]" title="Refresh">↻</button>
+        </div>
+      </div>
+
+      {/* Graph view */}
+      {memoryView === 'graph' && (
+        <div className="flex-1 min-h-0 flex flex-col gap-2">
+          {/* Module dependency graph */}
+          {moduleGraph && moduleGraph.nodes.length > 0 ? (
+            <div className="flex-1 min-h-0 rounded border border-[var(--border)] overflow-hidden">
+              <MemoryGraph moduleGraph={moduleGraph} />
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-[10px] text-[var(--text-secondary)]">
+              No module graph data
+            </div>
+          )}
+
+          {/* Module summary below graph */}
+          {moduleGraph?.modules?.length > 0 && (
+            <div className="shrink-0 flex flex-wrap gap-1.5 px-1">
+              {moduleGraph.modules
+                .sort((a: any, b: any) => b.files - a.files)
+                .map((mod: any) => (
+                <span key={mod.id} className="flex items-center gap-1 bg-[var(--bg-secondary)] rounded px-2 py-0.5 text-[8px]">
+                  <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: mod.color }} />
+                  <span className="font-medium text-[var(--text-primary)]">{mod.id}</span>
+                  <span className="text-[var(--text-secondary)]">{mod.files} files</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Knowledge view */}
+      {memoryView === 'knowledge' && (
+        <div className="flex-1 min-h-0 flex flex-col gap-1.5">
+          <div className="flex items-center gap-2 shrink-0">
+            <input
+              type="text"
+              placeholder="Filter knowledge..."
+              value={knowledgeFilter}
+              onChange={e => setKnowledgeFilter(e.target.value)}
+              className="text-[9px] bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-1.5 py-0.5 flex-1 text-[var(--text-primary)]"
+            />
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
+            {knowledge && knowledge.length > 0 ? knowledge
+              .filter((k: any) => !knowledgeFilter || k.title?.toLowerCase().includes(knowledgeFilter.toLowerCase()) || k.module?.toLowerCase().includes(knowledgeFilter.toLowerCase()))
+              .map((k: any) => (
+              <div key={k.id} className="bg-[var(--bg-secondary)] rounded px-2 py-1.5">
+                <div className="flex items-center gap-1">
+                  <span className="text-[9px]">{KNOWLEDGE_ICONS[k.type] || '📄'}</span>
+                  <span className="text-[9px] font-medium text-[var(--text-primary)] flex-1 truncate">{k.title}</span>
+                  <span className="text-[7px] px-1 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">{k.type}</span>
+                </div>
+                {k.module && <div className="text-[8px] text-[var(--accent)] mt-0.5">{k.module}</div>}
+                {k.content && <div className="text-[8px] text-[var(--text-secondary)] mt-0.5 line-clamp-2">{k.content}</div>}
+                {k.tags?.length > 0 && (
+                  <div className="flex gap-1 mt-0.5">
+                    {k.tags.map((t: string) => <span key={t} className="text-[7px] text-[var(--text-secondary)]">#{t}</span>)}
+                  </div>
+                )}
+              </div>
+            )) : (
+              <div className="text-[10px] text-[var(--text-secondary)] text-center py-8">No knowledge entries yet</div>
+            )}
+          </div>
+
+          {/* Causal relations */}
+          {causal && causal.length > 0 && (
+            <div className="shrink-0 border-t border-[var(--border)] pt-1.5">
+              <div className="text-[9px] font-medium text-[var(--text-primary)] mb-1">Causal Relations ({causal.length})</div>
+              <div className="space-y-0.5 max-h-24 overflow-y-auto">
+                {causal.map((rel: any) => (
+                  <div key={rel.id} className="flex items-center gap-1 text-[8px] px-1">
+                    <span className="font-mono text-[var(--text-primary)] truncate max-w-[35%]">{rel.from_entity}</span>
+                    <span className="text-[var(--accent)] shrink-0">→ {rel.relation_type} →</span>
+                    <span className="font-mono text-[var(--text-primary)] truncate max-w-[35%]">{rel.to_entity}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Experiences view */}
+      {memoryView === 'experiences' && (
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
+          {experiences && experiences.length > 0 ? experiences.map((exp: any) => (
+            <div key={exp.id} className="bg-[var(--bg-secondary)] rounded px-2 py-1.5">
+              <div className="text-[9px] text-[var(--text-primary)]">
+                <span className="text-red-400">Symptom:</span> {exp.symptom}
+              </div>
+              <div className="text-[8px] text-[var(--text-secondary)] mt-0.5">
+                <span className="text-yellow-400">Cause:</span> {exp.cause}
+              </div>
+              <div className="text-[8px] text-[var(--text-secondary)]">
+                <span className="text-[var(--green)]">Fix:</span> {exp.fix}
+              </div>
+              {exp.module && <div className="text-[7px] text-[var(--accent)] mt-0.5">{exp.module}</div>}
+            </div>
+          )) : (
+            <div className="text-[10px] text-[var(--text-secondary)] text-center py-8">No experiences recorded yet</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Temper Indicator ────────────────────────────────────
+
+function TemperIndicator({ status, projectPath, activeAction, onAction }: {
+  status: { installed: boolean; enabled: boolean; initialized: boolean; version?: string; stats?: any };
+  projectPath: string;
+  activeAction: string | null;
+  onAction: (action: string) => void;
+}) {
+  const busy = activeAction !== null;
+
+  // Show ongoing action status
+  if (activeAction === 'install') {
+    return (
+      <span className="text-[9px] px-2 py-0.5 flex items-center gap-1 text-[var(--text-secondary)] animate-pulse">
+        Installing Memory...
+      </span>
+    );
+  }
+
+  // Not installed
+  if (!status.installed) {
+    return (
+      <button
+        onClick={() => onAction('install')}
+        disabled={busy}
+        className="text-[9px] px-2 py-0.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50"
+        title="Install code memory (@aion0/temper)"
+      >
+        Memory ↓
+      </button>
+    );
+  }
+
+  // Installed but not enabled
+  if (!status.enabled) {
+    return (
+      <button
+        onClick={() => onAction('enable')}
+        disabled={busy}
+        className="text-[9px] px-2 py-0.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50"
+        title="Enable code memory for this project"
+      >
+        {activeAction === 'enable' ? 'Enabling...' : '○ Memory'}
+      </button>
+    );
+  }
+
+  // Enabled but not scanned — show scan button (unless Memory tab already visible)
+  if (!status.initialized) {
+    return (
+      <span className="text-[9px] px-2 py-0.5 flex items-center gap-1 text-[var(--text-secondary)]">
+        <span className="text-yellow-500">●</span>
+        <button
+          onClick={() => onAction('init')}
+          disabled={busy}
+          className="hover:text-[var(--text-primary)] disabled:opacity-50"
+          title="Initialize memory (scan + modules)"
+        >
+          {activeAction === 'init' ? <span className="animate-pulse">Init...</span> : 'Init'}
+        </button>
+        {!busy && <button onClick={() => onAction('disable')} className="text-[7px] hover:text-red-400 ml-0.5" title="Disable">×</button>}
+      </span>
+    );
+  }
+
+  // Active
+  return (
+    <span className="text-[9px] px-2 py-0.5 flex items-center gap-1 text-[var(--text-secondary)]"
+      title={status.version || 'Memory active'}>
+      <span className="text-[var(--green)]">●</span> Memory
+      <button onClick={() => onAction('disable')} className="text-[7px] hover:text-red-400 ml-0.5" title="Disable memory">×</button>
+    </span>
+  );
+}
 
 // ─── Agent Terminal Button ───────────────────────────────
 

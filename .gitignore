@@ -29,6 +29,7 @@ Thumbs.db
 # Project data
 .claude
 .accord
+.temper/
 tsconfig.tsbuildinfo
 next-env.d.ts
 .forge/

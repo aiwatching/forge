@@ -12,6 +12,14 @@ const localIPs = Object.values(networkInterfaces())
 const nextConfig: NextConfig = {
   serverExternalPackages: ['better-sqlite3'],
   allowedDevOrigins: localIPs,
+  webpack: (config) => {
+    // Exclude .temper from file watching to prevent continuous recompilation
+    config.watchOptions = {
+      ...config.watchOptions,
+      ignored: [...(config.watchOptions?.ignored || []), '**/.temper/**'],
+    };
+    return config;
+  },
   async rewrites() {
     return [
       {

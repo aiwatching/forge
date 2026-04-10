@@ -2211,7 +2211,7 @@ function FloatingTerminalInline({ agentLabel, agentIcon, projectPath, agentCliId
   return <div ref={containerRef} className="w-full h-full" style={{ background: '#0d1117' }} />;
 }
 
-function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, skipPermissions, persistentSession, boundSessionId, initialPos, onSessionReady, onClose }: {
+function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliCmd: cliCmdProp, cliType, workDir, preferredSessionName, existingSession, resumeMode, resumeSessionId, profileEnv, isPrimary, skipPermissions, persistentSession, boundSessionId, initialPos, docked, onSessionReady, onClose }: {
   agentLabel: string;
   agentIcon: string;
   projectPath: string;
@@ -2229,6 +2229,7 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
   persistentSession?: boolean;
   boundSessionId?: string;
   initialPos?: { x: number; y: number };
+  docked?: boolean;  // when true, render as grid cell instead of fixed floating window
   onSessionReady?: (name: string) => void;
   onClose: (killSession: boolean) => void;
 }) {
@@ -2437,13 +2438,16 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
 
   return (
     <div
-      className="fixed z-50 bg-[#0d1117] border border-[#30363d] rounded-lg shadow-2xl flex flex-col overflow-hidden"
-      style={{ left: pos.x, top: pos.y, width: size.w, height: size.h }}
+      className={docked
+        ? "relative bg-[#0d1117] border border-[#30363d] rounded-lg flex flex-col overflow-hidden w-full h-full"
+        : "fixed z-50 bg-[#0d1117] border border-[#30363d] rounded-lg shadow-2xl flex flex-col overflow-hidden"
+      }
+      style={docked ? undefined : { left: pos.x, top: pos.y, width: size.w, height: size.h }}
     >
-      {/* Draggable header */}
+      {/* Header — draggable in floating mode, static in docked mode */}
       <div
-        className="flex items-center gap-2 px-3 py-1.5 bg-[#161b22] border-b border-[#30363d] cursor-move shrink-0 select-none"
-        onMouseDown={(e) => {
+        className={`flex items-center gap-2 px-3 py-1.5 bg-[#161b22] border-b border-[#30363d] shrink-0 select-none ${docked ? '' : 'cursor-move'}`}
+        onMouseDown={docked ? undefined : (e) => {
           e.preventDefault();
           dragRef.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y };
           setUserDragged(true);
@@ -2457,34 +2461,36 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
         }}
       >
         <span className="text-sm">{agentIcon}</span>
-        <span className="text-[11px] font-semibold text-white">{agentLabel}</span>
-        <span className="text-[8px] text-gray-500">⌨️ manual terminal</span>
-        <button onClick={() => setShowCloseDialog(true)} className="ml-auto text-gray-500 hover:text-white text-sm">✕</button>
+        <span className="text-[11px] font-semibold text-white truncate">{agentLabel}</span>
+        {!docked && <span className="text-[8px] text-gray-500">⌨️ manual terminal</span>}
+        <button onClick={() => setShowCloseDialog(true)} className="ml-auto text-gray-500 hover:text-white text-sm shrink-0">✕</button>
       </div>
 
       {/* Terminal */}
       <div ref={containerRef} className="flex-1 min-h-0" style={{ background: '#0d1117' }} />
 
-      {/* Resize handle */}
-      <div
-        className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
-        onMouseDown={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          resizeRef.current = { startX: e.clientX, startY: e.clientY, origW: size.w, origH: size.h };
-          const onMove = (ev: MouseEvent) => {
-            if (!resizeRef.current) return;
-            setSize({ w: Math.max(400, resizeRef.current.origW + ev.clientX - resizeRef.current.startX), h: Math.max(250, resizeRef.current.origH + ev.clientY - resizeRef.current.startY) });
-          };
-          const onUp = () => { resizeRef.current = null; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-          window.addEventListener('mousemove', onMove);
-          window.addEventListener('mouseup', onUp);
-        }}
-      >
-        <svg viewBox="0 0 16 16" className="w-3 h-3 absolute bottom-0.5 right-0.5 text-gray-600">
-          <path d="M14 14L8 14L14 8Z" fill="currentColor" />
-        </svg>
-      </div>
+      {/* Resize handle — floating mode only */}
+      {!docked && (
+        <div
+          className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            resizeRef.current = { startX: e.clientX, startY: e.clientY, origW: size.w, origH: size.h };
+            const onMove = (ev: MouseEvent) => {
+              if (!resizeRef.current) return;
+              setSize({ w: Math.max(400, resizeRef.current.origW + ev.clientX - resizeRef.current.startX), h: Math.max(250, resizeRef.current.origH + ev.clientY - resizeRef.current.startY) });
+            };
+            const onUp = () => { resizeRef.current = null; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+          }}
+        >
+          <svg viewBox="0 0 16 16" className="w-3 h-3 absolute bottom-0.5 right-0.5 text-gray-600">
+            <path d="M14 14L8 14L14 8Z" fill="currentColor" />
+          </svg>
+        </div>
+      )}
 
       {/* Close confirmation dialog */}
       {showCloseDialog && (
@@ -3445,6 +3451,27 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
   };
   const [floatingTerminals, setFloatingTerminals] = useState<{ agentId: string; label: string; icon: string; cliId: string; cliCmd?: string; cliType?: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string>; isPrimary?: boolean; skipPermissions?: boolean; persistentSession?: boolean; boundSessionId?: string; initialPos?: { x: number; y: number } }[]>([]);
   const [termPicker, setTermPicker] = useState<{ agent: AgentConfig; sessName: string; workDir?: string; supportsSession?: boolean; currentSessionId: string | null; initialPos?: { x: number; y: number } } | null>(null);
+  // Terminal layout: floating (draggable windows) or docked (fixed grid at bottom)
+  const [terminalLayout, setTerminalLayout] = useState<'floating' | 'docked'>(() => {
+    if (typeof window === 'undefined') return 'floating';
+    return (localStorage.getItem('forge.termLayout') as 'floating' | 'docked') || 'floating';
+  });
+  const [dockColumns, setDockColumns] = useState<number>(() => {
+    if (typeof window === 'undefined') return 2;
+    return parseInt(localStorage.getItem('forge.termDockCols') || '2');
+  });
+  const [dockHeight, setDockHeight] = useState<number>(() => {
+    if (typeof window === 'undefined') return 320;
+    return parseInt(localStorage.getItem('forge.termDockHeight') || '320');
+  });
+  const updateTerminalLayout = (l: 'floating' | 'docked') => {
+    setTerminalLayout(l);
+    if (typeof window !== 'undefined') localStorage.setItem('forge.termLayout', l);
+  };
+  const updateDockColumns = (n: number) => {
+    setDockColumns(n);
+    if (typeof window !== 'undefined') localStorage.setItem('forge.termDockCols', String(n));
+  };
 
   // Expose focusAgent to parent
   useImperativeHandle(ref, () => ({
@@ -3770,6 +3797,32 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           </>
         )}
         <div className="ml-auto flex items-center gap-2">
+          {/* Terminal layout switcher */}
+          <div className="flex items-center gap-0.5 px-1 py-0.5 rounded border border-[#30363d] bg-[#0d1117]">
+            <button
+              onClick={() => updateTerminalLayout('floating')}
+              className={`text-[8px] px-1.5 py-0.5 rounded ${terminalLayout === 'floating' ? 'bg-[#58a6ff]/20 text-[#58a6ff]' : 'text-gray-500 hover:text-white'}`}
+              title="Floating terminals (draggable windows)"
+            >⧉ Float</button>
+            <button
+              onClick={() => updateTerminalLayout('docked')}
+              className={`text-[8px] px-1.5 py-0.5 rounded ${terminalLayout === 'docked' ? 'bg-[#58a6ff]/20 text-[#58a6ff]' : 'text-gray-500 hover:text-white'}`}
+              title="Docked terminals (bottom grid)"
+            >▤ Dock</button>
+            {terminalLayout === 'docked' && (
+              <>
+                <span className="w-px h-3 bg-[#30363d] mx-0.5" />
+                {[1, 2, 3, 4].map(n => (
+                  <button
+                    key={n}
+                    onClick={() => updateDockColumns(n)}
+                    className={`text-[8px] px-1 py-0.5 rounded ${dockColumns === n ? 'bg-[#58a6ff]/20 text-[#58a6ff]' : 'text-gray-500 hover:text-white'}`}
+                    title={`${n} column${n > 1 ? 's' : ''}`}
+                  >{n}</button>
+                ))}
+              </>
+            )}
+          </div>
           <select value={mascotTheme} onChange={e => updateMascotTheme(e.target.value as MascotTheme)}
             className="text-[8px] px-1.5 py-0.5 rounded border border-[#30363d] bg-[#0d1117] text-gray-500 hover:text-white hover:border-[#58a6ff]/60 cursor-pointer focus:outline-none"
             title="Mascot theme">
@@ -4011,8 +4064,8 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
         />
       )}
 
-      {/* Floating terminals — positioned near their agent node */}
-      {floatingTerminals.map(ft => (
+      {/* Terminals — floating (draggable windows) or docked (bottom grid) */}
+      {terminalLayout === 'floating' && floatingTerminals.map(ft => (
         <FloatingTerminal
           key={ft.agentId}
           agentLabel={ft.label}
@@ -4042,6 +4095,67 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
           }}
         />
       ))}
+
+      {/* Docked terminals — bottom panel with grid layout */}
+      {terminalLayout === 'docked' && floatingTerminals.length > 0 && (
+        <div
+          className="fixed bottom-0 left-0 right-0 z-40 bg-[#0a0e14] border-t border-[#30363d] flex flex-col"
+          style={{ height: dockHeight }}
+        >
+          {/* Resize handle */}
+          <div
+            className="h-1 bg-[#30363d] hover:bg-[var(--accent)] cursor-ns-resize shrink-0"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startY = e.clientY;
+              const startH = dockHeight;
+              const onMove = (ev: MouseEvent) => {
+                const newH = Math.max(200, Math.min(window.innerHeight - 100, startH - (ev.clientY - startY)));
+                setDockHeight(newH);
+              };
+              const onUp = () => {
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+                if (typeof window !== 'undefined') localStorage.setItem('forge.termDockHeight', String(dockHeight));
+              };
+              window.addEventListener('mousemove', onMove);
+              window.addEventListener('mouseup', onUp);
+            }}
+          />
+          <div className="grid gap-1 p-1 flex-1 min-h-0" style={{ gridTemplateColumns: `repeat(${dockColumns}, minmax(0, 1fr))` }}>
+            {floatingTerminals.map(ft => (
+              <FloatingTerminal
+                key={ft.agentId}
+                agentLabel={ft.label}
+                agentIcon={ft.icon}
+                projectPath={projectPath}
+                agentCliId={ft.cliId}
+                cliCmd={ft.cliCmd}
+                cliType={ft.cliType}
+                workDir={ft.workDir}
+                preferredSessionName={ft.sessionName}
+                existingSession={ft.tmuxSession}
+                resumeMode={ft.resumeMode}
+                resumeSessionId={ft.resumeSessionId}
+                profileEnv={ft.profileEnv}
+                isPrimary={ft.isPrimary}
+                skipPermissions={ft.skipPermissions}
+                persistentSession={ft.persistentSession}
+                boundSessionId={ft.boundSessionId}
+                docked
+                onSessionReady={(name) => {
+                  if (workspaceId) wsApi(workspaceId, 'set_tmux_session', { agentId: ft.agentId, sessionName: name });
+                  setFloatingTerminals(prev => prev.map(t => t.agentId === ft.agentId ? { ...t, tmuxSession: name } : t));
+                }}
+                onClose={(killSession) => {
+                  setFloatingTerminals(prev => prev.filter(t => t.agentId !== ft.agentId));
+                  if (workspaceId) wsApi(workspaceId, 'close_terminal', { agentId: ft.agentId, kill: killSession });
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* User input request from agent (via bus) */}
       {userInputRequest && workspaceId && (

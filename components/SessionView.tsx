@@ -319,6 +319,13 @@ export default function SessionView({
         <div className="flex items-center justify-between p-2 border-b border-[var(--border)]">
           <span className="text-[10px] font-semibold text-[var(--text-secondary)] uppercase">Sessions</span>
           <div className="flex items-center gap-2">
+            {!singleProject && (
+              <button
+                onClick={() => setExpandedProjects(new Set())}
+                className="text-[9px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                title="Collapse all projects"
+              >⇱</button>
+            )}
             <button
               onClick={() => batchMode ? exitBatchMode() : setBatchMode(true)}
               className={`text-[9px] transition-colors ${batchMode ? 'text-[var(--accent)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}

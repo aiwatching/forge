@@ -126,8 +126,13 @@ export default function WorkspaceTree({
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border)] shrink-0">
         <span className="text-xs font-bold text-[var(--text-primary)]">Workspace</span>
+        <button onClick={() => setExpanded(new Set())}
+          className="text-[8px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-auto"
+          title="Collapse all">
+          ⇱
+        </button>
         <button onClick={onCreateWorkspace}
-          className="text-[8px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-auto">
+          className="text-[8px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
           +
         </button>
       </div>

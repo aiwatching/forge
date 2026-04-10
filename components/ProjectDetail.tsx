@@ -67,6 +67,7 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [gitLoading, setGitLoading] = useState(false);
   const [gitResult, setGitResult] = useState<{ ok?: boolean; error?: string } | null>(null);
   const [fileTree, setFileTree] = useState<any[]>([]);
+  const [treeCollapseVersion, setTreeCollapseVersion] = useState(0);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileImageUrl, setFileImageUrl] = useState<string | null>(null);
@@ -713,10 +714,19 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
             </div>
           )}
           {codeSearching && <div className="px-2 py-1 text-[9px] text-[var(--text-secondary)]">Searching...</div>}
+          {/* File tree header */}
+          <div className="px-2 py-0.5 border-b border-[var(--border)] flex items-center justify-between">
+            <span className="text-[8px] text-[var(--text-secondary)] uppercase">Files</span>
+            <button
+              onClick={() => setTreeCollapseVersion(v => v + 1)}
+              className="text-[8px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              title="Collapse all folders"
+            >⇱ collapse all</button>
+          </div>
           {/* File tree */}
           <div className="overflow-y-auto flex-1 p-1">
             {fileTree.map((node: any) => (
-              <FileTreeNode key={node.path} node={node} depth={0} selected={selectedFile} onSelect={openFile} />
+              <FileTreeNode key={node.path} node={node} depth={0} selected={selectedFile} onSelect={openFile} collapseVersion={treeCollapseVersion} />
             ))}
           </div>
         </div>
@@ -1468,13 +1478,19 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
 });
 
 // Simple file tree node
-const FileTreeNode = memo(function FileTreeNode({ node, depth, selected, onSelect }: {
+const FileTreeNode = memo(function FileTreeNode({ node, depth, selected, onSelect, collapseVersion }: {
   node: { name: string; path: string; type: string; children?: any[] };
   depth: number;
   selected: string | null;
   onSelect: (path: string) => void;
+  collapseVersion: number;
 }) {
   const [expanded, setExpanded] = useState(depth < 1);
+
+  // When parent bumps collapseVersion, collapse this node
+  useEffect(() => {
+    if (collapseVersion > 0) setExpanded(false);
+  }, [collapseVersion]);
 
   if (node.type === 'dir') {
     return (
@@ -1488,7 +1504,7 @@ const FileTreeNode = memo(function FileTreeNode({ node, depth, selected, onSelec
           <span className="text-[var(--text-primary)]">{node.name}</span>
         </button>
         {expanded && node.children?.map((child: any) => (
-          <FileTreeNode key={child.path} node={child} depth={depth + 1} selected={selected} onSelect={onSelect} />
+          <FileTreeNode key={child.path} node={child} depth={depth + 1} selected={selected} onSelect={onSelect} collapseVersion={collapseVersion} />
         ))}
       </div>
     );

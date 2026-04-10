@@ -64,22 +64,28 @@ function buildTree(files: { name: string; path: string; type: string }[]): TreeN
   return root;
 }
 
-function SkillFileTree({ files, activeFile, onSelect }: {
+function SkillFileTree({ files, activeFile, onSelect, collapseVersion = 0 }: {
   files: { name: string; path: string; type: string }[];
   activeFile: string | null;
   onSelect: (path: string) => void;
+  collapseVersion?: number;
 }) {
   const tree = buildTree(files);
-  return <TreeNodeList nodes={tree} depth={0} activeFile={activeFile} onSelect={onSelect} />;
+  return <TreeNodeList nodes={tree} depth={0} activeFile={activeFile} onSelect={onSelect} collapseVersion={collapseVersion} />;
 }
 
-function TreeNodeList({ nodes, depth, activeFile, onSelect }: {
-  nodes: TreeNode[]; depth: number; activeFile: string | null; onSelect: (path: string) => void;
+function TreeNodeList({ nodes, depth, activeFile, onSelect, collapseVersion = 0 }: {
+  nodes: TreeNode[]; depth: number; activeFile: string | null; onSelect: (path: string) => void; collapseVersion?: number;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set(
     // Auto-expand first level
     nodes.filter(n => n.type === 'dir').map(n => n.path)
   ));
+
+  // Collapse all on version bump
+  useEffect(() => {
+    if (collapseVersion > 0) setExpanded(new Set());
+  }, [collapseVersion]);
 
   const toggle = (path: string) => {
     setExpanded(prev => {
@@ -103,7 +109,7 @@ function TreeNodeList({ nodes, depth, activeFile, onSelect }: {
               <span>📁 {node.name}</span>
             </button>
             {expanded.has(node.path) && (
-              <TreeNodeList nodes={node.children} depth={depth + 1} activeFile={activeFile} onSelect={onSelect} />
+              <TreeNodeList nodes={node.children} depth={depth + 1} activeFile={activeFile} onSelect={onSelect} collapseVersion={collapseVersion} />
             )}
           </div>
         ) : (
@@ -152,6 +158,7 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
   const [expandedSkill, setExpandedSkill] = useState<string | null>(null);
   const [skillFiles, setSkillFiles] = useState<{ name: string; path: string; type: string }[]>([]);
   const [activeFile, setActiveFile] = useState<string | null>(null);
+  const [skillTreeCollapseVersion, setSkillTreeCollapseVersion] = useState(0);
   const [fileContent, setFileContent] = useState<string>('');
 
   const fetchSkills = useCallback(async () => {
@@ -742,7 +749,18 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                   {/* File browser */}
                   <div className="flex-1 flex min-h-0 overflow-hidden">
                     {/* File tree */}
-                    <div className="w-36 border-r border-[var(--border)] overflow-y-auto shrink-0">
+                    <div className="w-36 border-r border-[var(--border)] flex flex-col shrink-0">
+                      {skillFiles.length > 0 && (
+                        <div className="px-2 py-0.5 border-b border-[var(--border)] flex items-center justify-between shrink-0">
+                          <span className="text-[8px] text-[var(--text-secondary)] uppercase">Files</span>
+                          <button
+                            onClick={() => setSkillTreeCollapseVersion(v => v + 1)}
+                            className="text-[8px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                            title="Collapse all"
+                          >⇱</button>
+                        </div>
+                      )}
+                      <div className="overflow-y-auto flex-1">
                       {skillFiles.length === 0 ? (
                         <div className="p-2 text-[9px] text-[var(--text-secondary)]">Loading...</div>
                       ) : (
@@ -750,8 +768,10 @@ export default function SkillsPanel({ projectFilter }: { projectFilter?: string 
                           files={skillFiles}
                           activeFile={activeFile}
                           onSelect={(path) => loadFile(itemName, path, isLocal, localItem?.type, localItem?.projectPath)}
+                          collapseVersion={skillTreeCollapseVersion}
                         />
                       )}
+                      </div>
                       {skill?.sourceUrl && (
                         <div className="border-t border-[var(--border)] p-2">
                           <a

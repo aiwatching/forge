@@ -28,13 +28,18 @@ interface FileNode {
 
 // ─── File Tree ───────────────────────────────────────────
 
-function TreeNode({ node, depth, selected, onSelect }: {
+function TreeNode({ node, depth, selected, onSelect, collapseVersion = 0 }: {
   node: FileNode;
   depth: number;
   selected: string | null;
   onSelect: (path: string) => void;
+  collapseVersion?: number;
 }) {
   const [expanded, setExpanded] = useState(depth < 1);
+
+  useEffect(() => {
+    if (collapseVersion > 0) setExpanded(false);
+  }, [collapseVersion]);
 
   if (node.type === 'dir') {
     return (
@@ -48,7 +53,7 @@ function TreeNode({ node, depth, selected, onSelect }: {
           <span className="text-[var(--text-primary)]">{node.name}</span>
         </button>
         {expanded && node.children?.map(child => (
-          <TreeNode key={child.path} node={child} depth={depth + 1} selected={selected} onSelect={onSelect} />
+          <TreeNode key={child.path} node={child} depth={depth + 1} selected={selected} onSelect={onSelect} collapseVersion={collapseVersion} />
         ))}
       </div>
     );
@@ -107,6 +112,7 @@ export default function DocsViewer() {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const [treeCollapseVersion, setTreeCollapseVersion] = useState(0);
   const [terminalHeight, setTerminalHeight] = useState(250);
   const [docsAgent, setDocsAgent] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -387,14 +393,19 @@ export default function DocsViewer() {
             </div>
 
             {/* Search */}
-            <div className="p-2 border-b border-[var(--border)]">
+            <div className="p-2 border-b border-[var(--border)] flex items-center gap-2">
               <input
                 type="text"
                 placeholder="Search..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+                className="flex-1 text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
               />
+              <button
+                onClick={() => setTreeCollapseVersion(v => v + 1)}
+                className="text-[10px] px-1.5 py-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] shrink-0"
+                title="Collapse all folders"
+              >⇱</button>
             </div>
 
             {/* Tree / search results */}
@@ -419,7 +430,7 @@ export default function DocsViewer() {
                 )
               ) : (
                 (hideUnsupported ? filterTree(tree) : tree).map(node => (
-                  <TreeNode key={node.path} node={node} depth={0} selected={selectedFile} onSelect={openFileInTab} />
+                  <TreeNode key={node.path} node={node} depth={0} selected={selectedFile} onSelect={openFileInTab} collapseVersion={treeCollapseVersion} />
                 ))
               )}
             </div>

@@ -58,7 +58,11 @@ function loadOrchestrator(id: string): WorkspaceOrchestrator {
       agentStates: state.agentStates,
       busLog: state.busLog,
       busOutbox: state.busOutbox,
+      nodePositions: state.nodePositions,
     });
+  } else if (state.nodePositions) {
+    // Load positions even when no agents yet (rare, but safe)
+    orch.loadSnapshot({ agents: [], agentStates: {}, busLog: [], nodePositions: state.nodePositions });
   }
 
   // Wire up SSE broadcasting
@@ -189,6 +193,15 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
         } catch (err: any) {
           return jsonError(res, err.message);
         }
+      }
+      case 'set_positions': {
+        const positions = body.positions as Record<string, { x: number; y: number }> | undefined;
+        if (!positions) return jsonError(res, 'positions required');
+        orch.setNodePositions(positions);
+        return json(res, { ok: true });
+      }
+      case 'get_positions': {
+        return json(res, { positions: orch.getNodePositions() });
       }
       case 'agent_done': {
         // Called by Claude Code Stop hook — agent finished a turn

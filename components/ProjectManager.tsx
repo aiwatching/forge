@@ -26,7 +26,17 @@ function genTabId(): number { return Date.now() + Math.floor(Math.random() * 100
 
 export default function ProjectManager() {
   const { sidebarWidth, onSidebarDragStart } = useSidebarResize({ defaultWidth: 240, minWidth: 140, maxWidth: 400 });
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsedState] = useState(false);
+  // Load collapsed preference from localStorage on mount
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('forge.pm.sidebarCollapsed') === '1') setSidebarCollapsedState(true);
+    } catch {}
+  }, []);
+  const setSidebarCollapsed = useCallback((v: boolean) => {
+    setSidebarCollapsedState(v);
+    try { localStorage.setItem('forge.pm.sidebarCollapsed', v ? '1' : '0'); } catch {}
+  }, []);
   const [projects, setProjects] = useState<Project[]>([]);
   const [showClone, setShowClone] = useState(false);
   const [cloneUrl, setCloneUrl] = useState('');
@@ -103,40 +113,37 @@ export default function ProjectManager() {
 
   // Open a project in a tab
   const openProjectTab = useCallback((p: Project) => {
-    setTabs(prev => {
-      const existing = prev.find(t => t.projectPath === p.path);
-      if (existing) {
-        // Activate existing tab
-        const updated = prev.map(t => t.id === existing.id ? { ...t, mountedAt: Date.now() } : t);
-        setActiveTabId(existing.id);
-        persistTabs(updated, existing.id);
-        return updated;
-      }
-      // Create new tab
-      const newTab: ProjectTab = {
-        id: genTabId(),
-        projectPath: p.path,
-        projectName: p.name,
-        hasGit: p.hasGit,
-        mountedAt: Date.now(),
-      };
-      const updated = [...prev, newTab];
-      setActiveTabId(newTab.id);
-      persistTabs(updated, newTab.id);
-      return updated;
-    });
-  }, [persistTabs]);
+    const existing = tabs.find(t => t.projectPath === p.path);
+    if (existing) {
+      const updated = tabs.map(t => t.id === existing.id ? { ...t, mountedAt: Date.now() } : t);
+      setTabs(updated);
+      setActiveTabId(existing.id);
+      persistTabs(updated, existing.id);
+      return;
+    }
+    const newTab: ProjectTab = {
+      id: genTabId(),
+      projectPath: p.path,
+      projectName: p.name,
+      hasGit: p.hasGit,
+      mountedAt: Date.now(),
+    };
+    const updated = [...tabs, newTab];
+    setTabs(updated);
+    setActiveTabId(newTab.id);
+    persistTabs(updated, newTab.id);
+  }, [tabs, persistTabs]);
 
   const activateTab = useCallback((id: number) => {
+    const updated = tabs.map(t => t.id === id ? { ...t, mountedAt: Date.now() } : t);
+    setTabs(updated);
     setActiveTabId(id);
-    setTabs(prev => {
-      const updated = prev.map(t => t.id === id ? { ...t, mountedAt: Date.now() } : t);
-      persistTabs(updated, id);
-      return updated;
-    });
-  }, [persistTabs]);
+    persistTabs(updated, id);
+  }, [tabs, persistTabs]);
 
   const closeTab = useCallback((id: number) => {
+    const tab = tabs.find(t => t.id === id);
+    if (tab && !window.confirm(`Close "${tab.projectName}"?`)) return;
     setTabs(prev => {
       const idx = prev.findIndex(t => t.id === id);
       const updated = prev.filter(t => t.id !== id);
@@ -154,7 +161,7 @@ export default function ProjectManager() {
       }
       return updated;
     });
-  }, [activeTabId, persistTabs]);
+  }, [activeTabId, persistTabs, tabs]);
 
   // Determine which tabs to mount (max 5, LRU eviction)
   const mountedTabIds = new Set<number>();
@@ -213,7 +220,7 @@ export default function ProjectManager() {
 
   return (
     <div className="flex-1 flex min-h-0">
-      {/* Collapsed sidebar — narrow strip with project initials */}
+      {/* Collapsed sidebar — narrow strip with open tabs on top, all projects below */}
       {sidebarCollapsed && (
         <div className="w-10 border-r border-[var(--border)] flex flex-col shrink-0 overflow-hidden">
           <button onClick={() => setSidebarCollapsed(false)}
@@ -221,17 +228,46 @@ export default function ProjectManager() {
             title="Expand sidebar">
             ▶
           </button>
+          {/* Open tabs */}
+          {tabs.length > 0 && (
+            <>
+              <div className="text-[7px] text-[var(--text-secondary)] text-center py-0.5 border-y border-[var(--border)] bg-[var(--bg-tertiary)]">OPEN</div>
+              {tabs.map(t => {
+                const isActive = t.id === activeTabId;
+                const initial = t.projectName.slice(0, 2).toUpperCase();
+                return (
+                  <div key={`tab-${t.id}`} className="group relative">
+                    <button
+                      onClick={() => activateTab(t.id)}
+                      title={t.projectName}
+                      className={`w-full py-1.5 text-[9px] font-bold text-center border-l-2 ${
+                        isActive ? 'text-[var(--accent)] bg-[var(--accent)]/10 border-[var(--accent)]' : 'text-[var(--green)] border-transparent hover:bg-[var(--bg-secondary)]'
+                      }`}
+                    >
+                      {initial}
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); closeTab(t.id); }}
+                      className="absolute top-0 right-0 text-[8px] text-[var(--text-secondary)] hover:text-[var(--red)] opacity-0 group-hover:opacity-100 transition-opacity px-0.5"
+                      title="Close"
+                    >×</button>
+                  </div>
+                );
+              })}
+              <div className="border-b border-[var(--border)] my-1"></div>
+            </>
+          )}
+          {/* All projects */}
           <div className="flex-1 overflow-y-auto">
             {[...projects].sort((a, b) => a.name.localeCompare(b.name)).map(p => {
-              const isActive = activeTab?.projectPath === p.path;
+              const openTab = tabs.find(t => t.projectPath === p.path);
+              if (openTab) return null; // already in Open section above
               const initial = p.name.slice(0, 2).toUpperCase();
               return (
                 <button key={p.path}
                   onClick={() => openProjectTab(p)}
                   title={p.name}
-                  className={`w-full py-1.5 text-[9px] font-bold text-center ${
-                    isActive ? 'text-[var(--accent)] bg-[var(--accent)]/10' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]'
-                  }`}>
+                  className="w-full py-1.5 text-[9px] font-bold text-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]">
                   {initial}
                 </button>
               );
@@ -285,24 +321,40 @@ export default function ProjectManager() {
                 <span className="text-[8px]">{collapsedRoots.has('__favorites__') ? '▸' : '▾'}</span>
                 <span>★</span> Favorites ({favoriteProjects.length})
               </button>
-              {!collapsedRoots.has('__favorites__') && favoriteProjects.map(p => (
-                <button
-                  key={`fav-${p.path}`}
-                  onClick={() => openProjectTab(p)}
-                  className={`w-full text-left px-3 py-1.5 text-xs border-b border-[var(--border)]/30 flex items-center gap-2 ${
-                    tabs.find(t => t.id === activeTabId)?.projectPath === p.path ? 'bg-[var(--accent)]/10 text-[var(--accent)]' : 'hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)]'
-                  }`}
-                >
-                  <span
-                    onClick={(e) => { e.stopPropagation(); toggleFavorite(p.path); }}
-                    className="text-[13px] text-[var(--yellow)] shrink-0 cursor-pointer leading-none"
-                    title="Remove from favorites"
-                  >★</span>
-                  <span className="truncate">{p.name}</span>
-                  {p.language && <span className="text-[8px] text-[var(--text-secondary)] ml-auto shrink-0">{p.language}</span>}
-                  {p.hasGit && <span className="text-[8px] text-[var(--accent)] shrink-0">git</span>}
-                </button>
-              ))}
+              {!collapsedRoots.has('__favorites__') && favoriteProjects.map(p => {
+                const openTab = tabs.find(t => t.projectPath === p.path);
+                const isActive = openTab?.id === activeTabId;
+                return (
+                  <div
+                    key={`fav-${p.path}`}
+                    className={`group w-full border-b border-[var(--border)]/30 flex items-center gap-2 px-3 py-1.5 text-xs ${
+                      isActive ? 'bg-[var(--accent)]/10 text-[var(--accent)]' : openTab ? 'bg-[var(--bg-tertiary)]/40 text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]' : 'hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)]'
+                    }`}
+                  >
+                    <span
+                      onClick={(e) => { e.stopPropagation(); toggleFavorite(p.path); }}
+                      className="text-[13px] text-[var(--yellow)] shrink-0 cursor-pointer leading-none"
+                      title="Remove from favorites"
+                    >★</span>
+                    <button
+                      onClick={() => openProjectTab(p)}
+                      className="flex-1 text-left flex items-center gap-2 min-w-0"
+                    >
+                      {openTab && <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)] shrink-0" title="Open"></span>}
+                      <span className="truncate">{p.name}</span>
+                      {p.language && <span className="text-[8px] text-[var(--text-secondary)] ml-auto shrink-0">{p.language}</span>}
+                      {p.hasGit && <span className="text-[8px] text-[var(--accent)] shrink-0">git</span>}
+                    </button>
+                    {openTab && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); closeTab(openTab.id); }}
+                        className="text-[var(--text-secondary)] hover:text-[var(--red)] text-[11px] leading-none opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                        title="Close tab"
+                      >×</button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -320,24 +372,40 @@ export default function ProjectManager() {
                   <span className="text-[8px]">{isCollapsed ? '▸' : '▾'}</span>
                   {rootName} ({rootProjects.length})
                 </button>
-                {!isCollapsed && rootProjects.map(p => (
-                  <button
-                    key={p.path}
-                    onClick={() => openProjectTab(p)}
-                    className={`w-full text-left px-3 py-1.5 text-xs border-b border-[var(--border)]/30 flex items-center gap-2 ${
-                      tabs.find(t => t.id === activeTabId)?.projectPath === p.path ? 'bg-[var(--accent)]/10 text-[var(--accent)]' : 'hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)]'
-                    }`}
-                  >
-                    <span
-                      onClick={(e) => { e.stopPropagation(); toggleFavorite(p.path); }}
-                      className={`text-[13px] shrink-0 cursor-pointer leading-none ${favorites.includes(p.path) ? 'text-[var(--yellow)]' : 'text-[var(--text-secondary)]/30 hover:text-[var(--yellow)]'}`}
-                      title={favorites.includes(p.path) ? 'Remove from favorites' : 'Add to favorites'}
-                    >{favorites.includes(p.path) ? '★' : '☆'}</span>
-                    <span className="truncate">{p.name}</span>
-                    {p.language && <span className="text-[8px] text-[var(--text-secondary)] ml-auto shrink-0">{p.language}</span>}
-                    {p.hasGit && <span className="text-[8px] text-[var(--accent)] shrink-0">git</span>}
-                  </button>
-                ))}
+                {!isCollapsed && rootProjects.map(p => {
+                  const openTab = tabs.find(t => t.projectPath === p.path);
+                  const isActive = openTab?.id === activeTabId;
+                  return (
+                    <div
+                      key={p.path}
+                      className={`group w-full border-b border-[var(--border)]/30 flex items-center gap-2 px-3 py-1.5 text-xs ${
+                        isActive ? 'bg-[var(--accent)]/10 text-[var(--accent)]' : openTab ? 'bg-[var(--bg-tertiary)]/40 text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]' : 'hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)]'
+                      }`}
+                    >
+                      <span
+                        onClick={(e) => { e.stopPropagation(); toggleFavorite(p.path); }}
+                        className={`text-[13px] shrink-0 cursor-pointer leading-none ${favorites.includes(p.path) ? 'text-[var(--yellow)]' : 'text-[var(--text-secondary)]/30 hover:text-[var(--yellow)]'}`}
+                        title={favorites.includes(p.path) ? 'Remove from favorites' : 'Add to favorites'}
+                      >{favorites.includes(p.path) ? '★' : '☆'}</span>
+                      <button
+                        onClick={() => openProjectTab(p)}
+                        className="flex-1 text-left flex items-center gap-2 min-w-0"
+                      >
+                        {openTab && <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)] shrink-0" title="Open"></span>}
+                        <span className="truncate">{p.name}</span>
+                        {p.language && <span className="text-[8px] text-[var(--text-secondary)] ml-auto shrink-0">{p.language}</span>}
+                        {p.hasGit && <span className="text-[8px] text-[var(--accent)] shrink-0">git</span>}
+                      </button>
+                      {openTab && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); closeTab(openTab.id); }}
+                          className="text-[var(--text-secondary)] hover:text-[var(--red)] text-[11px] leading-none opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                          title="Close tab"
+                        >×</button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
@@ -356,15 +424,6 @@ export default function ProjectManager() {
 
       {/* Main area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Tab bar */}
-        {tabs.length > 0 && (
-          <TabBar
-            tabs={tabs.map(t => ({ id: t.id, label: t.projectName }))}
-            activeId={activeTabId}
-            onActivate={activateTab}
-            onClose={closeTab}
-          />
-        )}
 
         {/* Tab content */}
         {tabs.length > 0 ? (

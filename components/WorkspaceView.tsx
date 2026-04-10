@@ -2244,8 +2244,23 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
   }, [initialPos?.x, initialPos?.y]); // eslint-disable-line react-hooks/exhaustive-deps
   const [size, setSize] = useState({ w: 500, h: 300 });
   const [showCloseDialog, setShowCloseDialog] = useState(false);
+  const [mouseOn, setMouseOn] = useState(true);
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const resizeRef = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null);
+
+  const toggleMouse = () => {
+    const next = !mouseOn;
+    setMouseOn(next);
+    // Send via current WebSocket (shared for all workspace terminals)
+    try {
+      const ws = new WebSocket(getWsUrl());
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'tmux-mouse', mouse: next }));
+        setTimeout(() => ws.close(), 300);
+      };
+      ws.onerror = () => ws.close();
+    } catch {}
+  };
 
   useEffect(() => {
     const el = containerRef.current;
@@ -2463,7 +2478,15 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
         <span className="text-sm">{agentIcon}</span>
         <span className="text-[11px] font-semibold text-white truncate">{agentLabel}</span>
         {!docked && <span className="text-[8px] text-gray-500">⌨️ manual terminal</span>}
-        <button onClick={() => setShowCloseDialog(true)} className="ml-auto text-gray-500 hover:text-white text-sm shrink-0">✕</button>
+        <button
+          onClick={(e) => { e.stopPropagation(); toggleMouse(); }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className={`ml-auto text-[9px] px-1.5 py-0.5 rounded border transition-colors ${mouseOn ? 'border-green-600/40 text-green-400 bg-green-500/10' : 'border-gray-600 text-gray-500 bg-gray-800/50'}`}
+          title={mouseOn ? 'Mouse ON (trackpad scroll, Shift+drag to select text)' : 'Mouse OFF (drag to select text, Ctrl+B [ to scroll)'}
+        >
+          🖱️ {mouseOn ? 'ON' : 'OFF'}
+        </button>
+        <button onClick={() => setShowCloseDialog(true)} className="text-gray-500 hover:text-white text-sm shrink-0">✕</button>
       </div>
 
       {/* Terminal */}
@@ -3497,6 +3520,29 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
     ensureWorkspace(projectPath, projectName).then(setWorkspaceId).catch(() => {});
   }, [projectPath, projectName]);
 
+  // Saved node positions from server (loaded once on workspace init)
+  const [savedPositions, setSavedPositions] = useState<Record<string, { x: number; y: number }>>({});
+  useEffect(() => {
+    if (!workspaceId) return;
+    wsApi(workspaceId, 'get_positions').then((res: any) => {
+      if (res?.positions) setSavedPositions(res.positions);
+    }).catch(() => {});
+  }, [workspaceId]);
+
+  // Save positions (debounced) when nodes are dragged
+  const savePositionsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveNodePositions = useCallback(() => {
+    if (!workspaceId) return;
+    if (savePositionsDebounceRef.current) clearTimeout(savePositionsDebounceRef.current);
+    savePositionsDebounceRef.current = setTimeout(() => {
+      const positions: Record<string, { x: number; y: number }> = {};
+      for (const n of rfNodes) {
+        positions[n.id] = { x: n.position.x, y: n.position.y };
+      }
+      wsApi(workspaceId, 'set_positions', { positions }).catch(() => {});
+    }, 500);
+  }, [workspaceId, rfNodes]);
+
   // SSE stream — server is the single source of truth
   const { agents, states, logPreview, busLog, daemonActive: daemonActiveFromStream, setDaemonActive: setDaemonActiveFromStream } = useWorkspaceStream(workspaceId, (event) => {
     if (event.type === 'user_input_request') {
@@ -3515,7 +3561,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
         const existing = prevMap.get(agent.id);
         const base = {
           id: agent.id,
-          position: existing?.position ?? { x: i * 260, y: 60 },
+          position: existing?.position ?? savedPositions[agent.id] ?? { x: i * 260, y: 60 },
           ...(existing?.measured ? { measured: existing.measured } : {}),
           ...(existing?.width ? { width: existing.width, height: existing.height } : {}),
         };
@@ -3625,7 +3671,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
         };
       });
     });
-  }, [agents, states, logPreview, workspaceId, mascotTheme]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [agents, states, logPreview, workspaceId, mascotTheme, savedPositions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Derive edges from dependsOn
   const rfEdges = useMemo(() => {
@@ -3920,6 +3966,8 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
             edges={rfEdges}
             onNodesChange={onNodesChange}
             onNodeDragStop={() => {
+              // Persist positions
+              saveNodePositions();
               // Reposition terminals to follow their nodes
               setFloatingTerminals(prev => prev.map(ft => {
                 const nodeEl = document.querySelector(`[data-id="${ft.agentId}"]`);

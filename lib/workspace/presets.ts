@@ -22,6 +22,43 @@ import type { WorkspaceAgentConfig } from './types';
 
 type PresetTemplate = Omit<WorkspaceAgentConfig, 'id'>;
 
+/**
+ * Shared decision rule for all smiths: when to use request documents
+ * vs inbox messages. This is the most common source of confusion.
+ */
+const REQUEST_VS_INBOX_RULE = `## Rule: Request vs Inbox
+
+Use **request document** (create_request / claim_request / update_response) when:
+- Delegating substantive work to another smith (implement feature, write tests, do review)
+- Work has concrete deliverables and acceptance criteria
+- Work should flow through a pipeline (engineer → qa → reviewer)
+- The task needs to be tracked, claimed, and its status visible to everyone
+
+Use **inbox message** (send_message) when:
+- Asking a clarifying question ("what format should X be?")
+- Quick status update ("I'm starting on this")
+- Reporting a bug back to upstream (after review fails)
+- Coordinating without a concrete deliverable
+
+**Decision tree when user or another smith asks you to coordinate work:**
+\`\`\`
+Is it substantive implementation/testing/review work with clear acceptance criteria?
+├─ YES → create_request (then notify via inbox if needed)
+└─ NO  → send_message only
+
+Is it a question or quick coordination (no deliverable)?
+├─ YES → send_message only
+└─ NO  → create_request
+
+Am I being asked to do work that would result in code/tests/docs changes?
+├─ YES and I'm executing it → claim_request if one exists, or tell user to create one
+└─ NO → just respond via inbox
+\`\`\`
+
+**When unsure, prefer create_request** — having a tracked artifact beats losing context in chat.
+`;
+
+
 export const AGENT_PRESETS: Record<string, PresetTemplate> = {
   pm: {
     label: 'PM',
@@ -162,7 +199,9 @@ IF request stuck open (no one claimed):
 - Do NOT write code — your output is request documents only
 - Each acceptance_criterion must be verifiable by QA
 - Group related requests in a batch for tracking
-- Downstream agents are auto-notified via DAG when you create requests`,
+- Downstream agents are auto-notified via DAG when you create requests
+
+${REQUEST_VS_INBOX_RULE}`,
     backend: 'cli',
     agentId: 'claude',
     dependsOn: [],
@@ -241,7 +280,9 @@ IF you encounter a blocking issue (unclear requirement, impossible constraint):
 - ALWAYS update_response when done — triggers downstream pipeline
 - Only implement what the request asks — don't scope-creep
 - Architecture docs are versioned — never overwrite
-- Existing working code stays unless request explicitly requires changes`,
+- Existing working code stays unless request explicitly requires changes
+
+${REQUEST_VS_INBOX_RULE}`,
     backend: 'cli',
     agentId: 'claude',
     dependsOn: [],
@@ -331,7 +372,9 @@ IF result = "failed":
 - Do NOT fix bugs — only report them
 - Each test must trace back to an acceptance_criterion
 - One consolidated message max — never spam Engineers
-- Never send messages during planning/writing — only after execution`,
+- Never send messages during planning/writing — only after execution
+
+${REQUEST_VS_INBOX_RULE}`,
     backend: 'cli',
     agentId: 'claude',
     dependsOn: [],
@@ -436,7 +479,9 @@ IF result = "rejected":
 - Review ONLY files_changed from the request, not the entire codebase
 - Actionable feedback: not "this is bad" but "change X to Y because Z"
 - One consolidated message max per verdict
-- MINOR findings go in report only — never message about style`,
+- MINOR findings go in report only — never message about style
+
+${REQUEST_VS_INBOX_RULE}`,
     backend: 'cli',
     agentId: 'claude',
     dependsOn: [],
@@ -549,7 +594,9 @@ IF multiple Engineers exist and request unclaimed:
 - Every delegated task MUST go through request documents (create_request)
 - Each request needs concrete acceptance_criteria that QA can verify
 - Do NOT duplicate work an active agent is already doing — check status first
-- When covering a gap, be thorough — don't half-do it just because it's not your "main" role`,
+- When covering a gap, be thorough — don't half-do it just because it's not your "main" role
+
+${REQUEST_VS_INBOX_RULE}`,
     backend: 'cli',
     agentId: 'claude',
     dependsOn: [],

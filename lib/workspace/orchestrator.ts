@@ -96,6 +96,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
   private reconcileTick = 0; // counts health check ticks for 60s reconcile
   private _topoCache: WorkspaceTopo | null = null; // cached workspace topology
   private roleInjectState = new Map<string, { lastInjectAt: number; msgsSinceInject: number }>(); // per-agent role reminder tracking
+  private nodePositions: Record<string, { x: number; y: number }> = {}; // persisted smith positions in ReactFlow graph
 
   /** Emit a log event (auto-persisted via constructor listener) */
   emitLog(agentId: string, entry: any): void {
@@ -1847,6 +1848,17 @@ export class WorkspaceOrchestrator extends EventEmitter {
     return this.bus.getLog();
   }
 
+  // ─── Node positions (ReactFlow layout) ─────────────────
+
+  getNodePositions(): Record<string, { x: number; y: number }> {
+    return { ...this.nodePositions };
+  }
+
+  setNodePositions(positions: Record<string, { x: number; y: number }>): void {
+    this.nodePositions = { ...this.nodePositions, ...positions };
+    this.saveNow();
+  }
+
   // ─── State Snapshot (for persistence) ──────────────────
 
   /** Get full workspace state for auto-save */
@@ -1857,7 +1869,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       projectName: this.projectName,
       agents: Array.from(this.agents.values()).map(e => e.config),
       agentStates: this.getAllAgentStates(),
-      nodePositions: {},
+      nodePositions: this.nodePositions,
       busLog: [...this.bus.getLog()],
       busOutbox: this.bus.getAllOutbox(),
       createdAt: this.createdAt,
@@ -1885,7 +1897,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
     agentStates: Record<string, AgentState>;
     busLog: BusMessage[];
     busOutbox?: Record<string, BusMessage[]>;
+    nodePositions?: Record<string, { x: number; y: number }>;
   }): void {
+    if (data.nodePositions) this.nodePositions = { ...data.nodePositions };
     this.agents.clear();
     this.daemonActive = false; // Reset daemon — user must click Start Daemon again after restart
     for (const config of data.agents) {

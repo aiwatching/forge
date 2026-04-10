@@ -181,7 +181,7 @@ export default function Dashboard({ user }: { user: any }) {
     return () => clearInterval(id);
   }, []);
 
-  // Notification polling
+  // Notifications: fetch on mount + when panel opens (no polling)
   const fetchNotifications = useCallback(() => {
     fetch('/api/notifications').then(r => r.json()).then(data => {
       setNotifications(data.notifications || []);
@@ -189,11 +189,12 @@ export default function Dashboard({ user }: { user: any }) {
     }).catch(() => {});
   }, []);
 
+  useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
+
+  // Refresh when notification panel opens
   useEffect(() => {
-    fetchNotifications();
-    const id = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(id);
-  }, [fetchNotifications]);
+    if (showNotifications) fetchNotifications();
+  }, [showNotifications, fetchNotifications]);
 
   // Heartbeat for online user tracking
   useEffect(() => {

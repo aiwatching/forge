@@ -42,6 +42,7 @@ The token is valid for 24 hours. Store it in a variable and reuse for all API ca
 | `09-issue-autofix.md` | GitHub issue auto-fix pipeline |
 | `10-troubleshooting.md` | Common issues and solutions |
 | `11-workspace.md` | Workspace (Forge Smiths) — multi-agent orchestration, daemon, message bus, profiles |
+| `12-usage.md` | Token usage analytics — charts, heatmap, cost estimation, by model/project/source |
 
 ## Matching questions to docs
 
@@ -60,3 +61,6 @@ The token is valid for 24 hours. Store it in a variable and reuse for all API ca
 - Watch/monitor/detect/file changes/autonomous → `11-workspace.md`
 - Agent profile/env/model/cliType → `01-settings.md` + `11-workspace.md`
 - Agent log/logs/history/clear logs → `11-workspace.md`
+- Usage/cost/tokens/spending/billing/analytics → `12-usage.md`
+- Terminal dock/float/mouse toggle/reconnect → `07-projects.md` + `11-workspace.md`
+- Sidebar collapse/project tabs/favorites → `07-projects.md`

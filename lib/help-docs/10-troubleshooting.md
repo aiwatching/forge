@@ -39,6 +39,18 @@ rm ~/.forge/data/terminal-state.json
 # Restart server — tabs will be empty but tmux sessions survive
 ```
 
+### Terminal input is laggy
+Usually caused by high system load. Check:
+- System memory — if heavily swapping, kill some processes
+- Clean up old tmux sessions: `tmux list-sessions` then `tmux kill-session -t <name>`
+- Reduce polling: open tabs are limited to 20 by LRU eviction
+- Workspace terminals auto-reconnect on disconnect; no need to manually reopen
+
+### "Connection error" in workspace terminal
+The WebSocket dropped (system suspend, network blip). Forge auto-reconnects after 2s and re-attaches to the same tmux session. If it keeps happening:
+- Check `~/.forge/data/forge.log` for terminal-standalone errors
+- Restart: `forge server restart`
+
 ### gh CLI not authenticated (Issue Scanner)
 ```bash
 gh auth login

@@ -40,6 +40,26 @@ Add project directories in Settings → **Project Roots** (e.g. `~/Projects`). F
 
 Click ★ next to a project to favorite it. Favorites appear at the top of the sidebar.
 
+## Sidebar & Navigation
+
+- **Collapse sidebar** (▶/◀ button): Narrow strip shows opened tabs at top (marked with green dot) and all other projects as initials below. Hover to show close (×) button on open tabs.
+- **Sidebar state is persisted** across browser refreshes via `localStorage`.
+- **Open projects** are marked with a green dot in the expanded sidebar; hover to reveal a close button.
+- **Close confirmation** prompts before closing a project tab to prevent accidental closes.
+- Up to **20 project tabs** stay mounted simultaneously (LRU eviction beyond that) — switching between recent projects is instant, terminal state is preserved.
+
+## Tree Views — Collapse All
+
+All hierarchical tree views have a `⇱` "Collapse all" button to quickly fold every folder:
+
+| Location | Button position |
+|---|---|
+| Project **Code** tab file tree | Right of "Files" label |
+| **Docs viewer** tree | Right of search box |
+| **Skills** panel file tree | Top of file tree |
+| **Workspace** sidebar | Header next to `+` |
+| **Session** list | Next to Batch button |
+
 ## Terminal
 
 ### Opening a Terminal

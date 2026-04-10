@@ -207,6 +207,24 @@ Agents use these MCP tools (via forge-mcp-server):
 | `mark_message_done` | Mark a processed message as done |
 | `check_outbox` | Check delivery status of sent messages |
 
+### Request vs Inbox — When to use which
+
+Every preset smith's role prompt includes a decision rule for this:
+
+**Use `create_request`** when:
+- Delegating substantive work (implement feature, write tests, do review)
+- Work has concrete deliverables and acceptance criteria
+- Work should flow through a pipeline (engineer → qa → reviewer)
+- The task needs to be tracked, claimed, and its status visible
+
+**Use `send_message`** when:
+- Asking a clarifying question
+- Quick status update or coordination
+- Reporting a bug back after review fails
+- No concrete deliverable
+
+**When unsure, prefer `create_request`** — a tracked artifact beats losing context in chat.
+
 ### Other
 
 | Tool | Description |
@@ -317,6 +335,31 @@ Click **⌨️** on any smith to open a terminal session:
 - Forge Skills available: `/forge-send`, `/forge-inbox`, `/forge-status`, `/forge-workspace-sync`
 - Session Picker: choose new session, continue existing, or browse all Claude sessions
 - Close terminal → smith returns to auto mode, pending messages resume
+- **Auto-reconnect**: If the WebSocket drops (e.g. system suspend, network blip), the terminal automatically reconnects after 2s and re-attaches to the same tmux session — conversation context preserved
+- **Mouse ON/OFF toggle** (🖱️ button in header): Toggle tmux mouse mode globally for all sessions
+  - **ON**: trackpad scroll, `Shift+drag` to select text
+  - **OFF**: drag to select text directly, `Ctrl+B [` to enter scroll mode
+  - Click to apply instantly (no restart needed)
+
+### Terminal Layout: Float vs Dock
+
+The workspace toolbar has a layout switcher: `⧉ Float` or `▤ Dock`.
+
+| Layout | Behavior |
+|---|---|
+| **Float** (default) | Each terminal is a draggable/resizable floating window positioned near its smith node |
+| **Dock** | All open terminals arranged in a fixed grid at the bottom of the workspace |
+
+Dock mode features:
+- Grid columns selector (1/2/3/4) — auto-expands based on open terminal count
+- 1 terminal with 4 columns → fills full width
+- 2 → half-half, 3 → thirds, 4 → quarters, 5+ → wraps to second row
+- Drag the top border to resize dock height
+- Layout preference persisted to localStorage
+
+### Smith Node Positions
+
+Drag smith nodes to reorganize the graph. Positions are **persisted to workspace state** and restored on reload. Auto-save debounces writes (500ms after drag stops).
 
 ## Watch (Autonomous Monitoring)
 
@@ -356,7 +399,7 @@ Agents can monitor file/git/command changes without message-driven triggers.
 
 Each smith can display an animated companion character next to its node.
 
-**Themes**: Stick figure, Cat, Dog, Pig, Emoji, Off (default)
+**Themes**: Stick figure, Cat, Pixel (8-bit RPG hero), Emoji, Off (default)
 
 - Theme picker in workspace header
 - Animates based on smith state (idle/running/done/failed/sleeping)
@@ -368,7 +411,7 @@ Each smith can display an animated companion character next to its node.
 | Action | Description |
 |--------|-------------|
 | **Start Daemon** | Launch all smiths, begin consuming messages |
-| **Stop Daemon** | Stop all smiths, kill workers |
+| **Stop Daemon** | Stop all smiths, kill workers. Preserves user's terminal conversation context (no `/clear` is sent). Tmux sessions attached to by a user are kept alive. |
 | **Run All** | Trigger all runnable agents once |
 | **Run** | Trigger specific agent |
 | **Pause/Resume** | Pause/resume message consumption for one agent |

@@ -2,6 +2,22 @@
 
 Forge is a self-hosted Vibe Coding platform for Claude Code. It provides a browser-based terminal, multi-agent workspace orchestration, AI task management, remote access, and mobile control via Telegram.
 
+## Main Features
+
+| Feature | Description |
+|---|---|
+| **Browser Terminal** | xterm.js + tmux persistence, split panes, mouse on/off toggle, auto-reconnect on disconnect |
+| **Projects** | File tree, Git operations, code search, per-project tabs, favorites |
+| **Workspace (Smiths)** | Multi-agent orchestration with DAG dependencies, message bus, request documents |
+| **Tasks** | Background AI task queue with hook-based completion notifications |
+| **Pipelines** | YAML-driven DAG workflows with scheduling and routing |
+| **Skills Marketplace** | Install/update Claude Code skills and slash commands per project |
+| **Usage Analytics** | Token/cost tracking by project, model, source with charts and heatmaps |
+| **Telegram Bot** | Mobile control — submit tasks, receive notifications |
+| **Remote Access** | One-click Cloudflare tunnel for remote browsing |
+| **GitHub Issue Auto-fix** | Scan issues, auto-fix, create PRs |
+| **Memory (optional)** | Code graph + knowledge via `@aion0/temper` MCP server |
+
 ## Quick Start
 
 ```bash

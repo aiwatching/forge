@@ -60,6 +60,8 @@ When adding or changing a feature, check if `lib/help-docs/` needs updating. Eac
 - `08-rules.md` — CLAUDE.md templates
 - `09-issue-autofix.md` — GitHub issue scanner
 - `10-troubleshooting.md` — common issues
+- `11-workspace.md` — multi-agent workspace (smiths, daemon, request docs)
+- `12-usage.md` — token usage analytics and cost tracking
 If a feature change affects user-facing behavior, update the corresponding help doc in the same commit.
 
 ### Architecture

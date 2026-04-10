@@ -2292,11 +2292,36 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
         }
       };
 
+      let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+      const reconnect = () => {
+        if (disposed || reconnectTimer) return;
+        term.write('\r\n\x1b[93m[Reconnecting...]\x1b[0m\r\n');
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          if (disposed) return;
+          const newWs = new WebSocket(getWsUrl());
+          wsRef.current = newWs;
+          const sn = sessionNameRef.current || preferredSessionName;
+          newWs.onopen = () => {
+            newWs.send(JSON.stringify({ type: 'attach', sessionName: sn, cols: term.cols, rows: term.rows }));
+          };
+          newWs.onerror = () => { if (!disposed) reconnect(); };
+          newWs.onclose = () => { if (!disposed) reconnect(); };
+          newWs.onmessage = ws.onmessage;
+        }, 2000);
+      };
+
       ws.onerror = () => {
-        if (!disposed) term.write('\r\n\x1b[91m[Connection error]\x1b[0m\r\n');
+        if (!disposed) {
+          term.write('\r\n\x1b[91m[Connection error]\x1b[0m\r\n');
+          reconnect();
+        }
       };
       ws.onclose = () => {
-        if (!disposed) term.write('\r\n\x1b[90m[Disconnected]\x1b[0m\r\n');
+        if (!disposed) {
+          term.write('\r\n\x1b[90m[Disconnected]\x1b[0m\r\n');
+          reconnect();
+        }
       };
 
       let launched = false;
@@ -2390,16 +2415,19 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
       };
 
       term.onData(data => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
+        const activeWs = wsRef.current;
+        if (activeWs?.readyState === WebSocket.OPEN) activeWs.send(JSON.stringify({ type: 'input', data }));
       });
       term.onResize(({ cols, rows }) => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+        const activeWs = wsRef.current;
+        if (activeWs?.readyState === WebSocket.OPEN) activeWs.send(JSON.stringify({ type: 'resize', cols, rows }));
       });
 
       return () => {
         disposed = true;
+        if (reconnectTimer) clearTimeout(reconnectTimer);
         ro.disconnect();
-        ws.close();
+        (wsRef.current || ws).close();
         term.dispose();
       };
     });

@@ -180,10 +180,10 @@ export function queryUsage(opts: {
   source?: string;
   model?: string;
 }): {
-  total: { input: number; output: number; cost: number; sessions: number; messages: number };
+  total: { input: number; output: number; cacheRead: number; cacheCreate: number; cost: number; sessions: number; messages: number };
   byProject: { name: string; input: number; output: number; cost: number; sessions: number }[];
   byModel: { model: string; input: number; output: number; cost: number; messages: number }[];
-  byDay: { date: string; input: number; output: number; cost: number }[];
+  byDay: { date: string; input: number; output: number; cacheRead: number; cacheCreate: number; cost: number; messages: number }[];
   bySource: { source: string; input: number; output: number; cost: number; messages: number }[];
 } {
   let where = '1=1';
@@ -202,6 +202,7 @@ export function queryUsage(opts: {
 
   const totalRow = db().prepare(`
     SELECT COALESCE(SUM(input_tokens), 0) as input, COALESCE(SUM(output_tokens), 0) as output,
+           COALESCE(SUM(cache_read_tokens), 0) as cacheRead, COALESCE(SUM(cache_create_tokens), 0) as cacheCreate,
            COALESCE(SUM(cost_usd), 0) as cost, COUNT(DISTINCT session_id) as sessions,
            COALESCE(SUM(message_count), 0) as messages
     FROM token_usage WHERE ${where}
@@ -226,11 +227,15 @@ export function queryUsage(opts: {
   }));
 
   const byDay = (db().prepare(`
-    SELECT day as date, SUM(input_tokens) as input, SUM(output_tokens) as output, SUM(cost_usd) as cost
+    SELECT day as date, SUM(input_tokens) as input, SUM(output_tokens) as output,
+           SUM(cache_read_tokens) as cacheRead, SUM(cache_create_tokens) as cacheCreate,
+           SUM(cost_usd) as cost, SUM(message_count) as messages
     FROM token_usage WHERE ${where} AND day != 'unknown'
     GROUP BY day ORDER BY day DESC LIMIT 30
   `).all(...params) as any[]).map(r => ({
-    date: r.date, input: r.input, output: r.output, cost: +r.cost.toFixed(4),
+    date: r.date, input: r.input, output: r.output,
+    cacheRead: r.cacheRead || 0, cacheCreate: r.cacheCreate || 0,
+    cost: +r.cost.toFixed(4), messages: r.messages || 0,
   }));
 
   const bySource = (db().prepare(`
@@ -243,7 +248,11 @@ export function queryUsage(opts: {
   }));
 
   return {
-    total: { input: totalRow.input, output: totalRow.output, cost: +totalRow.cost.toFixed(4), sessions: totalRow.sessions, messages: totalRow.messages },
+    total: {
+      input: totalRow.input, output: totalRow.output,
+      cacheRead: totalRow.cacheRead || 0, cacheCreate: totalRow.cacheCreate || 0,
+      cost: +totalRow.cost.toFixed(4), sessions: totalRow.sessions, messages: totalRow.messages,
+    },
     byProject, byModel, byDay, bySource,
   };
 }

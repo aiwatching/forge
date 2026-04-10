@@ -1175,18 +1175,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
         entry.worker = null;
       }
 
-      // 2b. For persistent sessions: send /clear to reset Claude's context if user is attached.
-      // This is a Claude Code slash command — no LLM call, just a local context reset.
-      if (entry.state.tmuxSession && entry.config.role?.trim()) {
-        let isAttached = false;
-        try {
-          const info = execSync(`tmux display-message -t "${entry.state.tmuxSession}" -p "#{session_attached}" 2>/dev/null`, { timeout: 3000, encoding: 'utf-8' }).trim();
-          isAttached = info !== '0';
-        } catch {}
-        if (isAttached) {
-          try { this.injectIntoSession(id, '/clear'); } catch {}
-        }
-      }
+      // Do NOT send /clear — preserves user's conversation context in attached terminals
       this.roleInjectState.delete(id);
 
       // 3. Kill tmux session (skip if user is attached to it)

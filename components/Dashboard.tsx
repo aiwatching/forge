@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { signOut } from 'next-auth/react';
-import TaskBoard from './TaskBoard';
-import TaskDetail from './TaskDetail';
-import TunnelToggle from './TunnelToggle';
+const TaskBoard = lazy(() => import('./TaskBoard'));
+const TaskDetail = lazy(() => import('./TaskDetail'));
+const TunnelToggle = lazy(() => import('./TunnelToggle'));
 import type { Task } from '@/src/types';
 import type { WebTerminalHandle } from './WebTerminal';
 
@@ -181,7 +181,7 @@ export default function Dashboard({ user }: { user: any }) {
     return () => clearInterval(id);
   }, []);
 
-  // Notification polling
+  // Notifications: poll unread count at 30s, full fetch when panel opens
   const fetchNotifications = useCallback(() => {
     fetch('/api/notifications').then(r => r.json()).then(data => {
       setNotifications(data.notifications || []);
@@ -191,9 +191,14 @@ export default function Dashboard({ user }: { user: any }) {
 
   useEffect(() => {
     fetchNotifications();
-    const id = setInterval(fetchNotifications, 10000);
+    const id = setInterval(fetchNotifications, 30000);
     return () => clearInterval(id);
   }, [fetchNotifications]);
+
+  // Refresh full list when notification panel opens
+  useEffect(() => {
+    if (showNotifications) fetchNotifications();
+  }, [showNotifications, fetchNotifications]);
 
   // Heartbeat for online user tracking
   useEffect(() => {
@@ -204,26 +209,35 @@ export default function Dashboard({ user }: { user: any }) {
         .catch(() => {});
     };
     ping();
-    const id = setInterval(ping, 15_000); // every 15s
+    const id = setInterval(ping, 60_000); // every 60s
     return () => clearInterval(id);
   }, []);
 
   const fetchData = useCallback(async () => {
     try {
-      const [tasksRes, statusRes, projectsRes] = await Promise.all([
-        fetch('/api/tasks'),
-        fetch('/api/status'),
-        fetch('/api/projects'),
-      ]);
-      if (tasksRes.ok) setTasks(await tasksRes.json());
-      if (statusRes.ok) { const s = await statusRes.json(); setProviders(s.providers); setUsage(s.usage); }
-      if (projectsRes.ok) setProjects(await projectsRes.json());
+      // Only fetch what's needed for current view
+      const fetches: Promise<void>[] = [
+        fetch('/api/projects').then(async r => { if (r.ok) setProjects(await r.json()); }),
+      ];
+      // Tasks + status only when relevant tabs are active
+      if (viewMode === 'tasks' || viewMode === 'terminal') {
+        fetches.push(
+          fetch('/api/tasks').then(async r => { if (r.ok) setTasks(await r.json()); }),
+        );
+      }
+      if (viewMode === 'usage') {
+        fetches.push(
+          fetch('/api/status').then(async r => { if (r.ok) { const s = await r.json(); setProviders(s.providers); setUsage(s.usage); } }),
+        );
+      }
+      await Promise.all(fetches);
     } catch {}
-  }, []);
+  }, [viewMode]);
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5000);
+    // Poll less aggressively: 10s instead of 5s
+    const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
@@ -421,7 +435,7 @@ export default function Dashboard({ user }: { user: any }) {
                 : 'border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-secondary)]'
             }`}
           >Usage</button>
-          <TunnelToggle />
+          <Suspense fallback={null}><TunnelToggle /></Suspense>
           {onlineCount.total > 0 && (
             <span className="text-[10px] text-[var(--text-secondary)] flex items-center gap-1" title={`${onlineCount.total} online${onlineCount.remote > 0 ? `, ${onlineCount.remote} remote` : ''}`}>
               <span className="text-green-500">●</span>
@@ -596,13 +610,13 @@ export default function Dashboard({ user }: { user: any }) {
           <>
             {/* Left — Task list */}
             <aside className="w-72 border-r border-[var(--border)] flex flex-col shrink-0">
-              <TaskBoard tasks={tasks} activeId={activeTaskId} onSelect={setActiveTaskId} onRefresh={fetchData} />
+              <Suspense fallback={null}><TaskBoard tasks={tasks} activeId={activeTaskId} onSelect={setActiveTaskId} onRefresh={fetchData} /></Suspense>
             </aside>
 
             {/* Center — Task detail / empty state */}
             <main className="flex-1 flex flex-col min-w-0">
               {activeTask ? (
-                <TaskDetail
+                <Suspense fallback={null}><TaskDetail
                   task={activeTask}
                   onRefresh={fetchData}
                   onFollowUp={async (data) => {
@@ -615,7 +629,7 @@ export default function Dashboard({ user }: { user: any }) {
                     setActiveTaskId(newTask.id);
                     fetchData();
                   }}
-                />
+                /></Suspense>
               ) : (
                 <div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">
                   <div className="text-center space-y-2">

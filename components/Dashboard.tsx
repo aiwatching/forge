@@ -181,7 +181,7 @@ export default function Dashboard({ user }: { user: any }) {
     return () => clearInterval(id);
   }, []);
 
-  // Notifications: fetch on mount + when panel opens (no polling)
+  // Notifications: poll unread count at 30s, full fetch when panel opens
   const fetchNotifications = useCallback(() => {
     fetch('/api/notifications').then(r => r.json()).then(data => {
       setNotifications(data.notifications || []);
@@ -189,9 +189,13 @@ export default function Dashboard({ user }: { user: any }) {
     }).catch(() => {});
   }, []);
 
-  useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
+  useEffect(() => {
+    fetchNotifications();
+    const id = setInterval(fetchNotifications, 30000);
+    return () => clearInterval(id);
+  }, [fetchNotifications]);
 
-  // Refresh when notification panel opens
+  // Refresh full list when notification panel opens
   useEffect(() => {
     if (showNotifications) fetchNotifications();
   }, [showNotifications, fetchNotifications]);
@@ -431,7 +435,7 @@ export default function Dashboard({ user }: { user: any }) {
                 : 'border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-secondary)]'
             }`}
           >Usage</button>
-          <TunnelToggle />
+          <Suspense fallback={null}><TunnelToggle /></Suspense>
           {onlineCount.total > 0 && (
             <span className="text-[10px] text-[var(--text-secondary)] flex items-center gap-1" title={`${onlineCount.total} online${onlineCount.remote > 0 ? `, ${onlineCount.remote} remote` : ''}`}>
               <span className="text-green-500">●</span>
@@ -606,13 +610,13 @@ export default function Dashboard({ user }: { user: any }) {
           <>
             {/* Left — Task list */}
             <aside className="w-72 border-r border-[var(--border)] flex flex-col shrink-0">
-              <TaskBoard tasks={tasks} activeId={activeTaskId} onSelect={setActiveTaskId} onRefresh={fetchData} />
+              <Suspense fallback={null}><TaskBoard tasks={tasks} activeId={activeTaskId} onSelect={setActiveTaskId} onRefresh={fetchData} /></Suspense>
             </aside>
 
             {/* Center — Task detail / empty state */}
             <main className="flex-1 flex flex-col min-w-0">
               {activeTask ? (
-                <TaskDetail
+                <Suspense fallback={null}><TaskDetail
                   task={activeTask}
                   onRefresh={fetchData}
                   onFollowUp={async (data) => {
@@ -625,7 +629,7 @@ export default function Dashboard({ user }: { user: any }) {
                     setActiveTaskId(newTask.id);
                     fetchData();
                   }}
-                />
+                /></Suspense>
               ) : (
                 <div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">
                   <div className="text-center space-y-2">

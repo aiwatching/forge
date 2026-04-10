@@ -114,7 +114,7 @@ function DonutChart({ data, size = 140 }: { data: PieSlice[]; size?: number }) {
 
 // ─── Line chart for trends ────────────────────────────────
 
-function LineChart({ data, width = 520, height = 120 }: { data: { date: string; cost: number; messages: number }[]; width?: number; height?: number }) {
+function LineChart({ data, width = 520, height = 80 }: { data: { date: string; cost: number; messages: number }[]; width?: number; height?: number }) {
   if (data.length === 0) return <div className="text-[10px] text-[var(--text-secondary)] py-6 text-center">No data</div>;
 
   // Reverse so earliest is on left
@@ -181,21 +181,20 @@ function LineChart({ data, width = 520, height = 120 }: { data: { date: string; 
 
 // ─── Heatmap by day (grid) ────────────────────────────────
 
-function Heatmap({ data }: { data: { date: string; cost: number }[] }) {
+function Heatmap({ data, days: numDays = 90 }: { data: { date: string; cost: number }[]; days?: number }) {
   if (data.length === 0) return null;
   const max = Math.max(...data.map(d => d.cost), 0.01);
 
-  // Build date → cost map
   const costMap = new Map(data.map(d => [d.date, d.cost]));
 
-  // Last 30 days
-  const days: { date: string; cost: number }[] = [];
+  // Build last N days
+  const days: { date: string; cost: number; dow: number }[] = [];
   const today = new Date();
-  for (let i = 29; i >= 0; i--) {
+  for (let i = numDays - 1; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
     const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    days.push({ date: dateStr, cost: costMap.get(dateStr) || 0 });
+    days.push({ date: dateStr, cost: costMap.get(dateStr) || 0, dow: d.getDay() });
   }
 
   const intensity = (c: number) => {
@@ -211,15 +210,91 @@ function Heatmap({ data }: { data: { date: string; cost: number }[] }) {
     'bg-blue-400',
   ];
 
+  // Organize by week (columns) × weekday (rows), GitHub-style
+  // Start with padding for the first week
+  const firstDow = days[0].dow;
+  const weeks: (typeof days[0] | null)[][] = [];
+  let currentWeek: (typeof days[0] | null)[] = Array(firstDow).fill(null);
+  for (const d of days) {
+    currentWeek.push(d);
+    if (currentWeek.length === 7) {
+      weeks.push(currentWeek);
+      currentWeek = [];
+    }
+  }
+  if (currentWeek.length > 0) {
+    while (currentWeek.length < 7) currentWeek.push(null);
+    weeks.push(currentWeek);
+  }
+
+  const dayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
   return (
-    <div className="flex gap-0.5 flex-wrap">
-      {days.map(d => (
-        <div
-          key={d.date}
-          className={`w-3 h-3 rounded-sm ${bgClasses[intensity(d.cost)]}`}
-          title={`${d.date}: ${formatCost(d.cost)}`}
-        />
-      ))}
+    <div className="flex gap-1">
+      {/* Weekday labels */}
+      <div className="flex flex-col gap-[2px] pt-0.5">
+        {dayLabels.map((l, i) => (
+          <div key={i} className="text-[7px] text-[var(--text-secondary)] h-[11px] leading-[11px]">
+            {i % 2 === 1 ? l : ''}
+          </div>
+        ))}
+      </div>
+      {/* Week columns */}
+      <div className="flex gap-[2px] overflow-x-auto">
+        {weeks.map((week, wi) => (
+          <div key={wi} className="flex flex-col gap-[2px]">
+            {week.map((day, di) => (
+              day ? (
+                <div
+                  key={di}
+                  className={`w-[11px] h-[11px] rounded-sm ${bgClasses[intensity(day.cost)]}`}
+                  title={`${day.date}: ${formatCost(day.cost)}`}
+                />
+              ) : (
+                <div key={di} className="w-[11px] h-[11px]" />
+              )
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Weekday cost distribution ──────────────────────────
+
+function WeekdayChart({ data }: { data: { date: string; cost: number }[] }) {
+  if (data.length === 0) return null;
+  const byDow: number[] = Array(7).fill(0);
+  const countByDow: number[] = Array(7).fill(0);
+  for (const d of data) {
+    const date = new Date(d.date);
+    const dow = date.getDay();
+    byDow[dow] += d.cost;
+    countByDow[dow]++;
+  }
+  const avgByDow = byDow.map((sum, i) => countByDow[i] > 0 ? sum / countByDow[i] : 0);
+  const max = Math.max(...avgByDow, 0.01);
+  const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  return (
+    <div className="flex items-end gap-1 h-16">
+      {avgByDow.map((v, i) => {
+        const pct = (v / max) * 100;
+        const isWeekend = i === 0 || i === 6;
+        return (
+          <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+            <div className="w-full flex-1 flex items-end">
+              <div
+                className={`w-full rounded-t ${isWeekend ? 'bg-orange-500/60' : 'bg-blue-500/60'}`}
+                style={{ height: `${Math.max(pct, 2)}%` }}
+                title={`${labels[i]}: ${formatCost(v)} avg`}
+              />
+            </div>
+            <div className="text-[8px] text-[var(--text-secondary)]">{labels[i][0]}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -386,19 +461,29 @@ export default function UsagePanel() {
           </div>
         )}
 
-        {/* ─── Activity heatmap (30 days) ────────────────── */}
-        <div>
-          <h3 className="text-[11px] font-semibold text-[var(--text-secondary)] uppercase mb-2">Activity (last 30 days)</h3>
-          <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-3">
-            <Heatmap data={data.byDay} />
-            <div className="flex items-center gap-1 text-[8px] text-[var(--text-secondary)] ml-auto shrink-0">
-              <span>less</span>
-              <span className="w-2 h-2 rounded-sm bg-[var(--bg-tertiary)]"></span>
-              <span className="w-2 h-2 rounded-sm bg-blue-900/40"></span>
-              <span className="w-2 h-2 rounded-sm bg-blue-700/60"></span>
-              <span className="w-2 h-2 rounded-sm bg-blue-500/80"></span>
-              <span className="w-2 h-2 rounded-sm bg-blue-400"></span>
-              <span>more</span>
+        {/* ─── Activity heatmap (90 days) + weekday ─────── */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="md:col-span-2">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-[11px] font-semibold text-[var(--text-secondary)] uppercase">Activity (last 90 days)</h3>
+              <div className="flex items-center gap-1 text-[8px] text-[var(--text-secondary)]">
+                <span>less</span>
+                <span className="w-2 h-2 rounded-sm bg-[var(--bg-tertiary)]"></span>
+                <span className="w-2 h-2 rounded-sm bg-blue-900/40"></span>
+                <span className="w-2 h-2 rounded-sm bg-blue-700/60"></span>
+                <span className="w-2 h-2 rounded-sm bg-blue-500/80"></span>
+                <span className="w-2 h-2 rounded-sm bg-blue-400"></span>
+                <span>more</span>
+              </div>
+            </div>
+            <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-3">
+              <Heatmap data={data.byDay} days={91} />
+            </div>
+          </div>
+          <div>
+            <h3 className="text-[11px] font-semibold text-[var(--text-secondary)] uppercase mb-2">Avg by Weekday</h3>
+            <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-3">
+              <WeekdayChart data={data.byDay} />
             </div>
           </div>
         </div>

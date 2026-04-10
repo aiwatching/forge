@@ -1,19 +1,17 @@
-# Forge v0.5.27
+# Forge v0.5.28
 
-Released: 2026-04-08
+Released: 2026-04-09
 
-## Changes since v0.5.26
-
-### Features
-- feat: tmux mouse toggle button in terminal toolbar
+## Changes since v0.5.27
 
 ### Bug Fixes
-- fix: terminal bell respects settings.terminalBellEnabled
-- fix: disable terminal bell on state restore
-- fix: mouse toggle applies to all sessions, not just global
-- fix: mouse toggle takes effect immediately via tmux-command
-- fix: swap mouse toggle hint and button position
-- fix: restore tmux mouse on for trackpad scrolling in web terminal
+- fix: restore notification polling for Telegram, add Suspense wrappers
+
+### Performance
+- perf: notifications fetch on-demand instead of polling
+- perf: remove task completion polling (replaced by hook stop)
+- perf: reduce polling frequency and lazy-load non-essential components
+- perf: async terminal-cwd to avoid blocking event loop
 
 
-**Full Changelog**: https://github.com/aiwatching/forge/compare/v0.5.26...v0.5.27
+**Full Changelog**: https://github.com/aiwatching/forge/compare/v0.5.27...v0.5.28

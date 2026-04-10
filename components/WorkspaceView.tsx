@@ -4122,7 +4122,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
               window.addEventListener('mouseup', onUp);
             }}
           />
-          <div className="grid gap-1 p-1 flex-1 min-h-0" style={{ gridTemplateColumns: `repeat(${dockColumns}, minmax(0, 1fr))` }}>
+          <div className="grid gap-1 p-1 flex-1 min-h-0" style={{ gridTemplateColumns: `repeat(${Math.min(floatingTerminals.length, dockColumns)}, minmax(0, 1fr))` }}>
             {floatingTerminals.map(ft => (
               <FloatingTerminal
                 key={ft.agentId}

@@ -224,8 +224,8 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
     };
 
     fetchCwd();
-    // Poll cwd every 5s (user might cd to a different directory)
-    const timer = setInterval(fetchCwd, 5000);
+    // Poll cwd every 15s (user might cd to a different directory)
+    const timer = setInterval(fetchCwd, 15000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [activeSession]);
 
@@ -273,7 +273,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
         }
       } catch {}
     };
-    const timer = setInterval(check, 5000);
+    const timer = setInterval(check, 15000);
     return () => clearInterval(timer);
   }, [currentDir]);
 

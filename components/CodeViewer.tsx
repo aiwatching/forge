@@ -247,35 +247,7 @@ export default function CodeViewer({ terminalRef }: { terminalRef: React.RefObje
     fetchDir();
   }, [currentDir]);
 
-  // Poll for task completions in the current project
-  useEffect(() => {
-    if (!currentDir) return;
-    const dirName = currentDir.split('/').pop() || '';
-    const check = async () => {
-      try {
-        const res = await fetch('/api/tasks?status=done');
-        const tasks = await res.json();
-        if (!Array.isArray(tasks) || tasks.length === 0) return;
-        const latest = tasks.find((t: any) => t.projectPath === currentDir || t.projectName === dirName);
-        if (latest && latest.id !== lastTaskCheckRef.current && latest.completedAt) {
-          // Only notify if completed in the last 30s
-          const age = Date.now() - new Date(latest.completedAt).getTime();
-          if (age < 30_000) {
-            lastTaskCheckRef.current = latest.id;
-            setTaskNotification({
-              id: latest.id,
-              status: latest.status,
-              prompt: latest.prompt,
-              sessionId: latest.conversationId,
-            });
-            setTimeout(() => setTaskNotification(null), 15_000);
-          }
-        }
-      } catch {}
-    };
-    const timer = setInterval(check, 15000);
-    return () => clearInterval(timer);
-  }, [currentDir]);
+  // Task completion is notified via hook stop — no polling needed
 
   // Build git status map for tree coloring
   const gitMap: GitStatusMap = new Map(gitChanges.map(g => [g.path, g.status]));

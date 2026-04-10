@@ -85,6 +85,9 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [projectSkills, setProjectSkills] = useState<{ name: string; displayName: string; type: string; scope: string; version: string; installedVersion: string; hasUpdate: boolean; source: 'registry' | 'local' }[]>([]);
   const [showSkillsDetail, setShowSkillsDetail] = useState(false);
   const [projectTab, setProjectTab] = useState<'workspace' | 'sessions' | 'code' | 'skills' | 'claudemd' | 'pipelines'>('code');
+  // Lazy-mount workspace: only mount after first visit, keep mounted to preserve terminal state
+  const [wsMounted, setWsMounted] = useState(false);
+  useEffect(() => { if (projectTab === 'workspace') setWsMounted(true); }, [projectTab]);
   const wsViewRef = useRef<import('./WorkspaceView').WorkspaceViewHandle>(null);
   // Pipeline bindings state
   const [pipelineBindings, setPipelineBindings] = useState<{ id: number; workflowName: string; enabled: boolean; config: any; lastRunAt: string | null; nextRunAt: string | null }[]>([]);
@@ -642,9 +645,9 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
         </div>
       )}
 
-      {/* Workspace tab */}
-      {projectTab === 'workspace' && (
-        <div className="flex-1 flex min-h-0 overflow-hidden">
+      {/* Workspace tab — always mounted to preserve terminal state, hidden via CSS */}
+      {wsMounted && (
+        <div className={`flex-1 flex min-h-0 overflow-hidden ${projectTab === 'workspace' ? '' : 'hidden'}`}>
           <Suspense fallback={<div className="flex-1 flex items-center justify-center text-[var(--text-secondary)]">Loading...</div>}>
             <WorkspaceViewLazy
               ref={wsViewRef}

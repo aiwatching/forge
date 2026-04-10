@@ -21,7 +21,7 @@ interface ProjectTab {
   mountedAt: number; // timestamp for LRU eviction
 }
 
-const MAX_MOUNTED_TABS = 5;
+const MAX_MOUNTED_TABS = 20;
 function genTabId(): number { return Date.now() + Math.floor(Math.random() * 10000); }
 
 export default function ProjectManager() {

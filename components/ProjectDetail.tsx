@@ -566,52 +566,52 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
         </div>
         {/* Tab switcher */}
         <div className="flex items-center gap-2 mt-1.5">
-          <div className="flex bg-[var(--bg-tertiary)] rounded p-0.5">
+          <div className="flex bg-[var(--bg-tertiary)] rounded p-1 gap-0.5">
             <button
               onClick={() => setProjectTab('code')}
-              className={`text-[9px] px-2 py-0.5 rounded transition-colors ${
-                projectTab === 'code' ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              className={`text-[11px] font-medium px-2.5 py-1 rounded transition-all ${
+                projectTab === 'code' ? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm ring-1 ring-[var(--accent)]/40' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]'
               }`}
             >Code</button>
             <button
               onClick={() => setProjectTab('workspace')}
-              className={`text-[9px] px-2 py-0.5 rounded transition-colors ${
-                projectTab === 'workspace' ? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              className={`text-[11px] font-medium px-2.5 py-1 rounded transition-all ${
+                projectTab === 'workspace' ? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm ring-1 ring-[var(--accent)]/40' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]'
               }`}
             >🔨 Workspace</button>
             <button
               onClick={() => setProjectTab('sessions')}
-              className={`text-[9px] px-2 py-0.5 rounded transition-colors ${
-                projectTab === 'sessions' ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              className={`text-[11px] font-medium px-2.5 py-1 rounded transition-all ${
+                projectTab === 'sessions' ? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm ring-1 ring-[var(--accent)]/40' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]'
               }`}
             >Sessions</button>
             <button
               onClick={() => setProjectTab('skills')}
-              className={`text-[9px] px-2 py-0.5 rounded transition-colors ${
-                projectTab === 'skills' ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              className={`text-[11px] font-medium px-2.5 py-1 rounded transition-all ${
+                projectTab === 'skills' ? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm ring-1 ring-[var(--accent)]/40' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]'
               }`}
             >
               Skills & Cmds
-              {projectSkills.length > 0 && <span className="ml-1 text-[8px] text-[var(--text-secondary)]">({projectSkills.length})</span>}
-              {projectSkills.some(s => s.hasUpdate) && <span className="ml-1 text-[8px] text-[var(--yellow)]">!</span>}
+              {projectSkills.length > 0 && <span className="ml-1 text-[9px] opacity-70">({projectSkills.length})</span>}
+              {projectSkills.some(s => s.hasUpdate) && <span className="ml-1 text-[9px] text-[var(--yellow)]">!</span>}
             </button>
             <button
               onClick={() => setProjectTab('claudemd')}
-              className={`text-[9px] px-2 py-0.5 rounded transition-colors ${
-                projectTab === 'claudemd' ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              className={`text-[11px] font-medium px-2.5 py-1 rounded transition-all ${
+                projectTab === 'claudemd' ? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm ring-1 ring-[var(--accent)]/40' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]'
               }`}
             >
               CLAUDE.md
-              {claudeMdExists && <span className="ml-1 text-[8px] text-[var(--green)]">•</span>}
+              {claudeMdExists && <span className="ml-1 text-[9px] text-[var(--green)]">•</span>}
             </button>
             <button
               onClick={() => setProjectTab('pipelines')}
-              className={`text-[9px] px-2 py-0.5 rounded transition-colors ${
-                projectTab === 'pipelines' ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              className={`text-[11px] font-medium px-2.5 py-1 rounded transition-all ${
+                projectTab === 'pipelines' ? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm ring-1 ring-[var(--accent)]/40' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]'
               }`}
             >
               Pipelines
-              {pipelineBindings.length > 0 && <span className="ml-1 text-[8px] text-[var(--text-secondary)]">({pipelineBindings.length})</span>}
+              {pipelineBindings.length > 0 && <span className="ml-1 text-[9px] opacity-70">({pipelineBindings.length})</span>}
             </button>
           </div>
         </div>

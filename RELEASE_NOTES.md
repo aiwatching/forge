@@ -1,14 +1,11 @@
-# Forge v0.5.35
+# Forge v0.5.36
 
 Released: 2026-04-11
 
-## Changes since v0.5.34
+## Changes since v0.5.35
 
-### Features
-- feat: workspace UX — refresh, bell, lock, mouse, terminal layout
-
-### Other
-- feat(telegram): /i inject command for direct terminal input
+### Bug Fixes
+- fix: workspace smith bell always sends to Telegram
 
 
-**Full Changelog**: https://github.com/aiwatching/forge/compare/v0.5.34...v0.5.35
+**Full Changelog**: https://github.com/aiwatching/forge/compare/v0.5.35...v0.5.36

@@ -154,19 +154,25 @@ export async function notifyFeishu(title: string, body: string, type: 'info' | '
 
 export interface FeishuEvent {
   schema?: string;
-  header?: { event_type: string; token: string };
+  header?: { event_id?: string; event_type: string; token: string };
   event?: {
     message?: {
       chat_id?: string;
+      message_id?: string;
       message_type?: string;
       content?: string;
     };
     sender?: {
       sender_id?: { open_id?: string; user_id?: string };
+      sender_type?: string; // 'user' or empty for bot
     };
   };
   challenge?: string; // URL verification
 }
+
+// Dedup: track processed event IDs to avoid double-processing on retry
+const processedEventIds = new Set<string>();
+const MAX_PROCESSED = 500;
 
 /** Handle incoming webhook event from Feishu */
 export async function handleFeishuWebhook(body: FeishuEvent): Promise<{ challenge?: string; ok: boolean }> {
@@ -175,8 +181,28 @@ export async function handleFeishuWebhook(body: FeishuEvent): Promise<{ challeng
     return { challenge: body.challenge, ok: true };
   }
 
+  // Dedup: skip already-processed events (Feishu retries on slow response)
+  const eventId = body.header?.event_id;
+  if (eventId) {
+    if (processedEventIds.has(eventId)) return { ok: true };
+    processedEventIds.add(eventId);
+    // Evict old entries to prevent memory leak
+    if (processedEventIds.size > MAX_PROCESSED) {
+      const it = processedEventIds.values();
+      for (let i = 0; i < 100; i++) it.next();
+      // Clear first 100
+      const arr = [...processedEventIds];
+      arr.slice(0, 100).forEach(id => processedEventIds.delete(id));
+    }
+  }
+
   const eventType = body.header?.event_type;
   if (eventType !== 'im.message.receive_v1') {
+    return { ok: true };
+  }
+
+  // Ignore messages from the bot itself
+  if (body.event?.sender?.sender_type !== 'user') {
     return { ok: true };
   }
 
@@ -285,6 +311,7 @@ export async function handleFeishuWebhook(body: FeishuEvent): Promise<{ challeng
 
 const feishuInjectTarget = new Map<string, string>(); // chatId → tmux session
 const feishuInjectAutoClear = new Map<string, ReturnType<typeof setTimeout>>();
+const feishuSessionMap = new Map<string, Map<string, string>>(); // chatId → (num → sessionName)
 
 async function handleFeishuInject(chatId: string, args: string[]) {
   if (args.length === 0) {
@@ -314,10 +341,9 @@ async function handleFeishuInject(chatId: string, args: string[]) {
       });
 
       // Store mapping
-      const sessionMap = new Map<string, string>();
-      sessions.forEach((s: { name: string }, i: number) => sessionMap.set(String(i + 1), s.name));
-      (feishuInjectTarget as any)._sessionMap = (feishuInjectTarget as any)._sessionMap || new Map();
-      (feishuInjectTarget as any)._sessionMap.set(chatId, sessionMap);
+      const sessionNumMap = new Map<string, string>();
+      sessions.forEach((s: { name: string }, i: number) => sessionNumMap.set(String(i + 1), s.name));
+      feishuSessionMap.set(chatId, sessionNumMap);
 
       await sendFeishuMessage(`🎯 Pick a terminal:\n\n${lines.join('\n')}\n\nReply /i <num> to select`, chatId);
     } catch (e: any) {
@@ -329,8 +355,8 @@ async function handleFeishuInject(chatId: string, args: string[]) {
   // /i <num> [text]
   const num = args[0];
   if (/^\d+$/.test(num)) {
-    const sessionMap = (feishuInjectTarget as any)?._sessionMap?.get(chatId) as Map<string, string> | undefined;
-    const sessionName = sessionMap?.get(num);
+    const numMap = feishuSessionMap.get(chatId);
+    const sessionName = numMap?.get(num);
     if (!sessionName) {
       await sendFeishuMessage('Invalid number. Use /i to refresh list.', chatId);
       return;

@@ -12,6 +12,9 @@ Settings are stored in `~/.forge/data/settings.yaml`. Configure via the web UI (
 | `claudeHome` | string | `""` | Claude Code home directory (default: `~/.claude`) |
 | `telegramBotToken` | string | `""` | Telegram Bot API token (encrypted) |
 | `telegramChatId` | string | `""` | Telegram chat ID (comma-separated for multiple users) |
+| `feishuAppId` | string | `""` | Feishu/Lark Bot App ID |
+| `feishuAppSecret` | string | `""` | Feishu/Lark Bot App Secret (encrypted) |
+| `feishuChatId` | string | `""` | Feishu group chat ID for notifications |
 | `notifyOnComplete` | boolean | `true` | Telegram notification on task completion |
 | `notifyOnFailure` | boolean | `true` | Telegram notification on task failure |
 | `tunnelAutoStart` | boolean | `false` | Auto-start Cloudflare Tunnel on server startup |

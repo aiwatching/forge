@@ -39,6 +39,9 @@ export interface Settings {
   claudeHome: string;
   telegramBotToken: string;
   telegramChatId: string;
+  feishuAppId: string;
+  feishuAppSecret: string;
+  feishuChatId: string;  // group chat or P2P chat to send notifications
   notifyOnComplete: boolean;
   notifyOnFailure: boolean;
   tunnelAutoStart: boolean;
@@ -66,6 +69,9 @@ const defaults: Settings = {
   claudeHome: '',
   telegramBotToken: '',
   telegramChatId: '',
+  feishuAppId: '',
+  feishuAppSecret: '',
+  feishuChatId: '',
   notifyOnComplete: true,
   notifyOnFailure: true,
   tunnelAutoStart: false,

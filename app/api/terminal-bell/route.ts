@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { loadSettings } from '@/lib/settings';
 import { addNotification } from '@/lib/notifications';
+import { notifyFeishu, isFeishuConfigured } from '@/lib/feishu-bot';
 
 export async function POST(req: Request) {
   const { tabLabel, source } = await req.json();
@@ -32,6 +33,13 @@ export async function POST(req: Request) {
           }),
         });
       }
+    } catch {}
+  }
+
+  // Feishu notification
+  if (isFeishuConfigured()) {
+    try {
+      await notifyFeishu(`🔔 Forge — Terminal idle`, `"${label}" appears to have finished.`, 'info');
     } catch {}
   }
 

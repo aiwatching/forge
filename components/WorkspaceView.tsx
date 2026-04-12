@@ -290,6 +290,21 @@ function useWorkspaceStream(workspaceId: string | null, onEvent?: (event: any) =
           setAgents(event.agents || []);
           setStates(event.agentStates || {});
           setBusLog(event.busLog || []);
+          // Seed logPreview from each agent's history (last 3 entries)
+          const initPreview: Record<string, string[]> = {};
+          for (const [agentId, st] of Object.entries(event.agentStates || {}) as [string, any][]) {
+            const hist: any[] = st?.history || [];
+            if (hist.length > 0) {
+              // Prefer the most recent step_summary or final_summary if present
+              const summary = [...hist].reverse().find(h => h?.subtype === 'step_summary' || h?.subtype === 'final_summary');
+              if (summary?.content) {
+                initPreview[agentId] = String(summary.content).split('\n').filter(l => l.trim()).slice(0, 4);
+              } else {
+                initPreview[agentId] = hist.slice(-3).map(h => h?.content).filter(Boolean).map(String);
+              }
+            }
+          }
+          setLogPreview(initPreview);
           if (event.daemonActive !== undefined) setDaemonActive(event.daemonActive);
           return;
         }
@@ -1994,6 +2009,30 @@ function getWsUrl() {
   return `${p}//${h}:${port + 1}`;
 }
 
+// ─── Bell notification (smith taskStatus changes) ────────
+
+const bellLastFired = new Map<string, number>();
+const BELL_COOLDOWN = 30000; // 30s cooldown per smith
+function fireSmithBell(label: string, status: 'done' | 'failed') {
+  const key = `${label}-${status}`;
+  const now = Date.now();
+  const last = bellLastFired.get(key) || 0;
+  if (now - last < BELL_COOLDOWN) return;
+  bellLastFired.set(key, now);
+  const title = status === 'done' ? 'Forge — Smith Done ✅' : 'Forge — Smith Failed ❌';
+  const body = `"${label}" task ${status === 'done' ? 'completed' : 'failed'}.`;
+  // Browser notification
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    new Notification(title, { body, icon: '/icon.png' });
+  }
+  // Telegram + in-app via API (reuse terminal-bell endpoint)
+  fetch('/api/terminal-bell', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tabLabel: `${label} (${status})` }),
+  }).catch(() => {});
+}
+
 // ─── Terminal Dock (right side panel with tabs) ──────────
 type TerminalEntry = { agentId: string; label: string; icon: string; cliId: string; cliCmd?: string; cliType?: string; workDir?: string; tmuxSession?: string; sessionName: string; resumeMode?: boolean; resumeSessionId?: string; profileEnv?: Record<string, string> };
 
@@ -2245,6 +2284,20 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
   const [size, setSize] = useState({ w: 500, h: 300 });
   const [showCloseDialog, setShowCloseDialog] = useState(false);
   const [mouseOn, setMouseOn] = useState(true);
+  // Per-terminal "lock" — when locked, × button suspends directly (no kill option)
+  // Persisted by session name so it survives refresh
+  const lockKey = `forge.term.locked.${preferredSessionName || agentLabel}`;
+  const [locked, setLocked] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    // Default LOCKED — user must explicitly unlock to allow kill
+    const stored = localStorage.getItem(lockKey);
+    return stored === null ? true : stored === '1';
+  });
+  const toggleLock = () => {
+    const next = !locked;
+    setLocked(next);
+    try { localStorage.setItem(lockKey, next ? '1' : '0'); } catch {}
+  };
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const resizeRef = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null);
 
@@ -2486,7 +2539,19 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
         >
           🖱️ {mouseOn ? 'ON' : 'OFF'}
         </button>
-        <button onClick={() => setShowCloseDialog(true)} className="text-gray-500 hover:text-white text-sm shrink-0">✕</button>
+        <button
+          onClick={(e) => { e.stopPropagation(); toggleLock(); }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${locked ? 'border-yellow-500/60 text-yellow-400 bg-yellow-500/10' : 'border-gray-600 text-gray-500 bg-gray-800/50'}`}
+          title={locked ? 'Locked — × will only suspend (kill disabled). Click to unlock.' : 'Click to lock — prevents accidental kill, × always suspends'}
+        >
+          {locked ? '🔒' : '🔓'}
+        </button>
+        <button
+          onClick={() => setShowCloseDialog(true)}
+          className="text-gray-500 hover:text-white text-sm shrink-0"
+          title="Close terminal"
+        >✕</button>
       </div>
 
       {/* Terminal */}
@@ -2519,9 +2584,14 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
       {showCloseDialog && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={() => setShowCloseDialog(false)}>
           <div className="bg-[#161b22] border border-[#30363d] rounded-lg p-4 shadow-xl max-w-sm" onClick={e => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold text-white mb-2">Close Terminal — {agentLabel}</h3>
+            <h3 className="text-sm font-semibold text-white mb-2">
+              Close Terminal — {agentLabel}
+              {locked && <span className="ml-2 text-[9px] text-yellow-400">🔒 Locked</span>}
+            </h3>
             <p className="text-xs text-gray-400 mb-3">
-              This agent has an active terminal session.
+              {locked
+                ? 'Terminal is locked — kill is disabled. Click 🔒 in the header to unlock first.'
+                : 'This agent has an active terminal session.'}
             </p>
             <div className="flex gap-2">
               <button onClick={() => { setShowCloseDialog(false); onClose(false); }}
@@ -2529,17 +2599,20 @@ function FloatingTerminal({ agentLabel, agentIcon, projectPath, agentCliId, cliC
                 Suspend
                 <span className="block text-[9px] text-gray-500 mt-0.5">Hide panel, session keeps running</span>
               </button>
-              <button onClick={() => {
-                setShowCloseDialog(false);
-                if (wsRef.current?.readyState === WebSocket.OPEN && sessionNameRef.current) {
-                  wsRef.current.send(JSON.stringify({ type: 'kill', sessionName: sessionNameRef.current }));
-                }
-                onClose(true);
-              }}
-                className={`flex-1 px-3 py-1.5 text-[11px] rounded ${persistentSession ? 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30' : 'bg-red-500/20 text-red-400 hover:bg-red-500/30'}`}>
-                {persistentSession ? 'Restart Session' : 'Kill Session'}
-                <span className={`block text-[9px] mt-0.5 ${persistentSession ? 'text-yellow-400/60' : 'text-red-400/60'}`}>
-                  {persistentSession ? 'Kill and restart with fresh env' : 'End session permanently'}
+              <button
+                disabled={locked}
+                onClick={() => {
+                  if (locked) return;
+                  setShowCloseDialog(false);
+                  if (wsRef.current?.readyState === WebSocket.OPEN && sessionNameRef.current) {
+                    wsRef.current.send(JSON.stringify({ type: 'kill', sessionName: sessionNameRef.current }));
+                  }
+                  onClose(true);
+                }}
+                className={`flex-1 px-3 py-1.5 text-[11px] rounded ${locked ? 'bg-gray-700/30 text-gray-500 cursor-not-allowed' : persistentSession ? 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30' : 'bg-red-500/20 text-red-400 hover:bg-red-500/30'}`}>
+                {locked ? '🔒 Locked' : persistentSession ? 'Restart Session' : 'Kill Session'}
+                <span className={`block text-[9px] mt-0.5 ${locked ? 'text-gray-500' : persistentSession ? 'text-yellow-400/60' : 'text-red-400/60'}`}>
+                  {locked ? 'Unlock first to allow kill' : persistentSession ? 'Kill and restart with fresh env' : 'End session permanently'}
                 </span>
               </button>
             </div>
@@ -2650,6 +2723,8 @@ interface AgentNodeData {
   onSwitchSession: () => void;
   onSaveAsTemplate: () => void;
   mascotTheme: MascotTheme;
+  bellOn?: boolean;
+  onToggleBell?: () => void;
   onMarkIdle?: () => void;
   onMarkDone?: (notify: boolean) => void;
   onMarkFailed?: (notify: boolean) => void;
@@ -3148,7 +3223,7 @@ function WorkerMascot({ taskStatus, smithStatus, seed, accentColor, theme }: { t
 }
 
 function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
-  const { config, state, colorIdx, previewLines, projectPath, workspaceId, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory, onShowInbox, onOpenTerminal, onSwitchSession, onSaveAsTemplate, mascotTheme, inboxPending = 0, inboxFailed = 0 } = data;
+  const { config, state, colorIdx, previewLines, projectPath, workspaceId, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory, onShowInbox, onOpenTerminal, onSwitchSession, onSaveAsTemplate, mascotTheme, bellOn = false, onToggleBell, inboxPending = 0, inboxFailed = 0 } = data;
   const c = COLORS[colorIdx % COLORS.length];
   const smithStatus = state?.smithStatus || 'down';
   const taskStatus = state?.taskStatus || 'idle';
@@ -3285,17 +3360,79 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
           </span>
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onShowInbox(); }}
           className="text-[9px] text-gray-600 hover:text-orange-400 px-1" title="Messages (inbox/outbox)">📨</button>
-        <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onShowMemory(); }}
-          className="text-[9px] text-gray-600 hover:text-purple-400 px-1" title="Memory">🧠</button>
-        <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onShowLog(); }}
-          className="text-[9px] text-gray-600 hover:text-gray-300 px-1" title="Logs">📋</button>
-        <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onSaveAsTemplate(); }}
-          className="text-[9px] text-gray-600 hover:text-yellow-400 px-1" title="Save as template">💾</button>
+        <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onToggleBell?.(); }}
+          className={`text-[9px] px-1 ${bellOn ? 'text-orange-400' : 'text-gray-600 hover:text-orange-400'}`}
+          title={bellOn ? 'Bell ON — notify when this smith finishes (click to disable)' : 'Bell OFF — click to enable task done/failed notifications'}>
+          {bellOn ? '🔔' : '🔕'}
+        </button>
+        <SmithMoreMenu
+          onShowMemory={onShowMemory}
+          onShowLog={onShowLog}
+          onSaveAsTemplate={onSaveAsTemplate}
+          onRefreshBus={async () => { if (workspaceId) try { await wsApi(workspaceId, 'refresh_bus'); } catch {} }}
+        />
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onEdit(); }}
           className="text-[9px] text-gray-600 hover:text-blue-400 px-1">✏️</button>
         <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onRemove(); }}
           className="text-[9px] text-gray-600 hover:text-red-400 px-1">✕</button>
       </div>
+    </div>
+  );
+}
+
+// ─── Smith Node "More" Menu (⋯) ─────────────────────────
+
+function SmithMoreMenu({ onShowMemory, onShowLog, onSaveAsTemplate, onRefreshBus }: {
+  onShowMemory: () => void;
+  onShowLog: () => void;
+  onSaveAsTemplate: () => void;
+  onRefreshBus: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as unknown as globalThis.Node;
+      if (ref.current && !ref.current.contains(target)) setOpen(false);
+    };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onPointerDown={e => e.stopPropagation()}
+        onClick={e => { e.stopPropagation(); setOpen(v => !v); }}
+        className="text-[10px] text-gray-600 hover:text-white px-1"
+        title="More actions"
+      >⋯</button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 bg-[#0d1117] border border-[#30363d] rounded shadow-xl py-1 min-w-[120px]">
+          <button
+            onPointerDown={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); setOpen(false); onShowMemory(); }}
+            className="w-full text-left text-[10px] px-2 py-1 hover:bg-[#161b22] text-gray-300 flex items-center gap-2"
+          >🧠 Memory</button>
+          <button
+            onPointerDown={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); setOpen(false); onShowLog(); }}
+            className="w-full text-left text-[10px] px-2 py-1 hover:bg-[#161b22] text-gray-300 flex items-center gap-2"
+          >📋 Logs</button>
+          <button
+            onPointerDown={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); setOpen(false); onRefreshBus(); }}
+            className="w-full text-left text-[10px] px-2 py-1 hover:bg-[#161b22] text-gray-300 flex items-center gap-2"
+          >🔄 Refresh state</button>
+          <button
+            onPointerDown={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); setOpen(false); onSaveAsTemplate(); }}
+            className="w-full text-left text-[10px] px-2 py-1 hover:bg-[#161b22] text-gray-300 flex items-center gap-2"
+          >💾 Save as template</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -3417,6 +3554,52 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
   // Auto-open terminals removed — persistent sessions run in background tmux.
   // User opens terminal via ⌨️ button when needed.
 
+  // ─── Smith bell notifications (per-agent, persisted) ──
+  const [bellAgents, setBellAgents] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const raw = localStorage.getItem('forge.workspace.bellAgents');
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch { return new Set(); }
+  });
+  const toggleBell = useCallback((agentId: string) => {
+    setBellAgents(prev => {
+      const next = new Set(prev);
+      if (next.has(agentId)) next.delete(agentId);
+      else {
+        next.add(agentId);
+        // Request browser notification permission on first enable
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+          Notification.requestPermission().catch(() => {});
+        }
+      }
+      try { localStorage.setItem('forge.workspace.bellAgents', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }, []);
+
+  // Watch taskStatus transitions and fire bell on running → done/failed
+  const prevTaskStatusRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    const prev = prevTaskStatusRef.current;
+    for (const agent of agents) {
+      const cur = states[agent.id]?.taskStatus;
+      const before = prev[agent.id];
+      if (cur && before === 'running' && (cur === 'done' || cur === 'failed')) {
+        if (bellAgents.has(agent.id)) {
+          fireSmithBell(agent.label, cur);
+        }
+      }
+    }
+    // Update snapshot for next tick
+    const snapshot: Record<string, string> = {};
+    for (const agent of agents) {
+      const s = states[agent.id]?.taskStatus;
+      if (s) snapshot[agent.id] = s;
+    }
+    prevTaskStatusRef.current = snapshot;
+  }, [states, agents, bellAgents]);
+
   // Rebuild nodes when agents/states/preview change — preserve existing positions + dimensions
   useEffect(() => {
     setRfNodes(prev => {
@@ -3468,6 +3651,8 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
             onPause: () => wsApi(workspaceId!, 'pause', { agentId: agent.id }),
             onStop: () => wsApi(workspaceId!, 'stop', { agentId: agent.id }),
             mascotTheme,
+            bellOn: bellAgents.has(agent.id),
+            onToggleBell: () => toggleBell(agent.id),
             onMarkIdle: () => wsApi(workspaceId!, 'mark_done', { agentId: agent.id, notify: false }),
             onMarkDone: (notify: boolean) => wsApi(workspaceId!, 'mark_done', { agentId: agent.id, notify }),
             onMarkFailed: (notify: boolean) => wsApi(workspaceId!, 'mark_failed', { agentId: agent.id, notify }),
@@ -3535,7 +3720,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
         };
       });
     });
-  }, [agents, states, logPreview, workspaceId, mascotTheme, savedPositions]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [agents, states, logPreview, workspaceId, mascotTheme, savedPositions, bellAgents]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Derive edges from dependsOn
   const rfEdges = useMemo(() => {

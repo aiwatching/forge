@@ -3360,7 +3360,7 @@ Silently ingest this context. Do NOT respond — await an actual task.`;
   }
 
   /** Emit agents_changed so SSE pushes the updated list to frontend */
-  private emitAgentsChanged(): void {
+  emitAgentsChanged(): void {
     // Refresh topology cache so MCP queries always return current state
     this.rebuildTopo();
     const agents = Array.from(this.agents.values()).map(e => e.config);

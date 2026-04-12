@@ -203,6 +203,14 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
       case 'get_positions': {
         return json(res, { positions: orch.getNodePositions() });
       }
+      case 'refresh_bus': {
+        // Re-broadcast current bus log state — used by inbox refresh button
+        // when client state appears stale
+        orch.emit('event', { type: 'bus_log_updated', log: orch.getBusLog() } as any);
+        // Also re-emit agents_changed to refresh agent states
+        orch.emitAgentsChanged();
+        return json(res, { ok: true });
+      }
       case 'agent_done': {
         // Called by Claude Code Stop hook — agent finished a turn
         if (!agentId) return jsonError(res, 'agentId required');

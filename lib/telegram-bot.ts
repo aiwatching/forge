@@ -32,7 +32,12 @@ const chatNumberedTasks = new Map<number, Map<number, string>>();
 const chatNumberedSessions = new Map<number, Map<number, { projectName: string; sessionId: string }>>();
 const chatNumberedProjects = new Map<number, Map<number, string>>();
 // Track what the last numbered list was for
-const chatListMode = new Map<number, 'tasks' | 'projects' | 'sessions' | 'task-create' | 'peek'>();
+const chatListMode = new Map<number, 'tasks' | 'projects' | 'sessions' | 'task-create' | 'peek' | 'inject-pick' | 'inject-typing'>();
+// Inject mode state — picked tmux session per chat
+const chatNumberedTmux = new Map<number, Map<number, string>>(); // num → tmux session name
+const chatInjectTarget = new Map<number, string>(); // chatId → tmux session name (currently selected)
+const chatInjectAutoClear = new Map<number, ReturnType<typeof setTimeout>>(); // auto-clear timers
+const INJECT_AUTO_CLEAR_MS = 3 * 60 * 1000; // 3 min idle → auto clear
 
 // Pending task creation: waiting for prompt text
 const pendingTaskProject = new Map<number, { name: string; path: string }>();  // chatId → project
@@ -178,6 +183,12 @@ async function handleMessage(msg: any) {
         await sendSessionContent(chatId, projectName, sessionId);
         return;
       }
+    } else if (mode === 'inject-pick') {
+      const tmuxMap = chatNumberedTmux.get(chatId);
+      if (tmuxMap?.has(num)) {
+        await pickInjectTarget(chatId, String(num));
+        return;
+      }
     } else {
       const taskMap = chatNumberedTasks.get(chatId);
       if (taskMap?.has(num)) {
@@ -259,6 +270,32 @@ async function handleMessage(msg: any) {
       case '/retry':
         await handleRetry(chatId, args[0]);
         break;
+      case '/inject':
+      case '/i':
+        if (args.length === 0) {
+          await startInjectFlow(chatId);
+        } else if (args.length === 1 && /^\d+$/.test(args[0])) {
+          // /i 1 — pick session number, prompt for text next
+          await pickInjectTarget(chatId, args[0]);
+        } else {
+          // /i 1 hello world — pick + send in one shot
+          if (/^\d+$/.test(args[0])) {
+            await pickInjectTarget(chatId, args[0]);
+            await handleInjectSend(chatId, args.slice(1).join(' '));
+          } else {
+            // No number — use last picked target
+            await handleInjectSend(chatId, args.join(' '));
+          }
+        }
+        break;
+      case '/iclear': {
+        chatInjectTarget.delete(chatId);
+        chatListMode.delete(chatId);
+        const t = chatInjectAutoClear.get(chatId);
+        if (t) { clearTimeout(t); chatInjectAutoClear.delete(chatId); }
+        await send(chatId, 'Inject target cleared.');
+        break;
+      }
       case '/tunnel':
         await handleTunnelStatus(chatId);
         break;
@@ -274,6 +311,12 @@ async function handleMessage(msg: any) {
       default:
         await send(chatId, `Unknown command: ${cmd}\nUse /help to see available commands.`);
     }
+    return;
+  }
+
+  // Inject mode: if user picked a target, plain text goes to that tmux session
+  if (chatListMode.get(chatId) === 'inject-typing' && chatInjectTarget.has(chatId)) {
+    await handleInjectSend(chatId, text);
     return;
   }
 
@@ -298,22 +341,22 @@ async function handleMessage(msg: any) {
 async function sendHelp(chatId: number) {
   await send(chatId,
     `🤖 Forge\n\n` +
-    `📋 /task — create task (interactive)\n` +
-    `/tasks — task list\n\n` +
+    `🎯 /i (or /inject) — type into a terminal & submit\n` +
+    `/iclear — clear inject target\n\n` +
     `👀 /sessions — session summary (select project)\n` +
     `📖 /docs — docs summary / view file\n` +
     `📝 /note — quick note to docs\n\n` +
     `👁 /watch <project> — monitor session\n` +
     `/watch — list watchers\n` +
     `/unwatch <id> — stop\n\n` +
+    `📋 /task — create background task\n` +
+    `/tasks — task list\n` +
     `🔧 /cancel <id>  /retry <id>\n` +
-    `/sessions — browse sessions\n` +
-    `/projects — list projects\n\n` +
+    `/projects — list projects\n` +
+    `🤖 /agents — list available agents\n\n` +
     `🌐 /tunnel — status\n` +
     `/tunnel_start / /tunnel_stop\n` +
     `/tunnel_code <admin_pw> — get session code\n\n` +
-    `🤖 /agents — list available agents\n` +
-    `Use @agent in /task to select (e.g. /task app @codex: review)\n\n` +
     `Reply number to select`
   );
 }
@@ -908,6 +951,234 @@ async function handleUnwatch(chatId: number, watcherId?: string) {
   await send(chatId, `🗑 Watcher ${watcherId} removed`);
 }
 
+// ─── Inject Commands ─────────────────────────────────────────
+
+/** Build a map of tmux session name → friendly label from terminal-state.json + workspace state */
+function getSessionLabels(): Record<string, string> {
+  const labels: Record<string, string> = {};
+  try {
+    const { join } = require('node:path');
+    const { homedir } = require('node:os');
+    const { readFileSync, existsSync, readdirSync } = require('node:fs');
+
+    // 1. terminal-state.json — vibecoding terminal tabs
+    const termState = join(homedir(), '.forge', 'data', 'terminal-state.json');
+    if (existsSync(termState)) {
+      try {
+        const state = JSON.parse(readFileSync(termState, 'utf-8'));
+        // sessionLabels (top-level map)
+        if (state.sessionLabels) {
+          for (const [name, label] of Object.entries(state.sessionLabels)) {
+            labels[name] = String(label);
+          }
+        }
+        // Walk tab trees and assign unique labels
+        // First collect all terminals per tab in order, so we can suffix duplicates
+        const collectTerminals = (node: any, acc: { name: string; proj: string | null }[]) => {
+          if (!node) return;
+          if (node.type === 'terminal' && node.sessionName) {
+            acc.push({ name: node.sessionName, proj: node.projectPath ? node.projectPath.split('/').pop() : null });
+          }
+          if (node.first) collectTerminals(node.first, acc);
+          if (node.second) collectTerminals(node.second, acc);
+        };
+        if (state.tabs) {
+          for (const tab of state.tabs) {
+            const terminals: { name: string; proj: string | null }[] = [];
+            collectTerminals(tab.tree, terminals);
+            const tabLabel = tab.label || 'Terminal';
+            terminals.forEach((t, idx) => {
+              if (labels[t.name]) return; // already labeled (e.g. workspace smith)
+              const base = t.proj || tabLabel;
+              // Disambiguate: append #N if multiple terminals share the same base in this tab
+              const sameBase = terminals.filter(o => (o.proj || tabLabel) === base);
+              if (sameBase.length > 1) {
+                const idxInBase = sameBase.findIndex(o => o.name === t.name) + 1;
+                labels[t.name] = `${base} #${idxInBase}`;
+              } else {
+                labels[t.name] = base;
+              }
+            });
+          }
+        }
+      } catch {}
+    }
+
+
+    // 2. Workspace state files — smith tmuxSession + agent label
+    const wsDir = join(homedir(), '.forge', 'workspaces');
+    if (existsSync(wsDir)) {
+      for (const wsId of readdirSync(wsDir)) {
+        const stateFile = join(wsDir, wsId, 'state.json');
+        if (!existsSync(stateFile)) continue;
+        try {
+          const ws = JSON.parse(readFileSync(stateFile, 'utf-8'));
+          const projectName = ws.projectName || '';
+          for (const [agentId, st] of Object.entries(ws.agentStates || {}) as any[]) {
+            if (st?.tmuxSession) {
+              const agent = (ws.agents || []).find((a: any) => a.id === agentId);
+              const label = agent?.label || agentId;
+              const icon = agent?.icon || '';
+              labels[st.tmuxSession] = `${icon} ${projectName ? `[${projectName}] ` : ''}${label}`.trim();
+            }
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+  return labels;
+}
+
+/** Capture the last non-empty line(s) of a tmux session for preview.
+ * @param maxLines max number of lines to return (1 for single-line list, more for detail view) */
+function getSessionPreview(sessionName: string, maxLines: number = 1): string {
+  try {
+    const { execSync } = require('node:child_process');
+    // Capture last screen, strip ANSI escapes, find last non-empty lines
+    const out = execSync(`tmux capture-pane -t "${sessionName}" -p -S -50 2>/dev/null`, {
+      encoding: 'utf-8',
+      timeout: 2000,
+    }) as string;
+    if (!out) return '';
+    // Strip ANSI escape codes
+    // eslint-disable-next-line no-control-regex
+    const clean = out.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+    const lines = clean.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
+    if (lines.length === 0) return '';
+    const tail = lines.slice(-maxLines);
+    if (maxLines === 1) {
+      const last = tail[0];
+      return last.length > 30 ? last.slice(0, 30) + '…' : last;
+    }
+    // Multi-line: truncate each line to 80 chars
+    return tail.map(l => l.length > 80 ? l.slice(0, 80) + '…' : l).join('\n');
+  } catch {
+    return '';
+  }
+}
+
+/** Schedule auto-clear of inject target after idle timeout */
+function scheduleInjectAutoClear(chatId: number) {
+  const existing = chatInjectAutoClear.get(chatId);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(async () => {
+    chatInjectTarget.delete(chatId);
+    chatListMode.delete(chatId);
+    chatInjectAutoClear.delete(chatId);
+    try { await send(chatId, '⏰ Inject target auto-cleared (idle 3 min). Use /i to pick again.'); } catch {}
+  }, INJECT_AUTO_CLEAR_MS);
+  chatInjectAutoClear.set(chatId, timer);
+}
+
+/** List active tmux sessions and let user pick one to inject text into */
+async function startInjectFlow(chatId: number) {
+  const settings = loadSettings();
+  if (String(chatId) !== settings.telegramChatId) { await send(chatId, '⛔ Unauthorized'); return; }
+
+  try {
+    const { execSync } = require('node:child_process');
+    const out = execSync('tmux list-sessions -F "#{session_name}|#{session_attached}" 2>/dev/null', { encoding: 'utf-8', timeout: 3000 }).trim();
+    if (!out) {
+      await send(chatId, 'No active tmux sessions. Open a terminal in the browser first.');
+      return;
+    }
+    const sessions = (out as string).split('\n').map((line: string) => {
+      const [name, attached] = line.split('|');
+      return { name, attached: attached !== '0' };
+    }).filter((s: { name: string }) => s.name.startsWith('mw'));
+
+    if (sessions.length === 0) {
+      await send(chatId, 'No active Forge terminal sessions.');
+      return;
+    }
+
+    // Resolve friendly labels
+    const labelMap = getSessionLabels();
+
+    const tmuxMap = new Map<number, string>();
+    const lines = sessions.slice(0, 20).map((s: { name: string; attached: boolean }, i: number) => {
+      const num = i + 1;
+      tmuxMap.set(num, s.name);
+      const friendly = labelMap[s.name];
+      const display = friendly || s.name.replace(/^mw-?/, '');
+      const marker = s.attached ? '👁' : '⚫';
+      const preview = getSessionPreview(s.name);
+      const previewLine = preview ? `\n   └ ${preview}` : '';
+      return `${num}. ${marker} ${display}${previewLine}`;
+    });
+    chatNumberedTmux.set(chatId, tmuxMap);
+    chatListMode.set(chatId, 'inject-pick');
+
+    await send(chatId,
+      `🎯 Pick a terminal to inject text:\n\n${lines.join('\n')}\n\n` +
+      `👁 = attached, ⚫ = detached\n` +
+      `Reply with a number, or use /i <num> <text> for one-shot.\n` +
+      `Use /iclear to cancel.`
+    );
+  } catch (e: any) {
+    await send(chatId, `Error listing sessions: ${e.message}`);
+  }
+}
+
+/** After picking a session number, set it as the target and prompt for text */
+async function pickInjectTarget(chatId: number, numStr: string) {
+  const num = parseInt(numStr);
+  const tmuxMap = chatNumberedTmux.get(chatId);
+  if (!tmuxMap?.has(num)) {
+    await send(chatId, 'Invalid number. Use /i to refresh the list.');
+    return;
+  }
+  const sessionName = tmuxMap.get(num)!;
+  chatInjectTarget.set(chatId, sessionName);
+  chatListMode.set(chatId, 'inject-typing');
+  scheduleInjectAutoClear(chatId);
+  const labelMap = getSessionLabels();
+  const display = labelMap[sessionName] || sessionName.replace(/^mw-?/, '');
+  // Show last 8 lines of context so user knows what's in the terminal
+  const context = getSessionPreview(sessionName, 8);
+  const contextBlock = context ? `\n\n📺 Last output:\n\`\`\`\n${context}\n\`\`\`` : '';
+  await send(chatId,
+    `🎯 Target: ${display}${contextBlock}\n\n` +
+    `Send any text → typed + submitted in the terminal.\n` +
+    `Auto-clears after 3 min idle. Use /iclear to cancel.`
+  );
+}
+
+/** Send text to the currently selected tmux session */
+async function handleInjectSend(chatId: number, text: string) {
+  const settings = loadSettings();
+  if (String(chatId) !== settings.telegramChatId) { await send(chatId, '⛔ Unauthorized'); return; }
+
+  const sessionName = chatInjectTarget.get(chatId);
+  if (!sessionName) {
+    await send(chatId, 'No target selected. Use /i to pick a terminal first.');
+    return;
+  }
+  if (!text || !text.trim()) {
+    await send(chatId, 'Empty text. Send something to inject.');
+    return;
+  }
+
+  try {
+    const { execSync } = require('node:child_process');
+    // Paste text into the input then submit with Enter (like the user typed it and hit return)
+    const buf = require('node:os').tmpdir() + `/forge-inject-${Date.now()}.txt`;
+    require('node:fs').writeFileSync(buf, text);
+    execSync(`tmux load-buffer -t "${sessionName}" "${buf}" && tmux paste-buffer -t "${sessionName}" && sleep 0.2 && tmux send-keys -t "${sessionName}" Enter`, { timeout: 5000 });
+    require('node:fs').unlinkSync(buf);
+    const preview = text.length > 60 ? text.slice(0, 60) + '...' : text;
+    const labelMap = getSessionLabels();
+    const display = labelMap[sessionName] || sessionName.replace(/^mw-?/, '');
+    // Reset auto-clear timer on activity
+    scheduleInjectAutoClear(chatId);
+    await send(chatId, `✅ Sent to ${display}\n> ${preview}`);
+  } catch (e: any) {
+    await send(chatId, `❌ Inject failed: ${e.message}\nThe session may have closed. Use /i to pick another.`);
+    chatInjectTarget.delete(chatId);
+    chatListMode.delete(chatId);
+  }
+}
+
 // ─── Tunnel Commands ─────────────────────────────────────────
 
 async function handleTunnelStatus(chatId: number) {
@@ -1420,12 +1691,14 @@ async function setBotCommands(token: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         commands: [
-          { command: 'task', description: 'Create task' },
-          { command: 'tasks', description: 'List tasks' },
+          { command: 'i', description: '🎯 Inject text into a terminal' },
+          { command: 'iclear', description: 'Clear inject target' },
           { command: 'sessions', description: 'Session summary (AI)' },
           { command: 'docs', description: 'Docs summary / view file' },
           { command: 'note', description: 'Quick note to docs' },
           { command: 'watch', description: 'Monitor session / list watchers' },
+          { command: 'task', description: 'Create task (background)' },
+          { command: 'tasks', description: 'List tasks' },
           { command: 'tunnel', description: 'Tunnel status' },
           { command: 'tunnel_start', description: 'Start tunnel' },
           { command: 'tunnel_stop', description: 'Stop tunnel' },

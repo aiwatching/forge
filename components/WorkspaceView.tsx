@@ -2025,11 +2025,11 @@ function fireSmithBell(label: string, status: 'done' | 'failed') {
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
     new Notification(title, { body, icon: '/icon.png' });
   }
-  // Telegram + in-app via API (reuse terminal-bell endpoint)
+  // Telegram + in-app via API (reuse terminal-bell endpoint, marked as workspace source)
   fetch('/api/terminal-bell', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tabLabel: `${label} (${status})` }),
+    body: JSON.stringify({ tabLabel: `${label} (${status})`, source: 'workspace' }),
   }).catch(() => {});
 }
 

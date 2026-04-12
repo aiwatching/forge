@@ -3,12 +3,12 @@ import { loadSettings } from '@/lib/settings';
 import { addNotification } from '@/lib/notifications';
 
 export async function POST(req: Request) {
-  const { tabLabel } = await req.json();
+  const { tabLabel, source } = await req.json();
   const label = tabLabel || 'Terminal';
 
-  // Check settings — terminal bell notifications can be disabled
+  // Check settings — terminal bell can be disabled (but workspace smith bells always go through)
   const settings = loadSettings();
-  if ((settings as any).terminalBellEnabled === false) {
+  if ((settings as any).terminalBellEnabled === false && source !== 'workspace') {
     return NextResponse.json({ ok: true, skipped: true });
   }
 

@@ -63,6 +63,7 @@ export class AgentBus extends EventEmitter {
     };
 
     this.log.push(msg);
+    this.pruneIfNeeded();
     this.emit('message', msg);
 
     // ACK messages don't need delivery tracking
@@ -350,6 +351,35 @@ export class AgentBus extends EventEmitter {
     if (count > 0) console.log(`[bus] Marked ${count} pending messages as failed (restart cleanup)`);
   }
 
+  // ─── Log maintenance ───────────────────────────────────
+
+  private static readonly MAX_LOG_SIZE = 500;
+  private static readonly PRUNE_KEEP = 200;
+
+  /** Prune completed messages to prevent unbounded log growth.
+   *  Keeps: all pending/running messages + last N completed ones.
+   *  Called automatically after each send(). */
+  private pruneIfNeeded(): void {
+    if (this.log.length <= AgentBus.MAX_LOG_SIZE) return;
+
+    // Separate active (must keep) from completed (can prune)
+    const active: BusMessage[] = [];
+    const completed: BusMessage[] = [];
+    for (const m of this.log) {
+      if (m.status === 'pending' || m.status === 'pending_approval' || m.status === 'running') {
+        active.push(m);
+      } else {
+        completed.push(m);
+      }
+    }
+
+    // Keep all active + most recent N completed
+    const keep = completed.slice(-AgentBus.PRUNE_KEEP);
+    this.log = [...active, ...keep].sort((a, b) => a.timestamp - b.timestamp);
+    const pruned = completed.length - keep.length;
+    if (pruned > 0) console.log(`[bus] Pruned ${pruned} completed messages (${this.log.length} remaining)`);
+  }
+
   // ─── Query ─────────────────────────────────────────────
 
   getMessagesFor(agentId: string): BusMessage[] {
@@ -374,6 +404,11 @@ export class AgentBus extends EventEmitter {
     return this.log;
   }
 
+  /** Get log for persistence — excludes _system messages (transient notifications) */
+  getLogForPersistence(): BusMessage[] {
+    return this.log.filter(m => m.to !== '_system');
+  }
+
   /** Get all outbox queues (for persistence) */
   getAllOutbox(): Record<string, BusMessage[]> {
     const result: Record<string, BusMessage[]> = {};
@@ -385,6 +420,7 @@ export class AgentBus extends EventEmitter {
 
   loadLog(messages: BusMessage[]): void {
     this.log = [...messages];
+    this.pruneIfNeeded();
   }
 
   /** Restore outbox from persisted state */

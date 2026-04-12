@@ -1870,7 +1870,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       agents: Array.from(this.agents.values()).map(e => e.config),
       agentStates: this.getAllAgentStates(),
       nodePositions: this.nodePositions,
-      busLog: [...this.bus.getLog()],
+      busLog: this.bus.getLogForPersistence(),
       busOutbox: this.bus.getAllOutbox(),
       createdAt: this.createdAt,
       updatedAt: Date.now(),

@@ -12,6 +12,10 @@ Settings are stored in `~/.forge/data/settings.yaml`. Configure via the web UI (
 | `claudeHome` | string | `""` | Claude Code home directory (default: `~/.claude`) |
 | `telegramBotToken` | string | `""` | Telegram Bot API token (encrypted) |
 | `telegramChatId` | string | `""` | Telegram chat ID (comma-separated for multiple users) |
+| `agentlinkEnabled` | boolean | `false` | Enable AgentLink integration |
+| `agentlinkBaseUrl` | string | `"http://localhost:8080/api/v1"` | AgentLink API base URL |
+| `agentlinkAgentToken` | string | `""` | AgentLink agent token (encrypted) |
+| `agentlinkAllowedAccounts` | string | `""` | Comma-separated allowed account_ids, or `*` for all |
 | `notifyOnComplete` | boolean | `true` | Telegram notification on task completion |
 | `notifyOnFailure` | boolean | `true` | Telegram notification on task failure |
 | `tunnelAutoStart` | boolean | `false` | Auto-start Cloudflare Tunnel on server startup |

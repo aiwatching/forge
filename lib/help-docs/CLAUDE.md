@@ -43,6 +43,7 @@ The token is valid for 24 hours. Store it in a variable and reuse for all API ca
 | `10-troubleshooting.md` | Common issues and solutions |
 | `11-workspace.md` | Workspace (Forge Smiths) — multi-agent orchestration, daemon, message bus, profiles |
 | `12-usage.md` | Token usage analytics — charts, heatmap, cost estimation, by model/project/source |
+| `13-agentlink.md` | AgentLink integration — alternative messaging channel like Telegram |
 
 ## Matching questions to docs
 
@@ -64,3 +65,4 @@ The token is valid for 24 hours. Store it in a variable and reuse for all API ca
 - Usage/cost/tokens/spending/billing/analytics → `12-usage.md`
 - Terminal dock/float/mouse toggle/reconnect → `07-projects.md` + `11-workspace.md`
 - Sidebar collapse/project tabs/favorites → `07-projects.md`
+- AgentLink/agent-link → `13-agentlink.md`

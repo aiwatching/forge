@@ -162,6 +162,7 @@ export function ensureInitialized() {
   startTelegramBot(); // registers task event listener only
   startTerminalProcess();
   startTelegramProcess(); // spawns telegram-standalone
+  startAgentlinkProcess(); // spawns agentlink-standalone (if enabled)
   startWorkspaceProcess(); // spawns workspace-standalone
 
   const settings = loadSettings();
@@ -202,6 +203,32 @@ function startTelegramProcess() {
   });
   telegramChild.on('exit', () => { telegramChild = null; });
   console.log('[telegram] Started standalone (pid:', telegramChild.pid, ')');
+}
+
+let agentlinkChild: ReturnType<typeof spawn> | null = null;
+
+function startAgentlinkProcess() {
+  if (agentlinkChild) return;
+  const settings = loadSettings();
+  if (!settings.agentlinkEnabled || !settings.agentlinkAgentToken) return;
+
+  const script = join(process.cwd(), 'lib', 'agentlink-standalone.ts');
+  agentlinkChild = spawn('npx', ['tsx', script], {
+    stdio: ['ignore', 'inherit', 'inherit'],
+    env: { ...process.env, PORT: String(process.env.PORT || 8403) },
+    detached: false,
+  });
+  agentlinkChild.on('exit', () => { agentlinkChild = null; });
+  console.log('[agentlink] Started standalone (pid:', agentlinkChild.pid, ')');
+}
+
+/** Restart AgentLink bot (e.g. after settings change) */
+export function restartAgentlinkBot() {
+  if (agentlinkChild) {
+    try { agentlinkChild.kill('SIGTERM'); } catch {}
+    agentlinkChild = null;
+  }
+  startAgentlinkProcess();
 }
 
 let terminalChild: ReturnType<typeof spawn> | null = null;

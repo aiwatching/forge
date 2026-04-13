@@ -39,6 +39,10 @@ export interface Settings {
   claudeHome: string;
   telegramBotToken: string;
   telegramChatId: string;
+  agentlinkEnabled: boolean;
+  agentlinkBaseUrl: string;        // e.g. http://localhost:8080/api/v1
+  agentlinkAgentToken: string;     // agent token from registerAgent
+  agentlinkAllowedAccounts: string; // comma-separated account_ids (or "*" for public)
   notifyOnComplete: boolean;
   notifyOnFailure: boolean;
   tunnelAutoStart: boolean;
@@ -66,6 +70,10 @@ const defaults: Settings = {
   claudeHome: '',
   telegramBotToken: '',
   telegramChatId: '',
+  agentlinkEnabled: false,
+  agentlinkBaseUrl: 'http://localhost:8080/api/v1',
+  agentlinkAgentToken: '',
+  agentlinkAllowedAccounts: '',
   notifyOnComplete: true,
   notifyOnFailure: true,
   tunnelAutoStart: false,

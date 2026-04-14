@@ -1446,6 +1446,8 @@ const MemoTerminalPane = memo(function TerminalPane({
     const MAX_CREATE_RETRIES = 2;
     let reconnectAttempts = 0;
     let isNewlyCreated = false;
+    let lastActivityTime = Date.now();
+    let staleCheckTimer = 0;
 
     function connect() {
       if (disposed) return;
@@ -1455,6 +1457,7 @@ const MemoTerminalPane = memo(function TerminalPane({
       socket.onopen = () => {
         if (disposed) { socket.close(); return; }
         if (socket.readyState !== WebSocket.OPEN) return;
+        lastActivityTime = Date.now();
         const cols = term.cols;
         const rows = term.rows;
 
@@ -1477,6 +1480,7 @@ const MemoTerminalPane = memo(function TerminalPane({
 
       ws.onmessage = (event) => {
         if (disposed || !initDone) return;
+        lastActivityTime = Date.now();
         try {
           const msg = JSON.parse(event.data);
           if (msg.type === 'output') {
@@ -1572,6 +1576,36 @@ const MemoTerminalPane = memo(function TerminalPane({
         // onclose will fire after this, triggering reconnect
       };
     }
+
+    // Stale detection: WebSocket may appear "open" after Mac sleep but have no traffic.
+    // If no activity for 60s, force-close and reconnect.
+    staleCheckTimer = window.setInterval(() => {
+      if (disposed) return;
+      if (ws?.readyState === WebSocket.OPEN && Date.now() - lastActivityTime > 60000) {
+        console.warn('[ws] terminal stream stalled, forcing reconnect');
+        lastActivityTime = Date.now();
+        try { ws.close(); } catch {}
+      }
+    }, 20000);
+
+    // Detect tab wake from sleep — only triggers when tab was actually hidden.
+    // Conservative: needs > 60s of inactivity to force reconnect.
+    const onVisibilityChange = () => {
+      if (disposed) return;
+      if (document.visibilityState === 'visible' && Date.now() - lastActivityTime > 60000) {
+        console.log('[ws] terminal visible after long idle, forcing reconnect');
+        lastActivityTime = Date.now();
+        try { ws?.close(); } catch {}
+      }
+    };
+    const onOnline = () => {
+      if (disposed) return;
+      console.log('[ws] network online, reconnecting terminal');
+      lastActivityTime = Date.now();
+      try { ws?.close(); } catch {}
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('online', onOnline);
 
     // NOTE: connect() is called inside initTerminal() — do NOT call it here.
     // Calling it both here and in initTerminal() causes duplicate WebSocket
@@ -1683,6 +1717,9 @@ const MemoTerminalPane = memo(function TerminalPane({
       visObserver.disconnect();
       clearTimeout(resizeTimer);
       clearTimeout(reconnectTimer);
+      if (staleCheckTimer) clearInterval(staleCheckTimer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('online', onOnline);
       window.removeEventListener('terminal-drag-end', onDragEnd);
       resizeObserver.disconnect();
       // Strict Mode cleanup: if disposed within 2s of mount and we created a

@@ -1,11 +1,8 @@
-# Forge v0.5.37
+# Forge v0.5.38
 
-Released: 2026-04-11
+Released: 2026-04-14
 
-## Changes since v0.5.36
-
-### Performance
-- perf: prune bus log to prevent unbounded growth
+## Changes since v0.5.37
 
 
-**Full Changelog**: https://github.com/aiwatching/forge/compare/v0.5.36...v0.5.37
+**Full Changelog**: https://github.com/aiwatching/forge/compare/v0.5.37...v0.5.38

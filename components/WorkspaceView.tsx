@@ -280,9 +280,83 @@ function useWorkspaceStream(workspaceId: string | null, onEvent?: (event: any) =
   useEffect(() => {
     if (!workspaceId) return;
 
-    const es = new EventSource(`/api/workspace/${workspaceId}/stream`);
+    // Reconnection state — survives sleep/wake and network drops
+    let es: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let staleCheckTimer: ReturnType<typeof setInterval> | null = null;
+    let reconnectAttempts = 0;
+    let lastEventTime = Date.now();
+    let disposed = false;
 
-    es.onmessage = (e) => {
+    const scheduleReconnect = () => {
+      if (disposed) return;
+      if (reconnectTimer) return;
+      // Exponential backoff: 2s, 4s, 8s, max 30s
+      const delay = Math.min(30000, 2000 * Math.pow(2, reconnectAttempts));
+      reconnectAttempts++;
+      console.log(`[sse] reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts})`);
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delay);
+    };
+
+    const connect = () => {
+      if (disposed) return;
+      try { es?.close(); } catch {}
+      lastEventTime = Date.now();
+      es = new EventSource(`/api/workspace/${workspaceId}/stream`);
+
+      es.onopen = () => {
+        reconnectAttempts = 0;
+        lastEventTime = Date.now();
+      };
+
+      es.onerror = () => {
+        // Browser fires onerror when the connection drops
+        console.warn('[sse] EventSource error — will reconnect');
+        try { es?.close(); } catch {}
+        scheduleReconnect();
+      };
+
+      es.onmessage = (e) => {
+        lastEventTime = Date.now();
+        handleEvent(e);
+      };
+    };
+
+    // Stall detection: if we haven't received any event (including heartbeat ping from server)
+    // for 45s, the connection is stuck (common after Mac sleep). Force reconnect.
+    staleCheckTimer = setInterval(() => {
+      if (disposed) return;
+      if (Date.now() - lastEventTime > 45000) {
+        console.warn('[sse] stream stalled (no events for 45s), forcing reconnect');
+        try { es?.close(); } catch {}
+        lastEventTime = Date.now(); // prevent immediate re-trigger
+        connect();
+      }
+    }, 15000);
+
+    // Detect tab wake from sleep / network recovery — conservative to avoid churn
+    const onVisibilityChange = () => {
+      if (disposed) return;
+      if (document.visibilityState === 'visible' && Date.now() - lastEventTime > 60000) {
+        console.log('[sse] page visible after long idle, reconnecting');
+        try { es?.close(); } catch {}
+        connect();
+      }
+    };
+    const onOnline = () => {
+      if (disposed) return;
+      console.log('[sse] network online, reconnecting');
+      try { es?.close(); } catch {}
+      lastEventTime = Date.now();
+      connect();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('online', onOnline);
+
+    const handleEvent = (e: MessageEvent) => {
       try {
         const event = JSON.parse(e.data);
 
@@ -408,7 +482,17 @@ function useWorkspaceStream(workspaceId: string | null, onEvent?: (event: any) =
       } catch {}
     };
 
-    return () => es.close();
+    // Start the initial connection
+    connect();
+
+    return () => {
+      disposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (staleCheckTimer) clearInterval(staleCheckTimer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('online', onOnline);
+      try { es?.close(); } catch {}
+    };
   }, [workspaceId]);
 
   return { agents, states, logPreview, busLog, setAgents, daemonActive, setDaemonActive };

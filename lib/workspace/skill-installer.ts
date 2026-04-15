@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { loadSettings } from '../settings';
 
 const _filename = typeof __filename !== 'undefined' ? __filename : fileURLToPath(import.meta.url);
 const _dirname = typeof __dirname !== 'undefined' ? __dirname : dirname(_filename);
@@ -23,6 +24,7 @@ export function installForgeSkills(
   agentId: string,
   forgePort = 8403,
 ): { installed: string[] } {
+  if (!loadSettings().manageClaudeConfig) return { installed: [] };
   const skillsDir = join(homedir(), '.claude', 'skills');
   mkdirSync(skillsDir, { recursive: true });
 
@@ -126,6 +128,7 @@ export function applyProfileToProject(
   profile: { env?: Record<string, string>; model?: string },
 ): void {
   if (!profile.env && !profile.model) return;
+  if (!loadSettings().manageClaudeConfig) return;
 
   const settingsFile = join(projectPath, '.claude', 'settings.json');
   try {

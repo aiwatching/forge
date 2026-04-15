@@ -47,6 +47,7 @@ export interface Settings {
   pipelineModel: string;
   telegramModel: string;
   skipPermissions: boolean;
+  manageClaudeConfig: boolean;
   notificationRetentionDays: number;
   skillsRepoUrl: string;
   displayName: string;
@@ -74,6 +75,7 @@ const defaults: Settings = {
   pipelineModel: 'default',
   telegramModel: 'sonnet',
   skipPermissions: false,
+  manageClaudeConfig: true,
   notificationRetentionDays: 30,
   skillsRepoUrl: 'https://raw.githubusercontent.com/aiwatching/forge-skills/main',
   displayName: 'Forge',

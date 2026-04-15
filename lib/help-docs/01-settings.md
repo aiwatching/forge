@@ -23,6 +23,7 @@ Settings are stored in `~/.forge/data/settings.yaml`. Configure via the web UI (
 | `telegramAgent` | string | `""` | Agent for Telegram task execution |
 | `docsAgent` | string | `""` | Agent for documentation queries |
 | `skipPermissions` | boolean | `false` | Add `--dangerously-skip-permissions` to claude invocations |
+| `manageClaudeConfig` | boolean | `true` | When `false`, Forge will not modify `~/.claude/` or project `.claude/` files (skills, Stop hook, permissions, profile env/model) |
 | `notificationRetentionDays` | number | `30` | Auto-cleanup notifications older than N days |
 | `skillsRepoUrl` | string | forge-skills URL | GitHub raw URL for skills registry |
 | `displayName` | string | `"Forge"` | Display name shown in header |

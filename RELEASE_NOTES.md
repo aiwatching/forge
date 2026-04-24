@@ -1,12 +1,11 @@
-# Forge v0.5.40
+# Forge v0.5.41
 
-Released: 2026-04-14
+Released: 2026-04-23
 
-## Changes since v0.5.38
+## Changes since v0.5.40
 
 ### Other
-- v0.5.39
-- add option to disable claude modification
+- fix installation issues
 
 
-**Full Changelog**: https://github.com/aiwatching/forge/compare/v0.5.38...v0.5.40
+**Full Changelog**: https://github.com/aiwatching/forge/compare/v0.5.40...v0.5.41

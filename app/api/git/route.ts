@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { execSync, exec } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { execSync, execFileSync, exec } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { promisify } from 'node:util';
@@ -78,23 +78,41 @@ export async function POST(req: NextRequest) {
 
   if (action === 'clone') {
     // Clone a repo into a project root
-    if (!repoUrl) return NextResponse.json({ error: 'repoUrl required' }, { status: 400 });
+    if (!repoUrl || typeof repoUrl !== 'string') {
+      return NextResponse.json({ error: 'repoUrl required' }, { status: 400 });
+    }
     const settings = loadSettings();
     const roots = (settings.projectRoots || []).map(r => r.replace(/^~/, homedir()));
-    const cloneTarget = targetDir || roots[0];
-    if (!cloneTarget) return NextResponse.json({ error: 'No project root configured' }, { status: 400 });
+    const expandedTarget = typeof targetDir === 'string' ? targetDir.replace(/^~/, homedir()) : undefined;
+    // If caller specified targetDir, it must be under a configured project root
+    if (expandedTarget && !roots.some(r => expandedTarget === r || expandedTarget.startsWith(r + '/'))) {
+      return NextResponse.json({ error: 'targetDir must be under a configured project root' }, { status: 400 });
+    }
+    const cloneTarget = expandedTarget || roots[0];
+    if (!cloneTarget) return NextResponse.json({ error: 'No project root configured — add one in Settings' }, { status: 400 });
 
     try {
-      const output = execSync(`git clone "${repoUrl}"`, {
+      if (!existsSync(cloneTarget)) mkdirSync(cloneTarget, { recursive: true });
+      // execFileSync avoids shell interpolation; GIT_TERMINAL_PROMPT=0 makes git fail fast
+      // instead of hanging for credentials when there is no TTY.
+      const output = execFileSync('git', ['clone', '--', repoUrl], {
         cwd: cloneTarget,
         encoding: 'utf-8',
-        timeout: 60000,
+        timeout: 120000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
       });
-      // Extract cloned dir name from URL
       const repoName = repoUrl.split('/').pop()?.replace(/\.git$/, '') || 'repo';
       return NextResponse.json({ ok: true, path: join(cloneTarget, repoName), output });
     } catch (e: any) {
-      return NextResponse.json({ error: e.message }, { status: 500 });
+      // Surface git's real message (stderr) so the UI can show "Repository not found",
+      // "Authentication failed", etc. — not a bare "Command failed".
+      const stderr = (e.stderr ? e.stderr.toString() : '').trim();
+      const msg = stderr || e.message || 'git clone failed';
+      console.error('[git] clone failed:', msg);
+      // User-caused failures (bad URL, auth, already exists) → 400; infra failures → 500
+      const isUserError = /not found|authentication|could not read username|already exists|invalid|permission denied/i.test(msg);
+      return NextResponse.json({ error: msg }, { status: isUserError ? 400 : 500 });
     }
   }
 

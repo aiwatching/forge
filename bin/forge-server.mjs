@@ -108,6 +108,45 @@ if (!getArg('--dir')) {
 
 mkdirSync(DATA_DIR, { recursive: true });
 
+// ── tmux check (required for browser terminals) ──
+if (!isStop) {
+  try {
+    execSync('command -v tmux', { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch {
+    console.error('[forge] tmux is required but was not found on PATH.');
+    console.error('[forge] Install it with one of:');
+    if (process.platform === 'darwin') {
+      console.error('    brew install tmux');
+    } else if (process.platform === 'linux') {
+      console.error('    sudo apt install -y tmux          # Debian/Ubuntu');
+      console.error('    sudo dnf install -y tmux          # Fedora/RHEL');
+      console.error('    sudo pacman -S tmux               # Arch');
+    } else {
+      console.error('    See https://github.com/tmux/tmux/wiki/Installing');
+    }
+    console.error('[forge] Then re-run: forge server start');
+    process.exit(1);
+  }
+}
+
+// ── Agent CLI check (warn-only — API-only profiles still work) ──
+if (!isStop) {
+  const has = (bin) => {
+    try { execSync(`command -v ${bin}`, { stdio: ['ignore', 'pipe', 'pipe'] }); return true; }
+    catch { return false; }
+  };
+  const hasClaude = has('claude');
+  const hasCodex = has('codex');
+  const hasAider = has('aider');
+  if (!hasClaude && !hasCodex && !hasAider) {
+    console.warn('[forge] ⚠️  No agent CLI found (claude / codex / aider).');
+    console.warn('[forge] Forge needs at least one to drive terminals, tasks, and workspace agents.');
+    console.warn('[forge] Install Claude Code:  npm install -g @anthropic-ai/claude-code');
+    console.warn('[forge] Install Codex:        https://github.com/openai/codex#installation');
+    console.warn('[forge] Or configure API-only profiles in Settings after login.');
+  }
+}
+
 // ── Load <data-dir>/.env.local ──
 const envFile = join(DATA_DIR, '.env.local');
 if (existsSync(envFile)) {

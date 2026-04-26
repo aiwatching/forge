@@ -39,17 +39,47 @@
       { "command": "forge.newTask",       "title": "Forge: New Task",                      "category": "Forge" },
       { "command": "forge.refresh",       "title": "Forge: Refresh",                       "category": "Forge", "icon": "$(refresh)" },
       { "command": "forge.attachTerminal","title": "Forge: Attach to Terminal",            "category": "Forge" },
-      { "command": "forge.openSession",   "title": "Forge: Open Session",                  "category": "Forge", "icon": "$(add)" }
+      { "command": "forge.openSession",   "title": "Forge: Open Session",                  "category": "Forge", "icon": "$(add)" },
+
+      { "command": "forge.openWorkspaceForFolder", "title": "Forge: Open Workspace for Current Folder", "category": "Forge", "icon": "$(folder-opened)" },
+      { "command": "forge.openWorkspace",  "title": "Forge: Open Workspace…",             "category": "Forge" },
+
+      { "command": "forge.startDaemon",   "title": "Start Daemon",                          "category": "Forge", "icon": "$(play)" },
+      { "command": "forge.stopDaemon",    "title": "Stop Daemon",                           "category": "Forge", "icon": "$(stop)" },
+      { "command": "forge.restartDaemon", "title": "Restart Daemon",                        "category": "Forge", "icon": "$(refresh)" },
+
+      { "command": "forge.smithOpenTerminal","title": "Open Smith Terminal",                "category": "Forge", "icon": "$(terminal)" },
+      { "command": "forge.smithPause",       "title": "Pause Smith",                        "category": "Forge", "icon": "$(debug-pause)" },
+      { "command": "forge.smithResume",      "title": "Resume Smith",                       "category": "Forge", "icon": "$(debug-start)" },
+      { "command": "forge.smithMarkDone",    "title": "Mark Done",                          "category": "Forge" },
+      { "command": "forge.smithMarkFailed",  "title": "Mark Failed",                        "category": "Forge" },
+      { "command": "forge.smithMarkIdle",    "title": "Mark Idle",                          "category": "Forge" },
+      { "command": "forge.smithRetry",       "title": "Retry",                              "category": "Forge", "icon": "$(refresh)" },
+      { "command": "forge.smithSendMessage", "title": "Send Message",                       "category": "Forge", "icon": "$(comment)" }
     ],
     "menus": {
       "view/title": [
-        { "command": "forge.refresh",      "when": "view == forge.workspaces", "group": "navigation" },
+        { "command": "forge.openWorkspaceForFolder", "when": "view == forge.workspaces", "group": "navigation@1" },
+        { "command": "forge.refresh",                "when": "view == forge.workspaces", "group": "navigation@2" },
         { "command": "forge.openSession",  "when": "view == forge.terminals",  "group": "navigation@1" },
         { "command": "forge.refresh",      "when": "view == forge.terminals",  "group": "navigation@2" },
         { "command": "forge.refresh",      "when": "view == forge.tasks",      "group": "navigation" }
       ],
       "view/item/context": [
-        { "command": "forge.attachTerminal","when": "view == forge.terminals && viewItem == forge.terminal", "group": "inline" }
+        { "command": "forge.attachTerminal","when": "view == forge.terminals && viewItem == forge.terminal", "group": "inline" },
+
+        { "command": "forge.startDaemon",   "when": "view == forge.workspaces && viewItem == forge.workspace.inactive", "group": "inline@1" },
+        { "command": "forge.stopDaemon",    "when": "view == forge.workspaces && viewItem == forge.workspace.active",   "group": "inline@1" },
+        { "command": "forge.restartDaemon", "when": "view == forge.workspaces && viewItem == forge.workspace.active",   "group": "inline@2" },
+
+        { "command": "forge.smithOpenTerminal","when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\..+/",      "group": "inline@1" },
+        { "command": "forge.smithSendMessage", "when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\..+/",      "group": "inline@2" },
+        { "command": "forge.smithPause",       "when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\.(?!.*paused)/", "group": "smith@1" },
+        { "command": "forge.smithResume",      "when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\..+\\.paused/",  "group": "smith@1" },
+        { "command": "forge.smithRetry",       "when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\.failed/",       "group": "smith@2" },
+        { "command": "forge.smithMarkDone",    "when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\.running/",      "group": "smith@3" },
+        { "command": "forge.smithMarkFailed",  "when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\.running/",      "group": "smith@4" },
+        { "command": "forge.smithMarkIdle",    "when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\.running/",      "group": "smith@5" }
       ],
       "editor/context": [
         { "command": "forge.sendSelection","when": "editorHasSelection", "group": "forge" }

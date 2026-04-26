@@ -76,7 +76,9 @@ export class ForgeClient {
   listProjects()    { return this.request<any[]>('/api/projects'); }
   listWorkspaces()  { return this.request<any[]>('/api/workspace'); }
   /** Returns { agents, states, busLog, daemonActive } */
-  getWorkspaceAgents(id: string) { return this.request<{ agents: any[]; states: Record<string, any> }>(`/api/workspace/${id}/agents`); }
+  getWorkspaceAgents(id: string) {
+    return this.request<{ agents: any[]; states: Record<string, any>; busLog?: any[]; daemonActive?: boolean }>(`/api/workspace/${id}/agents`);
+  }
   listTasks()       { return this.request<any[]>('/api/tasks'); }
   listTerminals()   { return this.request<any>('/api/terminal-state'); }
   getNotifications(){ return this.request<any>('/api/notifications'); }
@@ -105,6 +107,19 @@ export class ForgeClient {
       model?: string;
       resumeFlag?: string;
     }>(`/api/agents?resolve=${encodeURIComponent(agentId)}`);
+  }
+
+  /** Find a workspace by project path (returns null if none). */
+  findWorkspaceByPath(projectPath: string) {
+    return this.request<any>(`/api/workspace?projectPath=${encodeURIComponent(projectPath)}`);
+  }
+
+  /** Generic workspace daemon action — POST /api/workspace/<id>/agents { action, ... } */
+  wsAction(workspaceId: string, action: string, body: Record<string, any> = {}) {
+    return this.request<any>(`/api/workspace/${workspaceId}/agents`, {
+      method: 'POST',
+      body: JSON.stringify({ action, ...body }),
+    });
   }
 
   createTask(projectName: string, prompt: string, opts?: { newSession?: boolean }) {

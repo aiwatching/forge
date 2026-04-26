@@ -21,15 +21,32 @@ export class WorkspacesProvider implements vscode.TreeDataProvider<WsItem> {
       if (r.status === 401 || r.status === 403) return [loginPrompt()];
       if (!r.ok || !Array.isArray(r.data)) return [errorItem(r.error || 'Not connected')];
       if (r.data.length === 0) return [hintItem('No workspaces yet')];
-      return r.data.map((ws: any) => new WsItem(
-        ws.projectName || ws.id,
-        vscode.TreeItemCollapsibleState.Collapsed,
-        'forge.workspace',
-        { workspaceId: ws.id, projectPath: ws.projectPath },
-        `${ws.projectPath || ''}\n${ws.agentCount} smith(s)`,
-      ));
+      // Sort by project name so the list order is stable across refreshes
+      // (the API's underlying readdir is filesystem-dependent).
+      const sorted = [...r.data].sort((a: any, b: any) =>
+        (a.projectName || a.id).localeCompare(b.projectName || b.id),
+      );
+      // Pull daemonActive in parallel for each workspace so we can color the icon.
+      const items = await Promise.all(sorted.map(async (ws: any) => {
+        const detail = await this.client.getWorkspaceAgents(ws.id);
+        const daemonActive = !!detail.data?.daemonActive;
+        const ctx = daemonActive ? 'forge.workspace.active' : 'forge.workspace.inactive';
+        const item = new WsItem(
+          ws.projectName || ws.id,
+          vscode.TreeItemCollapsibleState.Collapsed,
+          ctx,
+          { workspaceId: ws.id, projectPath: ws.projectPath, daemonActive },
+          `${ws.projectPath || ''}\n${ws.agentCount} smith(s)\nDaemon: ${daemonActive ? 'active' : 'inactive'}`,
+        );
+        item.iconPath = new vscode.ThemeIcon(
+          daemonActive ? 'circle-large-filled' : 'circle-large-outline',
+          new vscode.ThemeColor(daemonActive ? 'charts.green' : 'charts.gray'),
+        );
+        return item;
+      }));
+      return items;
     }
-    if (parent.contextValue === 'forge.workspace' && parent.meta?.workspaceId) {
+    if (parent.contextValue?.startsWith('forge.workspace') && parent.meta?.workspaceId) {
       const r = await this.client.getWorkspaceAgents(parent.meta.workspaceId);
       if (!r.ok || !r.data) return [errorItem(r.error || 'Failed to load')];
       const agents: any[] = r.data.agents || [];
@@ -40,14 +57,23 @@ export class WorkspacesProvider implements vscode.TreeDataProvider<WsItem> {
         const task = s.taskStatus || 'idle';
         const paused = s.paused ? ' ⏸' : '';
         const icon = smithIcon(smith, task, !!s.paused);
+        // Two contextValues — running vs not — so the right-click menu can
+        // hide actions that don't apply (e.g. retry on a non-failed smith).
+        const ctx = `forge.smith.${task}${s.paused ? '.paused' : ''}`;
+        const arg = { workspaceId: parent.meta.workspaceId, agentId: a.id, label: a.label };
         const item = new WsItem(
           `${a.icon || '🤖'} ${a.label}${paused}`,
           vscode.TreeItemCollapsibleState.None,
-          'forge.smith',
-          { workspaceId: parent.meta.workspaceId, agentId: a.id, label: a.label },
+          ctx,
+          arg,
           `smith=${smith} task=${task}`,
         );
         item.iconPath = icon;
+        item.command = {
+          command: 'forge.smithOpenTerminal',
+          title: 'Open Smith Terminal',
+          arguments: [arg],
+        };
         return item;
       });
     }

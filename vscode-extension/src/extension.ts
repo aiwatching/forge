@@ -9,10 +9,22 @@ import { loginCommand, logoutCommand } from './commands/auth';
 import { openTerminalCommand, attachTerminalCommand, openSessionCommand, sendSelectionCommand } from './commands/terminal';
 import { startServerCommand, stopServerCommand, openWebUICommand } from './commands/server';
 import { newTaskCommand } from './commands/task';
+import {
+  openWorkspaceForFolderCommand, openWorkspaceCommand,
+  startDaemonCommand, stopDaemonCommand, restartDaemonCommand,
+} from './commands/workspace';
+import {
+  smithOpenTerminalCommand, smithPauseCommand, smithResumeCommand,
+  smithMarkDoneCommand, smithMarkFailedCommand, smithMarkIdleCommand,
+  smithRetryCommand, smithSendMessageCommand, registerSmithTerminalCleanup,
+} from './commands/smith';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const auth = new Auth(context.secrets);
   const client = new ForgeClient(auth);
+
+  // Smith terminal cache — reuse VSCode terminal pane on repeated click
+  registerSmithTerminalCleanup(context);
 
   // Tree views
   const wsProvider   = new WorkspacesProvider(client);
@@ -53,6 +65,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('forge.sendSelection', () => sendSelectionCommand(client)),
     vscode.commands.registerCommand('forge.newTask',       () => newTaskCommand(client)),
     vscode.commands.registerCommand('forge.refresh',       () => { refreshAll(); status.update(); }),
+
+    // Workspace bootstrap + daemon control
+    vscode.commands.registerCommand('forge.openWorkspaceForFolder', () => openWorkspaceForFolderCommand(client)),
+    vscode.commands.registerCommand('forge.openWorkspace',          () => openWorkspaceCommand(client)),
+    vscode.commands.registerCommand('forge.startDaemon',  (arg) => startDaemonCommand(client, arg?.meta || arg)),
+    vscode.commands.registerCommand('forge.stopDaemon',   (arg) => stopDaemonCommand(client, arg?.meta || arg)),
+    vscode.commands.registerCommand('forge.restartDaemon',(arg) => restartDaemonCommand(client, arg?.meta || arg)),
+
+    // Smith actions (right-click menu + click)
+    vscode.commands.registerCommand('forge.smithOpenTerminal', (arg) => smithOpenTerminalCommand(client, arg?.meta || arg)),
+    vscode.commands.registerCommand('forge.smithPause',        (arg) => smithPauseCommand(client, arg?.meta || arg)),
+    vscode.commands.registerCommand('forge.smithResume',       (arg) => smithResumeCommand(client, arg?.meta || arg)),
+    vscode.commands.registerCommand('forge.smithMarkDone',     (arg) => smithMarkDoneCommand(client, arg?.meta || arg)),
+    vscode.commands.registerCommand('forge.smithMarkFailed',   (arg) => smithMarkFailedCommand(client, arg?.meta || arg)),
+    vscode.commands.registerCommand('forge.smithMarkIdle',     (arg) => smithMarkIdleCommand(client, arg?.meta || arg)),
+    vscode.commands.registerCommand('forge.smithRetry',        (arg) => smithRetryCommand(client, arg?.meta || arg)),
+    vscode.commands.registerCommand('forge.smithSendMessage',  (arg) => smithSendMessageCommand(client, arg?.meta || arg)),
   );
 
   // Auto-start option

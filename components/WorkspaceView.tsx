@@ -34,6 +34,7 @@ interface AgentConfig {
 interface AgentState {
   smithStatus: 'down' | 'starting' | 'active';
   taskStatus: 'idle' | 'running' | 'done' | 'failed';
+  paused?: boolean;
   currentStep?: number;
   tmuxSession?: string;
   artifacts: { type: string; path?: string; summary?: string }[];
@@ -2794,6 +2795,7 @@ interface AgentNodeData {
   workspaceId: string | null;
   onRun: () => void;
   onPause: () => void;
+  onResume: () => void;
   onStop: () => void;
   onRetry: () => void;
   onEdit: () => void;
@@ -3307,7 +3309,7 @@ function WorkerMascot({ taskStatus, smithStatus, seed, accentColor, theme }: { t
 }
 
 function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
-  const { config, state, colorIdx, previewLines, projectPath, workspaceId, onRun, onPause, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory, onShowInbox, onOpenTerminal, onSwitchSession, onSaveAsTemplate, mascotTheme, bellOn = false, onToggleBell, inboxPending = 0, inboxFailed = 0 } = data;
+  const { config, state, colorIdx, previewLines, projectPath, workspaceId, onRun, onPause, onResume, onStop, onRetry, onEdit, onRemove, onMessage, onApprove, onShowLog, onShowMemory, onShowInbox, onOpenTerminal, onSwitchSession, onSaveAsTemplate, mascotTheme, bellOn = false, onToggleBell, inboxPending = 0, inboxFailed = 0 } = data;
   const c = COLORS[colorIdx % COLORS.length];
   const smithStatus = state?.smithStatus || 'down';
   const taskStatus = state?.taskStatus || 'idle';
@@ -3426,9 +3428,19 @@ function AgentFlowNode({ data }: NodeProps<Node<AgentNodeData>>) {
           </>
         )}
         {/* Message button — send instructions to agent */}
-        {smithStatus === 'active' && taskStatus !== 'running' && (
+        {smithStatus === 'active' && taskStatus !== 'running' && !state?.paused && (
           <button onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onMessage(); }}
             className="text-[9px] px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30">💬 Message</button>
+        )}
+        {/* Pause / Resume — icon-only so it doesn't widen the card */}
+        {smithStatus !== 'down' && config.type !== 'input' && (
+          <button onPointerDown={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); state?.paused ? onResume() : onPause(); }}
+            className={`text-[9px] px-1 ${state?.paused ? 'text-orange-400 hover:text-orange-300' : 'text-gray-600 hover:text-orange-400'}`}
+            title={state?.paused
+              ? 'Paused — click to resume bus pickups and watch alerts'
+              : 'Pause — drop new bus messages and watch alerts as failed (in-flight task continues)'}
+          >{state?.paused ? '▶' : '⏸'}</button>
         )}
         <div className="flex-1" />
         <span className="flex items-center">
@@ -3733,6 +3745,7 @@ function WorkspaceViewInner({ projectPath, projectName, onClose }: {
               wsApi(workspaceId!, 'run', { agentId: agent.id });
             },
             onPause: () => wsApi(workspaceId!, 'pause', { agentId: agent.id }),
+            onResume: () => wsApi(workspaceId!, 'resume', { agentId: agent.id }),
             onStop: () => wsApi(workspaceId!, 'stop', { agentId: agent.id }),
             mascotTheme,
             bellOn: bellAgents.has(agent.id),

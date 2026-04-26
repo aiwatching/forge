@@ -99,6 +99,19 @@ export interface AgentState {
   // ─── Task layer (current work) ──────────
   taskStatus: TaskStatus;             // idle/running/done/failed
 
+  // Transient runtime flag — paused smith ignores bus pickups, drops new
+  // incoming messages as failed, and suppresses watch alerts. Never persisted;
+  // any daemon stop/start or process restart clears it.
+  paused?: boolean;
+
+  // Transient: timestamp of the most recent taskStatus *change* (idempotent
+  // re-emits of the same value don't update this). Used by agent_status watches
+  // to detect transitions without polling. Reset to Date.now() on load.
+  taskStatusChangedAt?: number;
+  // Transient: previous taskStatus value, used by orchestrator's event listener
+  // to dedup idempotent emits. Reset to current taskStatus on load.
+  lastTaskStatus?: TaskStatus;
+
   // ─── Execution details ──────────────────
   currentStep?: number;
   history: TaskLogEntry[];

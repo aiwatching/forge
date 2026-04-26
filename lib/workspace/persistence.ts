@@ -53,6 +53,9 @@ export async function saveWorkspace(state: WorkspaceState): Promise<void> {
         ...s,
         history: [],
         logFile: agentLogFile(state.id, id),
+        paused: undefined,                // transient — never persisted
+        taskStatusChangedAt: undefined,   // transient
+        lastTaskStatus: undefined,        // transient
       }])
     ),
     updatedAt: Date.now(),
@@ -90,6 +93,9 @@ export function saveWorkspaceSync(state: WorkspaceState): void {
         ...s,
         history: [],
         logFile: agentLogFile(state.id, id),
+        paused: undefined,                // transient — never persisted
+        taskStatusChangedAt: undefined,   // transient
+        lastTaskStatus: undefined,        // transient
       }])
     ),
     updatedAt: Date.now(),
@@ -160,6 +166,16 @@ export function loadWorkspace(workspaceId: string): WorkspaceState | null {
       if (agentState.taskStatus === 'running') {
         agentState.taskStatus = 'idle';
       }
+
+      // Defensive: paused is transient. Force false on load in case any
+      // older state.json still has it persisted.
+      agentState.paused = false;
+
+      // Init the agent_status watch fields. Setting changedAt to now() means
+      // any transitions that happen after load advance the timestamp; watchers
+      // record this baseline at their first tick and won't spuriously fire.
+      agentState.taskStatusChangedAt = Date.now();
+      agentState.lastTaskStatus = agentState.taskStatus;
     }
 
     // Migrate Input nodes: content → entries

@@ -39,7 +39,7 @@ import {
   loadMemory, saveMemory, createMemory, formatMemoryForPrompt,
   addObservation, addSessionSummary, parseStepToObservations, buildSessionSummary,
 } from './smith-memory';
-import { getFixedSession } from '../project-sessions';
+import { getFixedSession, setFixedSession } from '../project-sessions';
 
 // ─── Workspace Topology Cache ────────────────────────────
 
@@ -116,12 +116,29 @@ export class WorkspaceOrchestrator extends EventEmitter {
       if (event.type === 'log' && event.agentId && event.entry) {
         appendAgentLog(this.workspaceId, event.agentId, event.entry).catch(() => {});
       }
+      // Stamp taskStatus transitions. Idempotent re-emits of the same value
+      // don't bump the timestamp — agent_status watches rely on this to detect
+      // real transitions without polling.
+      if (event.type === 'task_status' && event.agentId && event.taskStatus) {
+        const entry = this.agents.get(event.agentId);
+        if (entry && entry.state.lastTaskStatus !== event.taskStatus) {
+          const prev = entry.state.lastTaskStatus;
+          entry.state.lastTaskStatus = event.taskStatus;
+          entry.state.taskStatusChangedAt = Date.now();
+          console.log(`[task_status] ${entry.config.label}: ${prev || '(none)'} → ${event.taskStatus} @ ${entry.state.taskStatusChangedAt}`);
+        }
+      }
     });
     // Handle watch events
     this.watchManager.on('watch_alert', (event) => {
+      const alertEntry = this.agents.get(event.agentId);
+      // Paused source smith — observation continues but no dispatch.
+      if (alertEntry?.state.paused) {
+        console.log(`[watch] ${alertEntry.config.label}: paused — alert dropped`);
+        return;
+      }
       this.emit('event', event);
       // Push alert to agent history so Log panel shows it
-      const alertEntry = this.agents.get(event.agentId);
       if (alertEntry && event.entry) {
         alertEntry.state.history.push(event.entry);
         this.emit('event', { type: 'log', agentId: event.agentId, entry: event.entry } as any);
@@ -264,6 +281,21 @@ export class WorkspaceOrchestrator extends EventEmitter {
       if (entry.config.primary) return entry;
     }
     return null;
+  }
+
+  /** Resolve the primary smith's fixed session for this project. If none is bound
+   *  yet, auto-bind to the latest existing claude session so the terminal picker
+   *  can offer "Current Session" instead of forcing the user into a fresh shell. */
+  resolvePrimaryFixedSession(): string | null {
+    const existing = getFixedSession(this.projectPath);
+    if (existing) return existing;
+    const primary = this.getPrimaryAgent();
+    if (!primary) return null;
+    const latest = this.getLatestSessionId(primary.config.workDir);
+    if (!latest) return null;
+    setFixedSession(this.projectPath, latest);
+    console.log(`[workspace] primary auto-bound to existing session ${latest} for ${this.projectPath}`);
+    return latest;
   }
 
   addAgent(config: WorkspaceAgentConfig): void {
@@ -440,7 +472,7 @@ export class WorkspaceOrchestrator extends EventEmitter {
       const workerState = entry.worker?.getState();
       // Merge: worker state for task/smith, entry.state for mode (orchestrator controls mode)
       result[id] = workerState
-        ? { ...workerState, taskStatus: entry.state.taskStatus, tmuxSession: entry.state.tmuxSession, currentMessageId: entry.state.currentMessageId }
+        ? { ...workerState, taskStatus: entry.state.taskStatus, tmuxSession: entry.state.tmuxSession, currentMessageId: entry.state.currentMessageId, paused: entry.state.paused }
         : entry.state;
     }
     return result;
@@ -930,6 +962,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
     // Clean up stale state from previous run
     this.bus.markAllRunningAsFailed();
 
+    // Paused is transient — clear on every daemon start so any leftover flag goes away.
+    for (const entry of this.agents.values()) entry.state.paused = false;
+
     // Install forge skills globally (once per daemon start)
     try {
       installForgeSkills(this.projectPath, this.workspaceId, '', Number(process.env.PORT) || 8403);
@@ -1166,6 +1201,9 @@ export class WorkspaceOrchestrator extends EventEmitter {
 
     for (const [id, entry] of this.agents) {
       if (entry.config.type === 'input') continue;
+
+      // 0. Clear transient paused flag — daemon stop should always reset it.
+      entry.state.paused = false;
 
       // 1. Stop message loop
       this.stopMessageLoop(id);
@@ -1633,16 +1671,40 @@ export class WorkspaceOrchestrator extends EventEmitter {
     return this.daemonActive;
   }
 
-  /** Pause a running agent */
+  /** Pause a smith — drop pending/incoming bus messages as failed, suppress watch alerts.
+   *  In-flight task continues. Resume does NOT replay dropped messages.
+   *  Transient: any daemon stop/start or process restart clears the flag. */
   pauseAgent(agentId: string): void {
     const entry = this.agents.get(agentId);
-    entry?.worker?.pause();
+    if (!entry) return;
+    entry.state.paused = true;
+    entry.worker?.pause();
+
+    // Drain inbox: anything queued for this smith → failed (visible in inbox).
+    let drained = 0;
+    for (const m of this.bus.getLog()) {
+      if (m.to !== agentId || m.type === 'ack') continue;
+      if (m.status === 'pending' || m.status === 'pending_approval') {
+        m.status = 'failed' as any;
+        drained++;
+        this.emit('event', { type: 'bus_message_status', messageId: m.id, status: 'failed' } as any);
+      }
+    }
+
+    this.emit('event', { type: 'task_status', agentId, taskStatus: entry.state.taskStatus } as any);
+    this.emitAgentsChanged();
+    console.log(`[workspace] ${entry.config.label}: paused${drained ? ` (${drained} pending message(s) dropped to failed)` : ''}`);
   }
 
-  /** Resume a paused agent */
+  /** Resume a paused smith — clear flag, re-enable bus pickup and watch dispatch. */
   resumeAgent(agentId: string): void {
     const entry = this.agents.get(agentId);
-    entry?.worker?.resume();
+    if (!entry) return;
+    entry.state.paused = false;
+    entry.worker?.resume();
+    this.emit('event', { type: 'task_status', agentId, taskStatus: entry.state.taskStatus } as any);
+    this.emitAgentsChanged();
+    console.log(`[workspace] ${entry.config.label}: resumed`);
   }
 
   /** Stop a running agent */
@@ -2902,6 +2964,14 @@ Silently ingest this context. Do NOT respond — await an actual task.`;
     // ── Store message in agent history ──
     target.state.history.push(logEntry);
 
+    // ── Paused smith → drop as failed; user retries/deletes from inbox. ──
+    if (target.state.paused) {
+      msg.status = 'failed' as any;
+      this.emit('event', { type: 'bus_message_status', messageId: msg.id, status: 'failed' } as any);
+      console.log(`[bus] ${target.config.label}: paused — ${action} dropped to failed`);
+      return;
+    }
+
     // ── requiresApproval → set pending_approval on arrival ──
     if (target.config.requiresApproval) {
       msg.status = 'pending_approval';
@@ -2932,6 +3002,9 @@ Silently ingest this context. Do NOT respond — await an actual task.`;
       // Don't stop loop if smith is down — just skip this tick
       // (loop stays alive so it works when smith comes back)
       if (entry.state.smithStatus !== 'active') return;
+
+      // Paused smiths refuse new bus pickups; loop stays alive for resume.
+      if (entry.state.paused) return;
 
       // Skip if already busy
       if (entry.state.taskStatus === 'running') return;

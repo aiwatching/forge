@@ -21,8 +21,16 @@ interface WatchSnapshot {
   gitHash?: string;
   commandOutput?: string;
   logLineCount?: number;   // last known line count in agent's logs.jsonl
-  agentStatus?: string;    // last known taskStatus of monitored agent
+  /** Per-target last-seen taskStatusChangedAt. Watch fires when the target's
+   *  current taskStatusChangedAt > the value recorded here. Updated only after
+   *  a successful (non-defer) match-check. */
+  agentStatusLastSeen?: Record<string, number>;
   sessionFileSize?: number; // last known file size of session JSONL (bytes)
+}
+
+/** Statuses that mean "still working — defer firing until it settles". */
+function isBusyStatus(s: string | undefined): boolean {
+  return s === 'running' || s === 'starting';
 }
 
 interface WatchChange {
@@ -330,7 +338,7 @@ export class WatchManager extends EventEmitter {
   constructor(
     private workspaceId: string,
     private projectPath: string,
-    private getAgents: () => Map<string, { config: WorkspaceAgentConfig; state: { smithStatus: string; taskStatus: string; mode: string } }>,
+    private getAgents: () => Map<string, { config: WorkspaceAgentConfig; state: { smithStatus: string; taskStatus: string; mode?: string; taskStatusChangedAt?: number } }>,
   ) {
     super();
   }
@@ -346,9 +354,7 @@ export class WatchManager extends EventEmitter {
 
   /** Stop all watch loops */
   stop(): void {
-    for (const [id, timer] of this.timers) {
-      clearInterval(timer);
-    }
+    for (const timer of this.timers.values()) clearInterval(timer);
     this.timers.clear();
     console.log(`[watch] All watch loops stopped`);
   }
@@ -392,7 +398,9 @@ export class WatchManager extends EventEmitter {
     const now = Date.now();
     const prev = this.snapshots.get(agentId) || { lastCheckTime: now };
     const allChanges: WatchChange[] = [];
-    const newSnapshot: WatchSnapshot = { lastCheckTime: now };
+    const newSnapshot: WatchSnapshot = {
+      lastCheckTime: now,
+    };
 
     for (const target of config.watch!.targets) {
       switch (target.type) {
@@ -456,25 +464,58 @@ export class WatchManager extends EventEmitter {
           break;
         }
         case 'agent_status': {
-          // Monitor another agent's task status (running → done/failed)
-          const targetAgentId = target.path; // path = agent ID to monitor
-          if (targetAgentId) {
-            const agents = this.getAgents();
-            const targetEntry = agents.get(targetAgentId);
-            if (targetEntry) {
-              const currentStatus = targetEntry.state.taskStatus;
-              const prevStatus = prev.agentStatus;
-              newSnapshot.agentStatus = currentStatus;
-              if (prevStatus && prevStatus !== currentStatus) {
-                const label = targetEntry.config.label;
-                // Match pattern if specified (e.g., "done" or "failed")
-                const pattern = target.pattern;
-                if (!pattern || currentStatus.match(new RegExp(pattern, 'i'))) {
-                  allChanges.push({ targetType: 'agent_status', description: `Agent ${label} status: ${prevStatus} → ${currentStatus}`, files: [] });
-                }
-              }
-            }
+          // Event-driven detection via taskStatusChangedAt timestamp on the target
+          // agent's state (orchestrator updates it on every real transition).
+          // The watch tick just compares timestamps — no fast-tick polling needed.
+          const targetAgentId = target.path;
+          if (!targetAgentId) break;
+          const agents = this.getAgents();
+          const targetEntry = agents.get(targetAgentId);
+          if (!targetEntry) break;
+
+          const cur = targetEntry.state.taskStatus;
+          const curChangedAt = targetEntry.state.taskStatusChangedAt || 0;
+          const lastSeenMap = newSnapshot.agentStatusLastSeen || (newSnapshot.agentStatusLastSeen = { ...(prev.agentStatusLastSeen || {}) });
+
+          // Initial run: record current changedAt so we don't fire on the
+          // existing state. Future transitions will advance the timestamp.
+          if (initialRun) {
+            lastSeenMap[targetAgentId] = curChangedAt;
+            console.log(`[watch] ${config.label}: agent_status baseline — ${targetEntry.config.label}=${cur} @ ${curChangedAt}`);
+            break;
           }
+
+          const prevSeen = lastSeenMap[targetAgentId] || 0;
+
+          // No transition since last check.
+          if (curChangedAt <= prevSeen) {
+            console.log(`[watch] ${config.label}: ${targetEntry.config.label} no transition since last check (curAt=${curChangedAt})`);
+            break;
+          }
+
+          // Target is mid-transition (still busy) — defer; do NOT update lastSeen
+          // so the next interval-tick can still see this as a pending transition.
+          if (isBusyStatus(cur)) {
+            console.log(`[watch] ${config.label}: ${targetEntry.config.label} = ${cur} (busy) → defer`);
+            break;
+          }
+
+          // Settled state. Match pattern against final state only.
+          const pattern = target.pattern;
+          const matched = pattern ? !!cur.match(new RegExp(pattern, 'i')) : true;
+          if (matched) {
+            console.log(`[watch] ${config.label}: ${targetEntry.config.label} → ${cur} (changed since ${prevSeen}) pattern='${pattern || '(any)'}' → FIRE`);
+            allChanges.push({
+              targetType: 'agent_status',
+              description: `Agent ${targetEntry.config.label} settled to ${cur}${pattern ? ` (matched '${pattern}')` : ''}`,
+              files: [],
+            });
+          } else {
+            console.log(`[watch] ${config.label}: ${targetEntry.config.label} → ${cur} pattern='${pattern}' → no match`);
+          }
+          // Mark this transition as seen, so we don't fire again until the next
+          // real transition advances the timestamp.
+          lastSeenMap[targetAgentId] = curChangedAt;
           break;
         }
       }

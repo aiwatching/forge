@@ -148,6 +148,11 @@ export default function Dashboard({ user }: { user: any }) {
   }, []);
   useEffect(() => { refreshDisplayName(); }, [refreshDisplayName]);
 
+  // Reflect the current user's name in the browser tab title
+  useEffect(() => {
+    document.title = displayName && displayName !== 'Forge' ? `Forge — ${displayName}` : 'Forge';
+  }, [displayName]);
+
   // Listen for open-terminal events from ProjectManager
   useEffect(() => {
     const handler = (e: Event) => {
@@ -278,7 +283,9 @@ export default function Dashboard({ user }: { user: any }) {
       <header className="h-12 border-b-2 border-[var(--border)] flex items-center justify-between px-4 shrink-0 bg-[var(--bg-secondary)]">
         <div className="flex items-center gap-4">
           <img src="/icon.png" alt="Forge" width={28} height={28} className="rounded" />
-          <span className="text-sm font-bold text-[var(--accent)]">Forge</span>
+          <span className="text-sm font-bold text-[var(--accent)]">
+            Forge{displayName && displayName !== 'Forge' ? ` · ${displayName}` : ''}
+          </span>
           {versionInfo && (
             <span className="flex items-center gap-1.5">
               <span className="text-[10px] text-[var(--text-secondary)]">v{versionInfo.current}</span>

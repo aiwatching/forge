@@ -312,10 +312,9 @@ async function handleAgentsPost(id: string, body: any, res: ServerResponse): Pro
         if (body.resolveOnly) {
           let currentSessionId: string | null = null;
           if (agentConfig.primary) {
-            try {
-              const { getFixedSession } = await import('./project-sessions.js');
-              currentSessionId = getFixedSession(orch.projectPath) || null;
-            } catch {}
+            // Auto-bind to project's latest existing session if no fixedSession yet,
+            // so the picker can offer "Current Session" on a fresh workspace.
+            currentSessionId = orch.resolvePrimaryFixedSession();
           } else {
             currentSessionId = agentConfig.boundSessionId || null;
           }
@@ -744,11 +743,8 @@ async function handleSmith(id: string, body: any, res: ServerResponse): Promise<
       // Get the primary agent's tmux session + project-level fixed session
       const primary = orch.getPrimaryAgent();
       if (!primary) return json(res, { ok: false, error: 'No primary agent configured' });
-      let fixedSessionId: string | null = null;
-      try {
-        const { getFixedSession } = await import('./project-sessions.js');
-        fixedSessionId = getFixedSession(orch.projectPath) || null;
-      } catch {}
+      // Auto-bind to project's latest existing session if no fixedSession yet.
+      const fixedSessionId = orch.resolvePrimaryFixedSession();
       return json(res, {
         ok: true,
         agentId: primary.config.id,

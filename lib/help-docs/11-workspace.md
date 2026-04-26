@@ -414,7 +414,7 @@ Each smith can display an animated companion character next to its node.
 | **Stop Daemon** | Stop all smiths, kill workers. Preserves user's terminal conversation context (no `/clear` is sent). Tmux sessions attached to by a user are kept alive. |
 | **Run All** | Trigger all runnable agents once |
 | **Run** | Trigger specific agent |
-| **Pause/Resume** | Pause/resume message consumption for one agent |
+| **Pause/Resume** | Pause stops new bus pickups, drops queued + incoming messages to `failed`, and suppresses watch-alert dispatch. In-flight task continues. Resume re-enables. The pause flag is transient — daemon stop/start or process restart clears it. UI: ⏸ / ▶ icon on the smith card. |
 | **Mark Done/Failed/Idle** | Manually set task status |
 | **Retry** | Re-run a failed agent from checkpoint |
 | **Open Terminal** | Enter manual mode with tmux session |
@@ -592,6 +592,7 @@ Use this exact JSON structure when calling `POST /api/workspace/<id>/agents` wit
 
 - `action` values: `log` | `analyze` | `approve` | `send_message`
 - `sendTo` is required only when `action: "send_message"`
+- `agent_status` target is event-driven — orchestrator stamps a transition timestamp on every real `taskStatus` change (idempotent re-emits are deduped). The watch tick compares timestamps and only fires when the target has settled to a non-busy state (not `running`/`starting`) and matches `pattern`. Does not depend on polling, so sub-tick task transitions are caught reliably. Pattern matches the **final** state only — intermediate states during the interval window don't affect matching.
 
 ## Complete Recipes
 

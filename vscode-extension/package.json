@@ -2,7 +2,7 @@
   "name": "forge-vscode",
   "displayName": "Forge",
   "description": "Native VSCode integration for Forge — workspace, smiths, and terminals.",
-  "version": "0.1.0",
+  "version": "0.2.6",
   "publisher": "aion0",
   "engines": {
     "vscode": "^1.80.0"
@@ -25,7 +25,8 @@
       "forge": [
         { "id": "forge.workspaces", "name": "Workspaces" },
         { "id": "forge.terminals",  "name": "Terminals" },
-        { "id": "forge.tasks",      "name": "Tasks" }
+        { "id": "forge.pipelines",  "name": "Pipelines" },
+        { "id": "forge.docs",       "name": "Docs" }
       ]
     },
     "commands": [
@@ -55,7 +56,23 @@
       { "command": "forge.smithMarkFailed",  "title": "Mark Failed",                        "category": "Forge" },
       { "command": "forge.smithMarkIdle",    "title": "Mark Idle",                          "category": "Forge" },
       { "command": "forge.smithRetry",       "title": "Retry",                              "category": "Forge", "icon": "$(refresh)" },
-      { "command": "forge.smithSendMessage", "title": "Send Message",                       "category": "Forge", "icon": "$(comment)" }
+      { "command": "forge.smithSendMessage", "title": "Send Message",                       "category": "Forge", "icon": "$(comment)" },
+
+      { "command": "forge.openDoc",          "title": "Forge: Open Doc",                    "category": "Forge", "icon": "$(book)" },
+      { "command": "forge.openDocsTerminal",  "title": "Forge: Open Docs Terminal",          "category": "Forge", "icon": "$(terminal)" },
+
+      { "command": "forge.switchConnection", "title": "Forge: Switch Connection",            "category": "Forge", "icon": "$(plug)" },
+      { "command": "forge.addConnection",    "title": "Forge: Add Connection…",              "category": "Forge" },
+      { "command": "forge.removeConnection", "title": "Forge: Remove Connection…",           "category": "Forge" },
+      { "command": "forge.editConnections",  "title": "Forge: Edit Connections (settings.json)","category": "Forge" },
+
+      { "command": "forge.addPipeline",      "title": "Add Pipeline…",                       "category": "Forge", "icon": "$(add)" },
+      { "command": "forge.triggerPipeline",  "title": "Trigger Pipeline",                    "category": "Forge", "icon": "$(play)" },
+      { "command": "forge.togglePipeline",   "title": "Enable / Disable Pipeline",           "category": "Forge", "icon": "$(circle-slash)" },
+      { "command": "forge.removePipeline",   "title": "Remove Pipeline",                     "category": "Forge", "icon": "$(trash)" },
+      { "command": "forge.showPipelineNodeError","title": "Show Node Error",                  "category": "Forge" },
+      { "command": "forge.showPipelineNodeResult","title": "Show Node Result",                 "category": "Forge", "icon": "$(eye)" },
+      { "command": "forge.openItemInWebUI",   "title": "Open in Forge Web UI",                "category": "Forge", "icon": "$(globe)" }
     ],
     "menus": {
       "view/title": [
@@ -63,7 +80,9 @@
         { "command": "forge.refresh",                "when": "view == forge.workspaces", "group": "navigation@2" },
         { "command": "forge.openSession",  "when": "view == forge.terminals",  "group": "navigation@1" },
         { "command": "forge.refresh",      "when": "view == forge.terminals",  "group": "navigation@2" },
-        { "command": "forge.refresh",      "when": "view == forge.tasks",      "group": "navigation" }
+        { "command": "forge.addPipeline",  "when": "view == forge.pipelines",  "group": "navigation@1" },
+        { "command": "forge.refresh",      "when": "view == forge.pipelines",  "group": "navigation@2" },
+        { "command": "forge.refresh",      "when": "view == forge.docs",       "group": "navigation" }
       ],
       "view/item/context": [
         { "command": "forge.attachTerminal","when": "view == forge.terminals && viewItem == forge.terminal", "group": "inline" },
@@ -79,7 +98,21 @@
         { "command": "forge.smithRetry",       "when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\.failed/",       "group": "smith@2" },
         { "command": "forge.smithMarkDone",    "when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\.running/",      "group": "smith@3" },
         { "command": "forge.smithMarkFailed",  "when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\.running/",      "group": "smith@4" },
-        { "command": "forge.smithMarkIdle",    "when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\.running/",      "group": "smith@5" }
+        { "command": "forge.smithMarkIdle",    "when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\.running/",      "group": "smith@5" },
+
+        { "command": "forge.openDocsTerminal", "when": "view == forge.docs && viewItem == forge.docRoot", "group": "inline" },
+        { "command": "forge.openDocsTerminal", "when": "view == forge.docs && viewItem == forge.docDir",  "group": "inline" },
+
+        { "command": "forge.addPipeline",      "when": "view == forge.pipelines && viewItem == forge.pipelineProject", "group": "inline" },
+        { "command": "forge.triggerPipeline",  "when": "view == forge.pipelines && viewItem =~ /forge\\.pipelineBinding/", "group": "inline@1" },
+        { "command": "forge.togglePipeline",   "when": "view == forge.pipelines && viewItem =~ /forge\\.pipelineBinding/", "group": "pipeline@1" },
+        { "command": "forge.removePipeline",   "when": "view == forge.pipelines && viewItem =~ /forge\\.pipelineBinding/", "group": "pipeline@2" },
+
+        { "command": "forge.openItemInWebUI",  "when": "view == forge.workspaces && viewItem =~ /forge\\.workspace\\./",  "group": "inline@9" },
+        { "command": "forge.openItemInWebUI",  "when": "view == forge.workspaces && viewItem =~ /forge\\.smith\\..+/",   "group": "inline@9" },
+        { "command": "forge.openItemInWebUI",  "when": "view == forge.pipelines && viewItem == forge.pipelineProject",   "group": "inline@9" },
+        { "command": "forge.openItemInWebUI",  "when": "view == forge.pipelines && viewItem == forge.pipelineRun",       "group": "inline@9" },
+        { "command": "forge.openItemInWebUI",  "when": "view == forge.docs && viewItem == forge.docRoot",                "group": "inline@9" }
       ],
       "editor/context": [
         { "command": "forge.sendSelection","when": "editorHasSelection", "group": "forge" }
@@ -88,15 +121,34 @@
     "configuration": {
       "title": "Forge",
       "properties": {
+        "forge.connections": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Saved Forge connections. If empty, the extension synthesizes a single \"Local\" entry from `forge.serverUrl` / `forge.terminalUrl` (backwards compat). Use `Forge: Switch Connection` (status bar or command palette) to swap.",
+          "items": {
+            "type": "object",
+            "required": ["name", "serverUrl", "terminalUrl"],
+            "properties": {
+              "name": { "type": "string", "description": "Display name (e.g. Local, Office, Cloud)" },
+              "serverUrl": { "type": "string", "description": "Forge HTTP URL (http://host:port)" },
+              "terminalUrl": { "type": "string", "description": "Forge terminal WebSocket URL (ws://host:port)" }
+            }
+          }
+        },
+        "forge.activeConnection": {
+          "type": "string",
+          "default": "",
+          "description": "Name of the currently active connection (one of forge.connections[].name)."
+        },
         "forge.serverUrl": {
           "type": "string",
           "default": "http://localhost:8403",
-          "description": "Base URL of the Forge HTTP server."
+          "description": "[Legacy] Single Forge HTTP server URL — used when forge.connections is empty."
         },
         "forge.terminalUrl": {
           "type": "string",
           "default": "ws://localhost:8404",
-          "description": "WebSocket URL of the Forge terminal server."
+          "description": "[Legacy] Single Forge terminal WebSocket URL — used when forge.connections is empty."
         },
         "forge.autoStart": {
           "type": "boolean",
@@ -112,6 +164,12 @@
           "type": "number",
           "default": 5,
           "description": "Tree-view refresh interval in seconds."
+        },
+        "forge.docs.transport": {
+          "type": "string",
+          "enum": ["auto", "local", "http"],
+          "default": "auto",
+          "markdownDescription": "How to read/write doc files.\n- `auto` (default): use local file paths when forge is on localhost, fall back to HTTP otherwise.\n- `local`: always use VSCode's native filesystem (only works when forge is on the same machine).\n- `http`: always go through forge's `/api/docs` endpoint (works for remote forge over a tunnel)."
         }
       }
     }

@@ -16,22 +16,24 @@ export class StatusBar {
 
   async update(): Promise<void> {
     const state = await this.detect();
+    const connName = this.client.activeName;
     switch (state) {
       case 'connected':
-        this.item.text = '$(zap) Forge';
-        this.item.tooltip = 'Forge connected — click to open Web UI';
+        this.item.text = `$(zap) Forge: ${connName}`;
+        this.item.tooltip = `Forge connected (${connName}) — click to switch connection`;
+        this.item.command = 'forge.switchConnection';
         this.item.backgroundColor = undefined;
         break;
       case 'auth':
-        this.item.text = '$(key) Forge';
-        this.item.tooltip = 'Forge: login required';
+        this.item.text = `$(key) Forge: ${connName}`;
+        this.item.tooltip = `Forge (${connName}): login required`;
         this.item.command = 'forge.login';
         this.item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
         break;
       case 'offline':
-        this.item.text = '$(circle-slash) Forge';
-        this.item.tooltip = 'Forge server unreachable — click to start';
-        this.item.command = 'forge.startServer';
+        this.item.text = `$(circle-slash) Forge: ${connName}`;
+        this.item.tooltip = `Forge (${connName}) unreachable — click to switch connection`;
+        this.item.command = 'forge.switchConnection';
         this.item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
         break;
     }
@@ -40,7 +42,7 @@ export class StatusBar {
   private async detect(): Promise<Status> {
     const reachable = await this.client.ping();
     if (!reachable) return 'offline';
-    const token = await this.auth.getToken();
+    const token = await this.auth.getToken(this.client.activeName);
     if (!token) return 'auth';
     // Quick auth probe: fetch any authed endpoint
     const r = await this.client.listProjects();

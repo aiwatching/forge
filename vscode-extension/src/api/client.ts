@@ -1,5 +1,5 @@
-import * as vscode from 'vscode';
 import { Auth } from '../auth/auth';
+import { ConnectionManager } from '../connection/manager';
 
 export interface ApiResponse<T = any> {
   ok: boolean;
@@ -9,17 +9,16 @@ export interface ApiResponse<T = any> {
 }
 
 export class ForgeClient {
-  constructor(private auth: Auth) {}
+  constructor(private auth: Auth, private conn: ConnectionManager) {}
 
-  private get baseUrl(): string {
-    return vscode.workspace.getConfiguration('forge').get<string>('serverUrl', 'http://localhost:8403');
-  }
+  private get baseUrl(): string { return this.conn.active().serverUrl; }
+  get terminalUrl(): string     { return this.conn.active().terminalUrl; }
+  /** Public read of the active connection's HTTP base URL. */
+  get baseUrlPublic(): string   { return this.baseUrl; }
+  /** Active connection's display name — used as the SecretStorage token key. */
+  get activeName(): string      { return this.conn.active().name; }
 
-  get terminalUrl(): string {
-    return vscode.workspace.getConfiguration('forge').get<string>('terminalUrl', 'ws://localhost:8404');
-  }
-
-  /** Verify password and store the resulting token. Returns ok/false. */
+  /** Verify password and store the resulting token under the active connection. */
   async login(password: string): Promise<{ ok: boolean; error?: string }> {
     try {
       const res = await fetch(`${this.baseUrl}/api/auth/verify`, {
@@ -31,7 +30,7 @@ export class ForgeClient {
       if (!res.ok || !data.ok || !data.token) {
         return { ok: false, error: data.error || `HTTP ${res.status}` };
       }
-      await this.auth.setToken(data.token);
+      await this.auth.setToken(this.activeName, data.token);
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: e?.message || 'Network error' };
@@ -39,7 +38,12 @@ export class ForgeClient {
   }
 
   async logout(): Promise<void> {
-    await this.auth.clearToken();
+    await this.auth.clearToken(this.activeName);
+  }
+
+  /** Token for the active connection (used by raw fetch helpers). */
+  async getToken(): Promise<string | undefined> {
+    return this.auth.getToken(this.activeName);
   }
 
   /** True if forge is reachable on the current serverUrl, regardless of auth. */
@@ -53,7 +57,7 @@ export class ForgeClient {
   }
 
   async request<T = any>(path: string, init: RequestInit = {}): Promise<ApiResponse<T>> {
-    const token = await this.auth.getToken();
+    const token = await this.auth.getToken(this.activeName);
     const headers = new Headers(init.headers);
     headers.set('Content-Type', 'application/json');
     if (token) headers.set('X-Forge-Token', token);
@@ -121,6 +125,88 @@ export class ForgeClient {
       body: JSON.stringify({ action, ...body }),
     });
   }
+
+  /** Smith-scoped action — POST /api/workspace/<id>/smith { action, agentId, ... } */
+  smithAction(workspaceId: string, action: string, agentId: string, body: Record<string, any> = {}) {
+    return this.request<any>(`/api/workspace/${workspaceId}/smith`, {
+      method: 'POST',
+      body: JSON.stringify({ action, agentId, ...body }),
+    });
+  }
+
+  /** List pipeline runs (instances of started workflows), newest first. */
+  listPipelines() { return this.request<any[]>('/api/pipelines'); }
+
+  /** List available workflow templates (the YAMLs you can start as pipelines). */
+  listWorkflows() { return this.request<any[]>('/api/pipelines?type=workflows'); }
+
+  /** Fetch a single pipeline run by id (includes per-node status + errors). */
+  getPipeline(id: string) {
+    return this.request<any>(`/api/pipelines/${id}`);
+  }
+
+  /** Fetch a single task by id. Returns prompt, log, resultSummary, error, gitDiff. */
+  getTask(id: string) {
+    return this.request<any>(`/api/tasks/${id}`);
+  }
+
+  /** Start a pipeline run from a workflow template. */
+  startPipeline(workflow: string, input: Record<string, string> = {}) {
+    return this.request<any>('/api/pipelines', {
+      method: 'POST',
+      body: JSON.stringify({ workflow, input }),
+    });
+  }
+
+  /** Project-pipeline bindings: workflows attached to a specific project, with
+   *  optional schedule / config. Returns { bindings, runs, workflows }. */
+  getProjectPipelines(projectPath: string) {
+    return this.request<{ bindings: any[]; runs: any[]; workflows: any[] }>(
+      `/api/project-pipelines?project=${encodeURIComponent(projectPath)}`,
+    );
+  }
+
+  /** Trigger a binding to run now. */
+  triggerProjectPipeline(projectPath: string, projectName: string, workflowName: string, input: Record<string, string> = {}) {
+    return this.request<any>('/api/project-pipelines', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'trigger', projectPath, projectName, workflowName, input }),
+    });
+  }
+
+  /** Add a workflow as a pipeline binding to a project. */
+  addProjectPipeline(projectPath: string, projectName: string, workflowName: string, config: Record<string, any> = {}) {
+    return this.request<any>('/api/project-pipelines', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'add', projectPath, projectName, workflowName, config }),
+    });
+  }
+
+  /** Enable/disable a binding without removing it. */
+  updateProjectPipeline(projectPath: string, workflowName: string, opts: { enabled?: boolean; config?: Record<string, any> }) {
+    return this.request<any>('/api/project-pipelines', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'update', projectPath, workflowName, ...opts }),
+    });
+  }
+
+  /** Remove a binding from a project. */
+  removeProjectPipeline(projectPath: string, workflowName: string) {
+    return this.request<any>('/api/project-pipelines', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'remove', projectPath, workflowName }),
+    });
+  }
+
+  /** List forge's user-configured doc roots and their file trees. */
+  listDocs() {
+    return this.request<{
+      roots: string[];
+      rootPaths: string[];
+      tree: any[];
+    }>('/api/docs');
+  }
+
 
   createTask(projectName: string, prompt: string, opts?: { newSession?: boolean }) {
     return this.request<any>('/api/tasks', {

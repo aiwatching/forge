@@ -1,0 +1,105 @@
+{
+  "name": "forge-vscode",
+  "displayName": "Forge",
+  "description": "Native VSCode integration for Forge — workspace, smiths, and terminals.",
+  "version": "0.1.0",
+  "publisher": "aion0",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": ["Other"],
+  "keywords": ["forge", "ai", "claude", "agent", "terminal"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "forge",
+          "title": "Forge",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "forge": [
+        { "id": "forge.workspaces", "name": "Workspaces" },
+        { "id": "forge.terminals",  "name": "Terminals" },
+        { "id": "forge.tasks",      "name": "Tasks" }
+      ]
+    },
+    "commands": [
+      { "command": "forge.login",         "title": "Forge: Login",                         "category": "Forge" },
+      { "command": "forge.logout",        "title": "Forge: Logout",                        "category": "Forge" },
+      { "command": "forge.startServer",   "title": "Forge: Start Server",                  "category": "Forge" },
+      { "command": "forge.stopServer",    "title": "Forge: Stop Server",                   "category": "Forge" },
+      { "command": "forge.openWebUI",     "title": "Forge: Open Web UI",                   "category": "Forge" },
+      { "command": "forge.openTerminal",  "title": "Forge: Open Terminal",                 "category": "Forge" },
+      { "command": "forge.sendSelection", "title": "Forge: Send Selection to Terminal",    "category": "Forge" },
+      { "command": "forge.newTask",       "title": "Forge: New Task",                      "category": "Forge" },
+      { "command": "forge.refresh",       "title": "Forge: Refresh",                       "category": "Forge", "icon": "$(refresh)" },
+      { "command": "forge.attachTerminal","title": "Forge: Attach to Terminal",            "category": "Forge" },
+      { "command": "forge.openSession",   "title": "Forge: Open Session",                  "category": "Forge", "icon": "$(add)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "forge.refresh",      "when": "view == forge.workspaces", "group": "navigation" },
+        { "command": "forge.openSession",  "when": "view == forge.terminals",  "group": "navigation@1" },
+        { "command": "forge.refresh",      "when": "view == forge.terminals",  "group": "navigation@2" },
+        { "command": "forge.refresh",      "when": "view == forge.tasks",      "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "forge.attachTerminal","when": "view == forge.terminals && viewItem == forge.terminal", "group": "inline" }
+      ],
+      "editor/context": [
+        { "command": "forge.sendSelection","when": "editorHasSelection", "group": "forge" }
+      ]
+    },
+    "configuration": {
+      "title": "Forge",
+      "properties": {
+        "forge.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:8403",
+          "description": "Base URL of the Forge HTTP server."
+        },
+        "forge.terminalUrl": {
+          "type": "string",
+          "default": "ws://localhost:8404",
+          "description": "WebSocket URL of the Forge terminal server."
+        },
+        "forge.autoStart": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run `forge server start` on extension activation if no Forge server is reachable."
+        },
+        "forge.notifications.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show VSCode notifications for smith bell events."
+        },
+        "forge.refreshInterval": {
+          "type": "number",
+          "default": 5,
+          "description": "Tree-view refresh interval in seconds."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --out forge-vscode.vsix"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "@types/ws": "^8.5.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.4.0"
+  }
+}

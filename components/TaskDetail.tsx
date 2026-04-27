@@ -23,6 +23,8 @@ export default function TaskDetail({
 }) {
   const [liveLog, setLiveLog] = useState<TaskLogEntry[]>(task.log);
   const [liveStatus, setLiveStatus] = useState(task.status);
+  const [fullTask, setFullTask] = useState<Task | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [tab, setTab] = useState<'log' | 'diff' | 'result'>('log');
   const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set());
   const [followUpText, setFollowUpText] = useState('');
@@ -31,6 +33,24 @@ export default function TaskDetail({
   const [showFullDiff, setShowFullDiff] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
   const logScrollRef = useRef<HTMLDivElement>(null);
+
+  // Lazy-fetch the full task body — the task list now ships only metadata
+  // (no log / git_diff / full result_summary) to keep the list response small.
+  useEffect(() => {
+    let cancelled = false;
+    if (task.status === 'running' || task.status === 'queued') return;  // SSE will populate
+    if (task.log && task.log.length > 0) return;                         // already have it
+    setDetailLoading(true);
+    fetch(`/api/tasks/${task.id}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((full: Task | null) => {
+        if (cancelled || !full) return;
+        setFullTask(full);
+        setLiveLog(full.log || []);
+      })
+      .finally(() => { if (!cancelled) setDetailLoading(false); });
+    return () => { cancelled = true; };
+  }, [task.id, task.status, task.log]);
 
   // SSE stream for running tasks
   useEffect(() => {
@@ -157,6 +177,11 @@ export default function TaskDetail({
       <div ref={logScrollRef} className="flex-1 overflow-y-auto p-4 text-sm">
         {tab === 'log' && (
           <div className="space-y-2">
+            {detailLoading && displayLog.length === 0 && (
+              <div className="text-[var(--text-secondary)] text-xs py-2">
+                Loading log{task.logSize ? ` (${(task.logSize / 1024).toFixed(0)} KB)` : ''}…
+              </div>
+            )}
             {hiddenCount > 0 && (
               <div className="flex items-center justify-between gap-2 py-1.5 px-2 text-[10px] text-[var(--text-secondary)] bg-[var(--bg-tertiary)] rounded border border-[var(--border)]">
                 <span>{hiddenCount} earlier {hiddenCount === 1 ? 'entry' : 'entries'} hidden</span>
@@ -193,22 +218,22 @@ export default function TaskDetail({
 
         {tab === 'result' && (
           <div className="prose-container">
-            {task.resultSummary ? (
-              <MarkdownContent content={task.resultSummary} />
+            {(fullTask?.resultSummary ?? task.resultSummary) ? (
+              <MarkdownContent content={(fullTask?.resultSummary ?? task.resultSummary)!} />
             ) : task.error ? (
               <div className="p-3 bg-red-900/10 border border-red-800/20 rounded">
                 <pre className="whitespace-pre-wrap break-words text-[var(--red)] text-xs font-mono">{task.error}</pre>
               </div>
             ) : (
               <p className="text-[var(--text-secondary)] text-xs">
-                {liveStatus === 'running' || liveStatus === 'queued' ? 'Task is still running...' : 'No result'}
+                {liveStatus === 'running' || liveStatus === 'queued' ? 'Task is still running...' : detailLoading ? 'Loading…' : 'No result'}
               </p>
             )}
           </div>
         )}
 
         {tab === 'diff' && (
-          <DiffView gitDiff={task.gitDiff} status={liveStatus} showAll={showFullDiff} onShowAll={() => setShowFullDiff(true)} />
+          <DiffView gitDiff={fullTask?.gitDiff ?? task.gitDiff} status={liveStatus} showAll={showFullDiff} onShowAll={() => setShowFullDiff(true)} />
         )}
       </div>
 

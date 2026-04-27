@@ -119,6 +119,56 @@ export function listTasks(status?: TaskStatus): Task[] {
   return rows.map(rowToTask);
 }
 
+// Slim list — omits the heavy fields (log / git_diff / result_summary) so the
+// task list view doesn't pull megabytes of JSON for tasks with long sessions.
+// Callers that need the full body should fetch /api/tasks/[id] on demand.
+export function listTasksLite(status?: TaskStatus): Task[] {
+  const SLIM_COLS = `
+    id, project_name, project_path, prompt, mode, status, priority,
+    conversation_id, watch_config, git_branch, cost_usd, error, agent,
+    created_at, started_at, completed_at, scheduled_at,
+    length(log) AS log_size,
+    CASE WHEN result_summary IS NULL THEN NULL ELSE substr(result_summary, 1, 1024) END AS result_summary,
+    CASE WHEN git_diff IS NULL THEN 0 ELSE 1 END AS has_git_diff
+  `;
+  let query = `SELECT ${SLIM_COLS} FROM tasks`;
+  const params: string[] = [];
+  if (status) {
+    query += ' WHERE status = ?';
+    params.push(status);
+  }
+  query += ' ORDER BY created_at DESC';
+  const rows = db().prepare(query).all(...params) as any[];
+  return rows.map(r => rowToLiteTask(r));
+}
+
+function rowToLiteTask(row: any): Task {
+  return {
+    id: row.id,
+    projectName: row.project_name,
+    projectPath: row.project_path,
+    prompt: row.prompt,
+    mode: row.mode || 'prompt',
+    status: row.status,
+    priority: row.priority,
+    conversationId: row.conversation_id || undefined,
+    watchConfig: row.watch_config ? JSON.parse(row.watch_config) : undefined,
+    log: [],                                              // slim — fetch detail separately
+    resultSummary: row.result_summary || undefined,      // first 1KB only
+    gitDiff: undefined,                                   // not loaded
+    gitBranch: row.git_branch || undefined,
+    costUSD: row.cost_usd || undefined,
+    error: row.error || undefined,
+    createdAt: toIsoUTC(row.created_at) ?? row.created_at,
+    startedAt: toIsoUTC(row.started_at) ?? undefined,
+    completedAt: toIsoUTC(row.completed_at) ?? undefined,
+    scheduledAt: toIsoUTC(row.scheduled_at) ?? undefined,
+    agent: row.agent || undefined,
+    logSize: row.log_size || 0,
+    hasGitDiff: !!row.has_git_diff,
+  } as Task;
+}
+
 export function cancelTask(id: string): boolean {
   const task = getTask(id);
   if (!task) return false;

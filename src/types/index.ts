@@ -109,6 +109,10 @@ export interface Task {
   startedAt?: string;
   completedAt?: string;
   scheduledAt?: string;
+  agent?: string;
+  // Lite-list metadata: present in /api/tasks responses, undefined in detail
+  logSize?: number;
+  hasGitDiff?: boolean;
 }
 
 export interface TaskLogEntry {

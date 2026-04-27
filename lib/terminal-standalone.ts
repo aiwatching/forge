@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S npx tsx
 /**
  * Standalone terminal WebSocket server with tmux-backed persistent sessions.
  * Sessions survive browser close and app restart.

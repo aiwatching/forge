@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S npx tsx
 /**
  * Workspace Daemon — standalone process for managing workspace agent orchestrators.
  *

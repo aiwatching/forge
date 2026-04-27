@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S npx tsx
 /**
  * Standalone Telegram bot process.
  * Runs as a single process — no duplication from Next.js workers.

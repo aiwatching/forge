@@ -12,6 +12,9 @@ node_modules/
 *.swp
 *.swo
 tsconfig.tsbuildinfo
+# IDE plugins — published to their own marketplaces, not bundled into the npm package.
+vscode-extension/
+intellij-plugin/
 docs/PRD.md
 docs/UI-DESIGNS.md
 docs/CLOUD-PRICING.md

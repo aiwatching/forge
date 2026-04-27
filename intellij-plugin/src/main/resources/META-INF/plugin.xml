@@ -1,19 +1,27 @@
 <idea-plugin>
     <id>com.aion0.forge</id>
-    <name>Forge</name>
+    <name>Forge Vibe Coding</name>
     <version>0.1.0</version>
     <vendor email="liuzhen1984@gmail.com" url="https://github.com/aiwatching/forge">aion0</vendor>
 
     <description><![CDATA[
-        Native IntelliJ integration for <a href="https://github.com/aiwatching/forge">Forge</a> —
-        the self-hosted Vibe Coding platform.
+        <p>Drive your <a href="https://github.com/aiwatching/forge">Forge</a> instance from
+        the IDE — workspaces, agents, terminals, pipelines and docs in one tool window.</p>
+
+        <p><b>⚠ Requires Forge running locally.</b> Install once:</p>
+        <pre>npm install -g @aion0/forge
+forge server start</pre>
+        <p>Default port <code>8403</code>. Configure remote forges under
+        <b>Settings → Tools → Forge</b>.</p>
+
+        <h3>Features</h3>
         <ul>
-            <li>Tool window with workspaces, terminals, pipelines, docs</li>
-            <li>Multi-connection support (local + remote forges)</li>
-            <li>Smith terminal attach, daemon control, pause/resume</li>
-            <li>Pipeline run details, project-bound bindings, trigger actions</li>
+            <li>Workspaces — daemon control, multi-agent smiths, tmux attach, pause/resume/retry</li>
+            <li>Terminals — per-project claude sessions, double-click to resume, right-click → Open With for any agent</li>
+            <li>Pipelines — bindings + run details with per-node prompt / result / diff viewer</li>
+            <li>Docs — open files in editor, "open terminal here"</li>
+            <li>Multi-connection — local + remote forges with status-bar switcher</li>
         </ul>
-        Mirrors the Forge VSCode extension's feature set.
     ]]></description>
 
     <change-notes><![CDATA[

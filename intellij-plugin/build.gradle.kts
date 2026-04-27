@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.aion0.forge"
-version = "0.1.17"
+version = "0.1.19"
 
 repositories {
     mavenCentral()
@@ -39,12 +39,22 @@ intellijPlatform {
     buildSearchableOptions = false
 
     pluginConfiguration {
-        version = "0.1.17"
+        version = "0.1.19"
         ideaVersion {
             sinceBuild = "241"
             // Don't pin untilBuild — keeps the plugin compatible with newer
             // IDEs until the platform actually breaks something.
             untilBuild = provider { null }
         }
+    }
+
+    // `gradle publishPlugin` uploads to the JetBrains Marketplace.
+    // Get a permanent token at https://plugins.jetbrains.com/author/me/tokens
+    // and export it as JETBRAINS_MARKETPLACE_TOKEN before running.
+    publishing {
+        token = providers.environmentVariable("JETBRAINS_MARKETPLACE_TOKEN")
+        // Use "default" for stable releases. Switch to "beta" / "eap" for
+        // pre-releases (users opt in via the IDE plugin settings).
+        channels = listOf("default")
     }
 }

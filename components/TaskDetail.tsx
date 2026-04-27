@@ -1,9 +1,16 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, memo, useCallback, useMemo } from 'react';
 import MarkdownContent from './MarkdownContent';
 import NewTaskModal from './NewTaskModal';
 import type { Task, TaskLogEntry } from '@/src/types';
+
+// Bound the rendered log/diff to keep React from choking on huge sessions.
+// Each LogEntry can include MarkdownContent — N entries means N markdown parses
+// per render, so 5000+ entries used to freeze the tab on click.
+const LOG_DEFAULT_TAIL = 300;
+const LOG_LOAD_CHUNK = 500;
+const DIFF_DEFAULT_LINES = 1000;
 
 export default function TaskDetail({
   task,
@@ -20,7 +27,10 @@ export default function TaskDetail({
   const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set());
   const [followUpText, setFollowUpText] = useState('');
   const [editing, setEditing] = useState(false);
+  const [visibleTail, setVisibleTail] = useState(LOG_DEFAULT_TAIL);
+  const [showFullDiff, setShowFullDiff] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const logScrollRef = useRef<HTMLDivElement>(null);
 
   // SSE stream for running tasks
   useEffect(() => {
@@ -58,9 +68,22 @@ export default function TaskDetail({
     return () => es.close();
   }, [task.id, task.status, onRefresh]);
 
+  // Auto-scroll only when the user is already near the bottom — otherwise we yank
+  // them away from a line they're trying to read.
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [liveLog]);
+    const el = logScrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
+    if (nearBottom) logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [liveLog.length]);
+
+  const toggleTool = useCallback((i: number) => {
+    setExpandedTools(prev => {
+      const next = new Set(prev);
+      next.has(i) ? next.delete(i) : next.add(i);
+      return next;
+    });
+  }, []);
 
   const handleAction = async (action: string) => {
     await fetch(`/api/tasks/${task.id}`, {
@@ -71,15 +94,11 @@ export default function TaskDetail({
     onRefresh();
   };
 
-  const toggleTool = (i: number) => {
-    setExpandedTools(prev => {
-      const next = new Set(prev);
-      next.has(i) ? next.delete(i) : next.add(i);
-      return next;
-    });
-  };
-
   const displayLog = liveLog.length > 0 ? liveLog : task.log;
+  const totalLogCount = displayLog.length;
+  const tailStart = Math.max(0, totalLogCount - visibleTail);
+  const visibleLog = useMemo(() => displayLog.slice(tailStart), [displayLog, tailStart]);
+  const hiddenCount = tailStart;
 
   return (
     <div className="flex flex-col h-full">
@@ -135,12 +154,36 @@ export default function TaskDetail({
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4 text-sm">
+      <div ref={logScrollRef} className="flex-1 overflow-y-auto p-4 text-sm">
         {tab === 'log' && (
           <div className="space-y-2">
-            {displayLog.map((entry, i) => (
-              <LogEntry key={i} entry={entry} index={i} expanded={expandedTools.has(i)} onToggle={() => toggleTool(i)} />
-            ))}
+            {hiddenCount > 0 && (
+              <div className="flex items-center justify-between gap-2 py-1.5 px-2 text-[10px] text-[var(--text-secondary)] bg-[var(--bg-tertiary)] rounded border border-[var(--border)]">
+                <span>{hiddenCount} earlier {hiddenCount === 1 ? 'entry' : 'entries'} hidden</span>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setVisibleTail(v => v + LOG_LOAD_CHUNK)}
+                    className="px-2 py-0.5 rounded bg-[var(--accent)]/15 text-[var(--accent)] hover:bg-[var(--accent)]/25"
+                  >Load {Math.min(LOG_LOAD_CHUNK, hiddenCount)} more</button>
+                  <button
+                    onClick={() => setVisibleTail(totalLogCount)}
+                    className="px-2 py-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]"
+                  >Show all ({totalLogCount})</button>
+                </div>
+              </div>
+            )}
+            {visibleLog.map((entry, i) => {
+              const absoluteIndex = tailStart + i;
+              return (
+                <LogEntry
+                  key={absoluteIndex}
+                  entry={entry}
+                  index={absoluteIndex}
+                  expanded={expandedTools.has(absoluteIndex)}
+                  onToggle={toggleTool}
+                />
+              );
+            })}
             {liveStatus === 'running' && (
               <div className="text-[var(--accent)] animate-pulse py-1 text-xs">working...</div>
             )}
@@ -165,30 +208,7 @@ export default function TaskDetail({
         )}
 
         {tab === 'diff' && (
-          <div>
-            {task.gitDiff ? (
-              <div className="bg-[var(--bg-tertiary)] rounded border border-[var(--border)] overflow-hidden">
-                <pre className="p-3 text-xs font-mono overflow-x-auto">
-                  {task.gitDiff.split('\n').map((line, i) => (
-                    <div key={i} className={`px-2 ${
-                      line.startsWith('+++') || line.startsWith('---') ? 'text-[var(--text-secondary)] font-semibold' :
-                      line.startsWith('+') ? 'text-[var(--green)] bg-green-500/5' :
-                      line.startsWith('-') ? 'text-[var(--red)] bg-red-500/5' :
-                      line.startsWith('@@') ? 'text-[var(--accent)] bg-[var(--accent)]/5 font-semibold' :
-                      line.startsWith('diff ') ? 'text-[var(--text-primary)] font-bold border-t border-[var(--border)] pt-2 mt-2' :
-                      'text-[var(--text-secondary)]'
-                    }`}>
-                      {line}
-                    </div>
-                  ))}
-                </pre>
-              </div>
-            ) : (
-              <p className="text-[var(--text-secondary)] text-xs">
-                {liveStatus === 'running' ? 'Diff will be captured after completion' : 'No changes detected'}
-              </p>
-            )}
-          </div>
+          <DiffView gitDiff={task.gitDiff} status={liveStatus} showAll={showFullDiff} onShowAll={() => setShowFullDiff(true)} />
         )}
       </div>
 
@@ -263,12 +283,13 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function LogEntry({ entry, index, expanded, onToggle }: {
+const LogEntry = memo(function LogEntry({ entry, index, expanded, onToggle }: {
   entry: TaskLogEntry;
   index: number;
   expanded: boolean;
-  onToggle: () => void;
+  onToggle: (index: number) => void;
 }) {
+  const handleToggle = () => onToggle(index);
   // System init
   if (entry.type === 'system' && entry.subtype === 'init') {
     return (
@@ -295,7 +316,7 @@ function LogEntry({ entry, index, expanded, onToggle }: {
     return (
       <div className="border border-[var(--border)] rounded overflow-hidden">
         <button
-          onClick={onToggle}
+          onClick={handleToggle}
           className="w-full flex items-center gap-2 px-2 py-1.5 bg-[var(--bg-tertiary)] hover:bg-[var(--border)]/30 transition-colors text-left"
         >
           <span className="text-[10px] px-1.5 py-0.5 bg-[var(--accent)]/15 text-[var(--accent)] rounded font-medium font-mono">
@@ -328,7 +349,7 @@ function LogEntry({ entry, index, expanded, onToggle }: {
           {content}
         </pre>
         {isLong && !expanded && (
-          <button onClick={onToggle} className="text-[9px] text-[var(--accent)] hover:underline mt-0.5">
+          <button onClick={handleToggle} className="text-[9px] text-[var(--accent)] hover:underline mt-0.5">
             show more
           </button>
         )}
@@ -351,9 +372,53 @@ function LogEntry({ entry, index, expanded, onToggle }: {
       <MarkdownContent content={entry.content} />
     </div>
   );
-}
+});
 
-// MarkdownContent is now imported from ./MarkdownContent
+// Diff view — caps at DIFF_DEFAULT_LINES until "Show all" clicked.
+function DiffView({ gitDiff, status, showAll, onShowAll }: {
+  gitDiff?: string;
+  status: string;
+  showAll: boolean;
+  onShowAll: () => void;
+}) {
+  const allLines = useMemo(() => (gitDiff ? gitDiff.split('\n') : []), [gitDiff]);
+  if (!gitDiff) {
+    return (
+      <p className="text-[var(--text-secondary)] text-xs">
+        {status === 'running' ? 'Diff will be captured after completion' : 'No changes detected'}
+      </p>
+    );
+  }
+  const lines = showAll ? allLines : allLines.slice(0, DIFF_DEFAULT_LINES);
+  const truncated = !showAll && allLines.length > DIFF_DEFAULT_LINES;
+
+  return (
+    <div className="bg-[var(--bg-tertiary)] rounded border border-[var(--border)] overflow-hidden">
+      {truncated && (
+        <div className="flex items-center justify-between gap-2 py-1.5 px-3 text-[10px] text-[var(--text-secondary)] border-b border-[var(--border)] bg-[var(--bg-secondary)]">
+          <span>Showing first {DIFF_DEFAULT_LINES} of {allLines.length} lines</span>
+          <button onClick={onShowAll} className="px-2 py-0.5 rounded bg-[var(--accent)]/15 text-[var(--accent)] hover:bg-[var(--accent)]/25">
+            Show all
+          </button>
+        </div>
+      )}
+      <pre className="p-3 text-xs font-mono overflow-x-auto">
+        {lines.map((line, i) => (
+          <div key={i} className={`px-2 ${
+            line.startsWith('+++') || line.startsWith('---') ? 'text-[var(--text-secondary)] font-semibold' :
+            line.startsWith('+') ? 'text-[var(--green)] bg-green-500/5' :
+            line.startsWith('-') ? 'text-[var(--red)] bg-red-500/5' :
+            line.startsWith('@@') ? 'text-[var(--accent)] bg-[var(--accent)]/5 font-semibold' :
+            line.startsWith('diff ') ? 'text-[var(--text-primary)] font-bold border-t border-[var(--border)] pt-2 mt-2' :
+            'text-[var(--text-secondary)]'
+          }`}>
+            {line}
+          </div>
+        ))}
+      </pre>
+    </div>
+  );
+}
 
 function formatToolContent(content: string): string {
   try {

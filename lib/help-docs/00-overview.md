@@ -17,6 +17,7 @@ Forge is a self-hosted Vibe Coding platform for Claude Code. It provides a brows
 | **Remote Access** | One-click Cloudflare tunnel for remote browsing |
 | **GitHub Issue Auto-fix** | Scan issues, auto-fix, create PRs |
 | **Memory (optional)** | Code graph + knowledge via `@aion0/temper` MCP server |
+| **IDE Plugins** | First-party VSCode extension and IntelliJ plugin — drive workspaces, agents, terminals, pipelines and docs from inside the editor (see `13-ide-plugins.md`) |
 
 ## Quick Start
 

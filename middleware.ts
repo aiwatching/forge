@@ -9,10 +9,12 @@ export function middleware(req: NextRequest) {
 
   const { pathname } = req.nextUrl;
 
-  // Allow auth endpoints and static assets without login
+  // Allow auth endpoints, version probe (used by IDE plugins to detect a live
+  // server before prompting for password), and static assets without login.
   if (
     pathname.startsWith('/login') ||
     pathname.startsWith('/api/auth') ||
+    pathname === '/api/version' ||
     pathname.startsWith('/api/telegram') ||
     (pathname.startsWith('/api/workspace') && (pathname.endsWith('/smith') || pathname === '/api/workspace')) ||
     pathname.startsWith('/_next') ||

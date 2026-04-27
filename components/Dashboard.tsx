@@ -98,6 +98,20 @@ function FloatingBrowser({ onClose }: { onClose: () => void }) {
 
 export default function Dashboard({ user }: { user: any }) {
   const [viewMode, setViewMode] = useState<'tasks' | 'sessions' | 'terminal' | 'docs' | 'projects' | 'pipelines' | 'workspace' | 'skills' | 'logs' | 'usage'>('terminal');
+
+  // Honour `?view=<mode>` from the URL so external links (eg the VSCode
+  // extension) can deep-link straight into a section. Only views that have a
+  // top-level render branch are accepted. `workspace` and `sessions` live
+  // inside ProjectDetail, so they alias to `projects` (where you pick the
+  // project that contains the workspace/session).
+  useEffect(() => {
+    const raw = new URLSearchParams(window.location.search).get('view');
+    if (!raw) return;
+    const aliases: Record<string, string> = { workspace: 'projects', sessions: 'projects' };
+    const v = aliases[raw] || raw;
+    const valid = ['tasks', 'terminal', 'docs', 'projects', 'pipelines', 'skills', 'logs', 'usage'];
+    if (valid.includes(v)) setViewMode(v as any);
+  }, []);
   // workspaceProject state kept for forge:open-terminal event compatibility
   const [workspaceProject, setWorkspaceProject] = useState<{ name: string; path: string } | null>(null);
   const [browserMode, setBrowserMode] = useState<'none' | 'float' | 'right' | 'left'>('none');

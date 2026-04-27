@@ -1,0 +1,80 @@
+<idea-plugin>
+    <id>com.aion0.forge</id>
+    <name>Forge</name>
+    <version>0.1.0</version>
+    <vendor email="liuzhen1984@gmail.com" url="https://github.com/aiwatching/forge">aion0</vendor>
+
+    <description><![CDATA[
+        Native IntelliJ integration for <a href="https://github.com/aiwatching/forge">Forge</a> —
+        the self-hosted Vibe Coding platform.
+        <ul>
+            <li>Tool window with workspaces, terminals, pipelines, docs</li>
+            <li>Multi-connection support (local + remote forges)</li>
+            <li>Smith terminal attach, daemon control, pause/resume</li>
+            <li>Pipeline run details, project-bound bindings, trigger actions</li>
+        </ul>
+        Mirrors the Forge VSCode extension's feature set.
+    ]]></description>
+
+    <change-notes><![CDATA[
+        <h3>0.1.0</h3>
+        <ul>
+            <li>Initial scaffold: tool window shell, settings page, login flow, multi-connection support.</li>
+        </ul>
+    ]]></change-notes>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.terminal</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Persisted application-level state (connections + active connection). -->
+        <applicationService serviceImplementation="com.aion0.forge.connection.ConnectionManager"/>
+        <applicationService serviceImplementation="com.aion0.forge.api.ForgeClient"/>
+        <applicationService serviceImplementation="com.aion0.forge.auth.Auth"/>
+
+        <!-- Tool window: lives on the right side, contains tabs for each section. -->
+        <toolWindow
+            id="Forge"
+            anchor="left"
+            secondary="true"
+            icon="/icons/forge.svg"
+            factoryClass="com.aion0.forge.ui.toolwindow.ForgeToolWindowFactory"/>
+
+        <!-- Settings page (Preferences → Tools → Forge). -->
+        <applicationConfigurable
+            parentId="tools"
+            instance="com.aion0.forge.settings.ForgeConfigurable"
+            id="com.aion0.forge.settings.ForgeConfigurable"
+            displayName="Forge"/>
+
+        <!-- Status bar widget — connection state + click-to-switch. -->
+        <statusBarWidgetFactory
+            id="com.aion0.forge.statusbar"
+            implementation="com.aion0.forge.ui.toolwindow.ForgeStatusBarWidgetFactory"
+            order="last"/>
+
+        <notificationGroup id="Forge" displayType="BALLOON"/>
+    </extensions>
+
+    <actions>
+        <group id="com.aion0.forge.actions" text="Forge" popup="true">
+            <action id="com.aion0.forge.action.LoginAction"
+                    class="com.aion0.forge.action.LoginAction"
+                    text="Forge: Login"
+                    description="Authenticate against the active Forge server."/>
+            <action id="com.aion0.forge.action.LogoutAction"
+                    class="com.aion0.forge.action.LogoutAction"
+                    text="Forge: Logout"
+                    description="Clear the saved token for the active connection."/>
+            <action id="com.aion0.forge.action.SwitchConnectionAction"
+                    class="com.aion0.forge.action.SwitchConnectionAction"
+                    text="Forge: Switch Connection…"
+                    description="Pick a different Forge server."/>
+            <action id="com.aion0.forge.action.OpenWebUIAction"
+                    class="com.aion0.forge.action.OpenWebUIAction"
+                    text="Forge: Open Web UI"
+                    description="Open the Forge web UI in the default browser."/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </group>
+    </actions>
+</idea-plugin>

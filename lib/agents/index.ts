@@ -209,7 +209,7 @@ export function resolveTerminalLaunch(agentId?: string): TerminalLaunchInfo {
 
   // Determine CLI command and capabilities from cliType
   const cliMap: Record<string, { cmd: string; session: boolean; resume: string }> = {
-    'claude-code': { cmd: 'claude', session: true, resume: '-c' },
+    'claude-code': { cmd: 'claude', session: true, resume: '--resume' },
     'codex': { cmd: 'codex', session: false, resume: '' },
     'aider': { cmd: 'aider', session: false, resume: '' },
     'generic': { cmd: agentCfg.path || agentId || 'claude', session: false, resume: '' },

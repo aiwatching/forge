@@ -7,6 +7,7 @@ import { TerminalSessionPickerLazy, fetchProjectSessions } from './TerminalLaunc
 const InlinePipelineView = lazy(() => import('./InlinePipelineView'));
 const WorkspaceViewLazy = lazy(() => import('./WorkspaceView'));
 const SessionViewLazy = lazy(() => import('./SessionView'));
+const MigrationCockpitLazy = lazy(() => import('./MigrationCockpit'));
 
 // ─── Syntax highlighting ─────────────────────────────────
 const KEYWORDS = new Set([
@@ -85,7 +86,7 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [diffFile, setDiffFile] = useState<string | null>(null);
   const [projectSkills, setProjectSkills] = useState<{ name: string; displayName: string; type: string; scope: string; version: string; installedVersion: string; hasUpdate: boolean; source: 'registry' | 'local' }[]>([]);
   const [showSkillsDetail, setShowSkillsDetail] = useState(false);
-  const [projectTab, setProjectTab] = useState<'workspace' | 'sessions' | 'code' | 'skills' | 'claudemd' | 'pipelines'>('code');
+  const [projectTab, setProjectTab] = useState<'workspace' | 'sessions' | 'code' | 'skills' | 'claudemd' | 'pipelines' | 'migration'>('code');
   // Lazy-mount workspace: only mount after first visit, keep mounted to preserve terminal state
   const [wsMounted, setWsMounted] = useState(false);
   useEffect(() => { if (projectTab === 'workspace') setWsMounted(true); }, [projectTab]);
@@ -617,6 +618,13 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
               Pipelines
               {pipelineBindings.length > 0 && <span className="ml-1 text-[9px] opacity-70">({pipelineBindings.length})</span>}
             </button>
+            <button
+              onClick={() => setProjectTab('migration')}
+              className={`text-[11px] font-medium px-2.5 py-1 rounded transition-all ${
+                projectTab === 'migration' ? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm ring-1 ring-[var(--accent)]/40' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]'
+              }`}
+              title="API Migration Cockpit — parity testing between legacy and new modules"
+            >🚚 Migration</button>
           </div>
         </div>
         {projectTab === 'code' && gitInfo?.lastCommit && (
@@ -1371,6 +1379,13 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
             </div>
           )}
         </div>
+      )}
+
+      {/* Migration tab */}
+      {projectTab === 'migration' && (
+        <Suspense fallback={<div className="p-4 text-xs text-[var(--text-secondary)]">Loading migration cockpit…</div>}>
+          <MigrationCockpitLazy projectPath={projectPath} projectName={projectName} />
+        </Suspense>
       )}
 
       {/* Git panel — bottom (code tab only) */}

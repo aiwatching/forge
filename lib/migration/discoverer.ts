@@ -1,20 +1,19 @@
-// Discover endpoints from the project's existing migration docs.
-// Primary parser: docs/migration/<File>.java.md tables (rich)
-// Fallback parser: docs/lead/migration-history.md inline status
+// Discover endpoints. Strategy:
+// - If openApiSpec is configured → OpenAPI is the PRIMARY source (full surface).
+//   Per-controller docs + history file are then used to ANNOTATE migration status.
+// - Otherwise → fall back to per-controller doc parsing (legacy behavior).
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { Endpoint, EndpointStatus, HttpMethod, MigrationConfig } from './types';
+import { loadOpenApi, getResponseSchema, type OpenApiDoc } from './openapi';
 
 function endpointId(method: string, path: string): string {
   return createHash('sha1').update(`${method.toUpperCase()} ${path}`).digest('hex').slice(0, 12);
 }
 
-// Match `METHOD /path` or `METHOD` `/path` or bare `METHOD /path` in any line.
 const METHOD_PATH_RE = /\b(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b\s+(\/[^\s`|<>]+)/i;
-
-// Extract @Path("/prefix") annotation if mentioned in the doc body.
 const PATH_ANNOTATION_RE = /@Path\(\s*"([^"]+)"\s*\)/;
 
 type SectionKind = 'migrated' | 'stubbed' | 'parity-only' | 'unknown';
@@ -28,15 +27,11 @@ function classifyHeading(line: string): SectionKind | null {
 }
 
 function expandPath(rawPath: string, prefix: string | undefined): string | null {
-  // Drop rows with only "..." / placeholder.
   if (/^\/?\.\.\.?$/.test(rawPath)) return null;
-
-  // "/..." or starts with "/..." → substitute with @Path prefix.
   if (rawPath.startsWith('/...')) {
     if (!prefix) return null;
-    return prefix.replace(/\/$/, '') + rawPath.slice(4);  // drop "/..."
+    return prefix.replace(/\/$/, '') + rawPath.slice(4);
   }
-  // ".../foo" → also try prefix substitution
   if (rawPath.startsWith('.../')) {
     if (!prefix) return null;
     return prefix.replace(/\/$/, '') + '/' + rawPath.slice(4);
@@ -44,128 +39,102 @@ function expandPath(rawPath: string, prefix: string | undefined): string | null 
   return rawPath;
 }
 
-interface ParseDocResult {
+// ── Per-controller doc parser → annotation map ──────────
+// Returns Map<"METHOD path", { kind, controller, file }>
+
+interface DocAnnotation {
+  kind: SectionKind;
   controller: string;
-  endpoints: { method: HttpMethod; path: string; isStubbed: boolean; notes?: string }[];
-  pathAnnotation?: string;
-  warnings: string[];
+  file: string;          // relative doc file
+  notes?: string;
 }
 
-function parsePerControllerDoc(content: string, sourceFile: string): ParseDocResult {
-  const titleMatch = content.match(/^#\s+([A-Za-z0-9_$]+)(?:\.java)?\b/m);
-  const controller = titleMatch?.[1]
-    || sourceFile.replace(/\.java\.md$/i, '').split('/').pop()
-    || 'Unknown';
-
-  // Find @Path annotation anywhere in doc as prefix for "/..." paths.
-  const pathAnno = content.match(PATH_ANNOTATION_RE)?.[1];
-
-  const endpoints: ParseDocResult['endpoints'] = [];
+function parsePerControllerDocs(projectPath: string, dirRel: string): {
+  byKey: Map<string, DocAnnotation>;
+  warnings: string[];
+} {
+  const byKey = new Map<string, DocAnnotation>();
   const warnings: string[] = [];
-  const seen = new Set<string>();
+  const dir = join(projectPath, dirRel);
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    warnings.push(`Per-controller docs dir not found: ${dir}`);
+    return { byKey, warnings };
+  }
 
-  let currentKind: SectionKind = 'unknown';
-  let inTable = false;
-  let tableHeaderHasMethodCol = false;
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith('.md') || f.startsWith('_')) continue;
+    const filePath = join(dir, f);
+    const content = readFileSync(filePath, 'utf8');
 
-  const lines = content.split('\n');
+    const titleMatch = content.match(/^#\s+([A-Za-z0-9_$]+)(?:\.java)?\b/m);
+    const controller = titleMatch?.[1] || f.replace(/\.java\.md$/i, '');
+    const pathAnno = content.match(PATH_ANNOTATION_RE)?.[1];
 
-  for (const raw of lines) {
-    const line = raw.trimEnd();
+    let currentKind: SectionKind = 'unknown';
+    let inTable = false;
+    let count = 0;
 
-    // Heading detection
-    if (/^#{2,6}\s/.test(line)) {
-      const k = classifyHeading(line);
-      if (k) currentKind = k;
-      else {
-        // Reset only if this is a clearly non-endpoint section
-        const lower = line.toLowerCase();
-        if (lower.includes('what it does') || lower.includes('files added') || lower.includes('test') || lower.includes('changelog')) {
-          currentKind = 'unknown';
+    for (const raw of content.split('\n')) {
+      const line = raw.trimEnd();
+      if (/^#{2,6}\s/.test(line)) {
+        const k = classifyHeading(line);
+        if (k) currentKind = k;
+        else {
+          const lower = line.toLowerCase();
+          if (lower.includes('what it does') || lower.includes('files added') || lower.includes('changelog')) {
+            currentKind = 'unknown';
+          }
         }
+        inTable = false;
+        continue;
       }
-      inTable = false;
-      tableHeaderHasMethodCol = false;
-      continue;
-    }
+      if (currentKind === 'unknown' && /url[- ]parity[- ]only/i.test(line)) currentKind = 'parity-only';
 
-    // Skip doc-mode banner like "URL-parity-only" hint at top of doc.
-    if (currentKind === 'unknown' && /url[- ]parity[- ]only/i.test(line)) {
-      currentKind = 'parity-only';
-    }
-
-    // Table row
-    if (line.startsWith('|')) {
-      const cells = line.split('|').slice(1, -1).map(c => c.trim()).filter(c => c.length > 0 || true);
-      if (cells.length === 0) continue;
-
-      // Separator row: |---|---|---|
-      if (cells.every(c => /^:?-+:?$/.test(c))) continue;
-
-      // Header detection: first row of a table that contains a known column word.
-      if (!inTable) {
-        const lower = cells.map(c => c.toLowerCase()).join(' | ');
-        if (/\bhttp\b|\bpath\b|\bmethod\b|\bendpoint\b|\bverb\b/.test(lower)) {
-          inTable = true;
-          tableHeaderHasMethodCol = /\bmethod\b|\bverb\b/.test(lower);
-          continue;
+      if (line.startsWith('|')) {
+        const cells = line.split('|').slice(1, -1).map(c => c.trim());
+        if (cells.length === 0) continue;
+        if (cells.every(c => /^:?-+:?$/.test(c))) continue;
+        if (!inTable) {
+          const lower = cells.map(c => c.toLowerCase()).join(' | ');
+          if (/\bhttp\b|\bpath\b|\bmethod\b|\bendpoint\b|\bverb\b/.test(lower)) {
+            inTable = true; continue;
+          }
         }
-        // Not a recognized header — but maybe a data row that still contains METHOD+path? try anyway
-      }
-
-      // Data row — search whole row for METHOD + path
-      const m = line.match(METHOD_PATH_RE);
-      if (m) {
-        const method = m[1].toUpperCase() as HttpMethod;
-        const expanded = expandPath(m[2].trim(), pathAnno);
-        if (expanded) {
-          const isStubbed = currentKind === 'stubbed' || currentKind === 'parity-only';
-          const key = `${method} ${expanded}`;
-          if (!seen.has(key)) {
-            seen.add(key);
+        const m = line.match(METHOD_PATH_RE);
+        if (m) {
+          const expanded = expandPath(m[2].trim(), pathAnno);
+          if (expanded) {
+            const key = `${m[1].toUpperCase()} ${expanded}`;
             const notes = cells.slice(1).join(' | ').replace(/`/g, '').trim() || undefined;
-            endpoints.push({ method, path: expanded, isStubbed, notes });
+            byKey.set(key, { kind: currentKind === 'unknown' ? 'migrated' : currentKind, controller, file: f, notes });
+            count++;
+          }
+        }
+        continue;
+      }
+
+      if ((line.startsWith('-') || line.startsWith('*'))) {
+        const m = line.match(METHOD_PATH_RE);
+        if (m) {
+          const expanded = expandPath(m[2].trim(), pathAnno);
+          if (expanded) {
+            const key = `${m[1].toUpperCase()} ${expanded}`;
+            byKey.set(key, { kind: currentKind === 'unknown' ? 'migrated' : currentKind, controller, file: f });
+            count++;
           }
         }
       }
-      continue;
+      if (line.trim() === '') inTable = false;
     }
 
-    // Bullet / inline mention outside tables (some docs list endpoints in lists)
-    if (line.startsWith('-') || line.startsWith('*')) {
-      const m = line.match(METHOD_PATH_RE);
-      if (m) {
-        const method = m[1].toUpperCase() as HttpMethod;
-        const expanded = expandPath(m[2].trim(), pathAnno);
-        if (expanded) {
-          const isStubbed = currentKind === 'stubbed' || currentKind === 'parity-only';
-          const key = `${method} ${expanded}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            endpoints.push({ method, path: expanded, isStubbed });
-          }
-        }
-      }
-    }
-
-    // Empty line ends the table block
-    if (line.trim() === '') {
-      inTable = false;
-      tableHeaderHasMethodCol = false;
+    if (count === 0 && pathAnno) {
+      // URL-parity-only doc with no per-endpoint table — annotate by prefix later.
+      // We'll store with a sentinel so the OpenAPI walk can apply it as a fallback.
+      byKey.set(`__PREFIX__ ${pathAnno}`, { kind: 'parity-only', controller, file: f });
     }
   }
 
-  if (endpoints.length === 0) {
-    if (pathAnno) {
-      // URL-parity-only or undocumented — emit a single GET placeholder using @Path.
-      endpoints.push({ method: 'GET', path: pathAnno, isStubbed: true, notes: 'URL parity only — no per-endpoint table' });
-      warnings.push(`${controller}: no per-endpoint table; emitted GET ${pathAnno} placeholder from @Path annotation`);
-    } else {
-      warnings.push(`${controller}: no endpoints parsed and no @Path annotation found`);
-    }
-  }
-
-  return { controller, endpoints, pathAnnotation: pathAnno, warnings };
+  return { byKey, warnings };
 }
 
 function classifyHistoryStatus(line: string): EndpointStatus {
@@ -178,115 +147,217 @@ function classifyHistoryStatus(line: string): EndpointStatus {
   return 'pending';
 }
 
-function parseMigrationHistory(content: string, sourceFile: string, alreadyHaveControllers: Set<string>): Endpoint[] {
-  const endpoints: Endpoint[] = [];
-  const lines = content.split('\n');
-  for (const line of lines) {
-    const m = line.match(/^- \[[ xX]\]\s+`([^`]+\.java)`\s*[—-]\s*(.+)$/);
-    if (!m) continue;
-    const file = m[1];
-    const status = classifyHistoryStatus(m[2]);
-    if (status === 'skip' || status === 'defer') continue;
-
-    const controllerMatch = file.match(/([A-Za-z0-9_$]+)\.java$/);
-    const controller = controllerMatch ? controllerMatch[1] : file;
-
-    // Skip if we already have endpoints for this controller from the per-controller doc
-    if (alreadyHaveControllers.has(controller)) continue;
-
-    const desc = m[2];
-    const inlineRe = new RegExp(METHOD_PATH_RE.source, 'gi');
-    let im;
-    let added = 0;
-    while ((im = inlineRe.exec(desc)) !== null) {
-      const method = im[1].toUpperCase() as HttpMethod;
-      const path = im[2];
-      endpoints.push({
-        id: endpointId(method, path),
-        controller, file, method, path,
-        status,
-        expectedHttpStatus: 200,
-        isStubbed: false,
-        source: sourceFile,
-      });
-      added++;
-    }
-    // No placeholder if no inline endpoints — better to omit than to pollute.
-  }
-  return endpoints;
+interface HistoryAnnotation {
+  status: EndpointStatus;
+  file: string;
 }
+
+// Map controller name → history annotation
+function parseMigrationHistory(projectPath: string, fileRel: string): Map<string, HistoryAnnotation> {
+  const m = new Map<string, HistoryAnnotation>();
+  const file = join(projectPath, fileRel);
+  if (!existsSync(file)) return m;
+  const content = readFileSync(file, 'utf8');
+  for (const line of content.split('\n')) {
+    const match = line.match(/^- \[[ xX]\]\s+`([^`]+\.java)`\s*[—-]\s*(.+)$/);
+    if (!match) continue;
+    const javaFile = match[1];
+    const status = classifyHistoryStatus(match[2]);
+    const ctrlMatch = javaFile.match(/([A-Za-z0-9_$]+)\.java$/);
+    const ctrl = ctrlMatch ? ctrlMatch[1] : javaFile;
+    m.set(ctrl, { status, file: javaFile });
+  }
+  return m;
+}
+
+// ── Main ────────────────────────────────────────────────
 
 export interface DiscoveryResult {
   endpoints: Endpoint[];
   warnings: string[];
   sources: { file: string; count: number }[];
+  stats: {
+    fromOpenApi: number;
+    annotatedByDoc: number;
+    annotatedByHistory: number;
+    stubbed: number;
+    pending: number;
+  };
 }
 
 export function discoverEndpoints(projectPath: string, config: MigrationConfig): DiscoveryResult {
   const warnings: string[] = [];
   const sources: { file: string; count: number }[] = [];
+
+  // 1) Try OpenAPI as primary source
+  const openApiPath = config.endpointSource.openApiSpec;
+  let openApi: OpenApiDoc | null = null;
+  if (openApiPath) {
+    openApi = loadOpenApi(projectPath, openApiPath);
+    if (!openApi) warnings.push(`OpenAPI spec not found: ${openApiPath}`);
+  }
+
+  if (!openApi) {
+    // Fall back to legacy doc-only discovery
+    return legacyDocDiscovery(projectPath, config);
+  }
+
+  // 2) Build annotation maps from docs
+  const docAnno = parsePerControllerDocs(projectPath, config.endpointSource.primary);
+  warnings.push(...docAnno.warnings);
+  const historyAnno = config.endpointSource.fallback
+    ? parseMigrationHistory(projectPath, config.endpointSource.fallback)
+    : new Map();
+
+  // Pre-compute prefix-based annotations from URL-parity-only docs
+  const prefixAnnos: { prefix: string; anno: DocAnnotation }[] = [];
+  for (const [key, anno] of docAnno.byKey) {
+    if (key.startsWith('__PREFIX__ ')) {
+      prefixAnnos.push({ prefix: key.slice('__PREFIX__ '.length), anno });
+    }
+  }
+
+  // 3) Walk OpenAPI ops, annotate
+  const endpoints: Endpoint[] = [];
+  let annotatedByDoc = 0;
+  let annotatedByHistory = 0;
+  let stubbed = 0;
+  let pending = 0;
+
+  for (const op of openApi.operations) {
+    const key = `${op.method} ${op.path}`;
+    const directAnno = docAnno.byKey.get(key);
+
+    let docNotes: string | undefined;
+    let docFile: string | undefined;
+    let docKind: SectionKind | undefined;
+
+    if (directAnno) {
+      docKind = directAnno.kind;
+      docFile = directAnno.file;
+      docNotes = directAnno.notes;
+      annotatedByDoc++;
+    } else {
+      // Try prefix match (URL-parity-only docs)
+      for (const { prefix, anno } of prefixAnnos) {
+        if (op.path === prefix || op.path.startsWith(prefix + '/') || op.path.startsWith(prefix + '?')) {
+          docKind = anno.kind;
+          docFile = anno.file;
+          break;
+        }
+      }
+    }
+
+    // Tag from OpenAPI = controller for grouping
+    const tag = (op.tags && op.tags[0]) || 'untagged';
+
+    // Status: stubbed/parity → migrated stubbed; migrated → migrated; else look at history;
+    // else "pending" (in OpenAPI but no doc covers it).
+    let status: EndpointStatus = 'pending';
+    let isStubbed = false;
+    let expectedHttpStatus = 200;
+
+    if (docKind === 'migrated') status = 'migrated';
+    else if (docKind === 'stubbed' || docKind === 'parity-only') {
+      status = 'migrated';
+      isStubbed = true;
+      expectedHttpStatus = 501;
+    } else {
+      // Try history annotation by tag
+      const hist = historyAnno.get(tag) || historyAnno.get(tag + 'Service') || historyAnno.get(tag + 'Controller');
+      if (hist) {
+        status = hist.status;
+        if (hist.status === 'skip' || hist.status === 'defer') continue; // skip these
+        annotatedByHistory++;
+      }
+    }
+
+    if (isStubbed) stubbed++;
+    if (status === 'pending') pending++;
+
+    const responseSchema = getResponseSchema(op, openApi);
+
+    endpoints.push({
+      id: endpointId(op.method, op.path),
+      controller: tag,
+      file: docFile,
+      docFile,
+      method: op.method as HttpMethod,
+      path: op.path,
+      status,
+      expectedHttpStatus,
+      isStubbed,
+      source: openApiPath || 'openapi',
+      notes: docNotes || op.summary,
+      operationId: op.operationId,
+      tag,
+      summary: op.summary,
+      hasResponseSchema: !!responseSchema,
+    });
+  }
+
+  sources.push({ file: openApiPath!, count: endpoints.length });
+  if (annotatedByDoc > 0) sources.push({ file: config.endpointSource.primary, count: annotatedByDoc });
+  if (annotatedByHistory > 0 && config.endpointSource.fallback) {
+    sources.push({ file: config.endpointSource.fallback, count: annotatedByHistory });
+  }
+
+  return {
+    endpoints,
+    warnings,
+    sources,
+    stats: {
+      fromOpenApi: openApi.operations.length,
+      annotatedByDoc,
+      annotatedByHistory,
+      stubbed,
+      pending,
+    },
+  };
+}
+
+// ── Legacy doc-only discovery (when no OpenAPI is configured) ──
+
+function legacyDocDiscovery(projectPath: string, config: MigrationConfig): DiscoveryResult {
+  const warnings: string[] = [];
+  const sources: { file: string; count: number }[] = [];
   const all: Endpoint[] = [];
   const seen = new Set<string>();
-  const controllersWithEndpoints = new Set<string>();
+  const stubbed = { n: 0 };
 
-  const push = (e: Endpoint) => {
-    if (seen.has(e.id)) return;
-    seen.add(e.id);
-    all.push(e);
+  const docAnno = parsePerControllerDocs(projectPath, config.endpointSource.primary);
+  warnings.push(...docAnno.warnings);
+
+  for (const [key, anno] of docAnno.byKey) {
+    if (key.startsWith('__PREFIX__ ')) continue;
+    const [method, path] = key.split(' ');
+    const id = endpointId(method, path);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const isStubbed = anno.kind === 'stubbed' || anno.kind === 'parity-only';
+    if (isStubbed) stubbed.n++;
+    all.push({
+      id, controller: anno.controller, file: anno.file, docFile: anno.file,
+      method: method as HttpMethod, path,
+      status: 'migrated',
+      expectedHttpStatus: isStubbed ? 501 : 200,
+      isStubbed,
+      source: anno.file,
+      notes: anno.notes,
+    });
+  }
+  if (all.length > 0) sources.push({ file: config.endpointSource.primary, count: all.length });
+
+  return {
+    endpoints: all,
+    warnings,
+    sources,
+    stats: {
+      fromOpenApi: 0,
+      annotatedByDoc: all.length,
+      annotatedByHistory: 0,
+      stubbed: stubbed.n,
+      pending: 0,
+    },
   };
-
-  // 1) Per-controller docs (primary)
-  const primaryDir = join(projectPath, config.endpointSource.primary);
-  if (existsSync(primaryDir) && statSync(primaryDir).isDirectory()) {
-    const files = readdirSync(primaryDir).filter(f => f.endsWith('.md'));
-    for (const f of files) {
-      // Skip aggregated/grouping docs
-      if (f.startsWith('_')) continue;
-
-      const filePath = join(primaryDir, f);
-      const content = readFileSync(filePath, 'utf8');
-      const parsed = parsePerControllerDoc(content, filePath);
-      let count = 0;
-      for (const ep of parsed.endpoints) {
-        push({
-          id: endpointId(ep.method, ep.path),
-          controller: parsed.controller,
-          file: f,
-          method: ep.method,
-          path: ep.path,
-          status: 'migrated',
-          expectedHttpStatus: ep.isStubbed ? 501 : 200,
-          isStubbed: ep.isStubbed,
-          source: `${config.endpointSource.primary}/${f}`,
-          notes: ep.notes,
-        });
-        count++;
-      }
-      if (count > 0) {
-        sources.push({ file: f, count });
-        controllersWithEndpoints.add(parsed.controller);
-      }
-      warnings.push(...parsed.warnings);
-    }
-  } else {
-    warnings.push(`Primary docs dir not found: ${primaryDir}`);
-  }
-
-  // 2) Fallback: migration-history.md (only adds entries we don't already have)
-  if (config.endpointSource.fallback) {
-    const fallbackPath = join(projectPath, config.endpointSource.fallback);
-    if (existsSync(fallbackPath)) {
-      const content = readFileSync(fallbackPath, 'utf8');
-      const fromHistory = parseMigrationHistory(content, config.endpointSource.fallback, controllersWithEndpoints);
-      let added = 0;
-      for (const e of fromHistory) {
-        if (!seen.has(e.id)) { push(e); added++; }
-      }
-      if (added > 0) sources.push({ file: config.endpointSource.fallback, count: added });
-    } else {
-      warnings.push(`Fallback file not found: ${fallbackPath}`);
-    }
-  }
-
-  return { endpoints: all, warnings, sources };
 }

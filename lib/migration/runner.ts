@@ -1,7 +1,23 @@
 // HTTP runner — fires the same path against legacy + new and compares.
+// diffMode controls how comparison happens:
+//   exact = fire both, deep-equal JSON
+//   shape = fire only `next`, validate response against OpenAPI schema (legacy not needed)
+//   both  = fire both + schema validation
 
 import type { Endpoint, MigrationConfig, RunResult, SideResult } from './types';
-import { diff } from './differ';
+import { diff, validateAgainstSchema, type SchemaViolation } from './differ';
+
+function compileIgnore(patterns: string[]): RegExp[] {
+  return patterns.map(p => {
+    const body = p.startsWith('$') ? p.slice(1) : p;
+    const escaped = body
+      .replace(/\./g, '\\.')
+      .replace(/\[\*\]/g, '\\[\\d+\\]')
+      .replace(/\[(\d+)\]/g, '\\[$1\\]');
+    return new RegExp(`^\\$${escaped}$`);
+  });
+}
+import { loadOpenApi, lookup, getResponseSchema, type OpenApiDoc } from './openapi';
 
 function substitutePath(path: string, subs: Record<string, string> = {}): string {
   return path.replace(/\{([^}]+)\}/g, (_, name) => subs[name] ?? subs.id ?? '1');
@@ -54,38 +70,104 @@ async function fetchOne(baseUrl: string, ep: Endpoint, config: MigrationConfig, 
   }
 }
 
-export async function runEndpoint(ep: Endpoint, config: MigrationConfig): Promise<RunResult> {
+// Convert SchemaViolation[] → DiffEntry[] so the UI can show them uniformly.
+function violationsToDiffs(vios: SchemaViolation[]): RunResult['diff'] {
+  return vios.slice(0, 50).map(v => ({
+    jsonPath: v.jsonPath,
+    legacy: v.expected,
+    next: v.actual,
+    reason: v.reason === 'missing-required' ? 'missing-in-next' :
+            v.reason === 'type-mismatch' ? 'type-mismatch' : 'value',
+  }));
+}
+
+export async function runEndpoint(ep: Endpoint, config: MigrationConfig, openApi?: OpenApiDoc | null): Promise<RunResult> {
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
-  const [legacy, next] = await Promise.all([
-    fetchOne(config.legacy.baseUrl, ep, config, config.healthCheck.legacyTimeout),
-    fetchOne(config.next.baseUrl, ep, config, config.healthCheck.newTimeout),
-  ]);
+  const mode = config.diffMode || 'exact';
+
+  let legacy: SideResult;
+  let next: SideResult;
+
+  if (mode === 'shape') {
+    // Skip legacy entirely — use a synthesized "n/a" SideResult
+    legacy = { url: '(skipped — shape mode)', status: 0, ok: true, durationMs: 0 };
+    next = await fetchOne(config.next.baseUrl, ep, config, config.healthCheck.newTimeout);
+  } else {
+    [legacy, next] = await Promise.all([
+      fetchOne(config.legacy.baseUrl, ep, config, config.healthCheck.legacyTimeout),
+      fetchOne(config.next.baseUrl, ep, config, config.healthCheck.newTimeout),
+    ]);
+  }
 
   let match: RunResult['match'] = 'pass';
   let errorType: string | undefined;
   let errorMessage: string | undefined;
-  let diffEntries: any[] | undefined;
+  let diffEntries: RunResult['diff'];
 
-  if (legacy.error || next.error) {
-    match = 'error';
-    errorType = legacy.error ? 'legacy-unreachable' : 'new-unreachable';
-    errorMessage = legacy.error || next.error;
-  } else if (ep.isStubbed) {
-    // Stubbed endpoints are expected to return 501 on the new side.
-    if (next.status === 501) match = 'stub-ok';
-    else { match = 'fail'; errorType = 'stub-not-501'; errorMessage = `Expected 501, got ${next.status}`; }
-  } else if (legacy.status !== next.status) {
-    match = 'fail';
-    errorType = 'http-status-mismatch';
-    errorMessage = `legacy=${legacy.status} new=${next.status}`;
-  } else {
-    const d = diff(legacy.bodyJson, next.bodyJson, config.ignorePaths, { sortArrays: true });
-    if (d.length > 0) {
+  // ── Stubbed: only the new side matters; expect 501 ──
+  if (ep.isStubbed) {
+    if (next.error) {
+      match = 'error'; errorType = 'new-unreachable'; errorMessage = next.error;
+    } else if (next.status === 501) {
+      match = 'stub-ok';
+    } else {
+      match = 'fail'; errorType = 'stub-not-501'; errorMessage = `Expected 501, got ${next.status}`;
+    }
+  }
+  // ── Shape mode: validate new against OpenAPI schema ──
+  else if (mode === 'shape') {
+    if (next.error) {
+      match = 'error'; errorType = 'new-unreachable'; errorMessage = next.error;
+    } else if (!(next.status >= 200 && next.status < 300)) {
+      match = 'fail'; errorType = 'http-status'; errorMessage = `HTTP ${next.status}`;
+    } else {
+      const schema = openApi ? getOpResponseSchema(openApi, ep) : null;
+      if (!schema) {
+        // No schema — treat as smoke pass (endpoint responded 2xx with no body check)
+        match = 'pass';
+      } else {
+        const vios = validateAgainstSchema(next.bodyJson, schema, '$', [], compileIgnore(config.ignorePaths));
+        if (vios.length > 0) {
+          match = 'fail';
+          errorType = 'schema-violation';
+          errorMessage = `${vios.length} schema violations`;
+          diffEntries = violationsToDiffs(vios);
+        }
+      }
+    }
+  }
+  // ── Exact / both: deep-equal both sides + optional schema validation ──
+  else {
+    if (legacy.error || next.error) {
+      match = 'error';
+      errorType = legacy.error ? 'legacy-unreachable' : 'new-unreachable';
+      errorMessage = legacy.error || next.error;
+    } else if (legacy.status !== next.status) {
       match = 'fail';
-      errorType = 'json-diff';
-      errorMessage = `${d.length} differences`;
-      diffEntries = d.slice(0, 50);
+      errorType = 'http-status-mismatch';
+      errorMessage = `legacy=${legacy.status} new=${next.status}`;
+    } else {
+      const d = diff(legacy.bodyJson, next.bodyJson, config.ignorePaths, { sortArrays: true });
+      if (d.length > 0) {
+        match = 'fail';
+        errorType = 'json-diff';
+        errorMessage = `${d.length} differences`;
+        diffEntries = d.slice(0, 50);
+      }
+      // In `both` mode also run schema validation on the new side
+      if (mode === 'both' && openApi) {
+        const schema = getOpResponseSchema(openApi, ep);
+        if (schema) {
+          const vios = validateAgainstSchema(next.bodyJson, schema, '$', [], compileIgnore(config.ignorePaths));
+          if (vios.length > 0 && match === 'pass') {
+            match = 'fail';
+            errorType = 'schema-violation';
+            errorMessage = `${vios.length} schema violations`;
+            diffEntries = violationsToDiffs(vios);
+          }
+        }
+      }
     }
   }
 
@@ -100,20 +182,33 @@ export async function runEndpoint(ep: Endpoint, config: MigrationConfig): Promis
   };
 }
 
+function getOpResponseSchema(openApi: OpenApiDoc, ep: Endpoint): any | null {
+  const op = lookup(openApi, ep.method, ep.path);
+  if (!op) return null;
+  return getResponseSchema(op, openApi);
+}
+
 export async function runEndpoints(eps: Endpoint[], config: MigrationConfig, opts: {
   concurrency?: number;
   onProgress?: (done: number, total: number, last: RunResult) => void;
+  projectPath?: string;
 } = {}): Promise<RunResult[]> {
   const concurrency = Math.max(1, opts.concurrency ?? 4);
   const results: RunResult[] = [];
   let done = 0;
   let i = 0;
 
+  // Load OpenAPI once for the whole batch (shape/both modes)
+  let openApi: OpenApiDoc | null = null;
+  if ((config.diffMode === 'shape' || config.diffMode === 'both') && config.endpointSource.openApiSpec && opts.projectPath) {
+    openApi = loadOpenApi(opts.projectPath, config.endpointSource.openApiSpec);
+  }
+
   async function worker() {
     while (true) {
       const idx = i++;
       if (idx >= eps.length) return;
-      const r = await runEndpoint(eps[idx], config);
+      const r = await runEndpoint(eps[idx], config, openApi);
       results[idx] = r;
       done++;
       opts.onProgress?.(done, eps.length, r);

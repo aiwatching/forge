@@ -23,7 +23,21 @@ Parity-test API endpoints between a legacy module and a new module during a larg
 
 ## Discovery
 
-Forge does **not** re-scan Java source. It reads the docs you've already maintained.
+Two strategies, controlled by `endpointSource.openApiSpec` in config:
+
+### Strategy A — OpenAPI as primary source (recommended)
+
+When `openApiSpec` points at an OpenAPI 3 JSON (e.g. `docs/fnac-rest-schema-7.6.json`), Forge:
+
+1. Loads every operation in the spec — this is the full surface, including endpoints not yet covered by your migration docs.
+2. Annotates each endpoint with status (`migrated` / `stubbed` / `pending`) by cross-referencing your `docs/migration/<X>.java.md` per-controller files (matched by exact `METHOD path`) and `docs/lead/migration-history.md` (matched by controller/tag name).
+3. Resolves `$ref` chains so each operation has an inline response schema you can validate against.
+
+Endpoints not covered by any doc are flagged `pending` so you can see what's not yet planned.
+
+### Strategy B — Doc-only discovery (fallback)
+
+If no `openApiSpec` is configured, Forge falls back to parsing `docs/migration/*.md` tables (Migrated / Stubbed sections) plus `migration-history.md` inline `METHOD /path` mentions.
 
 ### Primary parser — `docs/migration/<File>.java.md`
 
@@ -66,16 +80,24 @@ For controllers without a per-file doc, Forge scans entries shaped like:
 
 The runner fires `legacy` and `new` in parallel for each endpoint, with concurrency=4 across endpoints. Path placeholders like `{id}` are filled from `pathSubstitutions` in config.
 
+### Diff modes (`config.diffMode`)
+
+| Mode | Hits legacy? | Comparison |
+|---|---|---|
+| `shape` (default) | no | Validates new response against the OpenAPI schema (subset semantics — extra fields OK, missing required fail, wrong types fail, enum violations fail). Use this when legacy is unreachable. |
+| `exact` | yes | Original behavior — fires both sides in parallel, deep-equal JSON comparison with array sort + ignore-paths. |
+| `both` | yes | Both deep-equal AND schema validation. |
+
 ### Match outcomes
 
 | Match | Meaning |
 |---|---|
-| `pass` | Same status code + JSON deep-equal (ignoring configured paths) |
+| `pass` | Comparison succeeded for the configured mode |
 | `stub-ok` | Endpoint marked stubbed; new side returned 501 as expected |
-| `fail` | Status mismatch or JSON diff |
+| `fail` | Schema violation, status mismatch, or JSON diff |
 | `error` | Unreachable or timed out |
 
-Strict comparison is on by default. Top-level arrays are sorted before compare so order alone won't fail.
+Top-level arrays are sorted before exact comparison so order alone won't fail. Schema mode samples the first 10 array items to keep reports tractable.
 
 ## Config (`<project>/.forge/migration/config.yaml`)
 
@@ -87,7 +109,8 @@ next:
 auth:
   mode: skip            # skip / bearer / basic
   tokenEnv: FORTINAC_TOKEN
-ignorePaths:            # JSONPath patterns to skip during diff
+diffMode: shape         # shape / exact / both
+ignorePaths:            # JSONPath patterns to skip during diff/validation
   - $.timestamp
   - $.requestId
 healthCheck:
@@ -96,9 +119,10 @@ healthCheck:
   skipUnhealthy: true
 clusterMode: simple     # simple / ai
 endpointSource:
-  type: docs
-  primary: docs/migration
-  fallback: docs/lead/migration-history.md
+  type: mixed
+  openApiSpec: docs/fnac-rest-schema-7.6.json   # primary source when set
+  primary: docs/migration                        # used to annotate status
+  fallback: docs/lead/migration-history.md       # used to annotate status
 pathSubstitutions:
   id: "1"
   ip: "127.0.0.1"

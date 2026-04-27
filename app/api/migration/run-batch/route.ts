@@ -37,6 +37,7 @@ export async function POST(req: Request) {
       try {
         const results = await runEndpoints(toRun, config, {
           concurrency: concurrency ?? 4,
+          projectPath,
           onProgress: (done, total, last) => {
             send('progress', { done, total, result: last });
           },

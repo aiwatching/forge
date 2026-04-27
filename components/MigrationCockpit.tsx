@@ -33,7 +33,7 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
   const [results, setResults] = useState<Record<string, RunResult>>({});
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number; running: boolean } | null>(null);
   const [failures, setFailures] = useState<FailureCluster[]>([]);
-  const [filter, setFilter] = useState<'all' | 'fail' | 'pass' | 'untested' | 'stubbed'>('all');
+  const [filter, setFilter] = useState<'all' | 'fail' | 'pass' | 'untested' | 'stubbed' | 'pending' | 'migrated'>('all');
   const [search, setSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -110,6 +110,8 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
         case 'all': return true;
         case 'untested': return !r;
         case 'stubbed': return e.isStubbed;
+        case 'pending': return e.status === 'pending';
+        case 'migrated': return e.status === 'migrated' && !e.isStubbed;
         case 'pass': return r?.match === 'pass' || r?.match === 'stub-ok';
         case 'fail': return r?.match === 'fail' || r?.match === 'error';
       }
@@ -208,16 +210,18 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
   // ─── Stats ─────────────────────────────────────────────
   const stats = useMemo(() => {
     const total = endpoints.length;
-    let pass = 0, fail = 0, stub = 0, untested = 0, stubbed = 0;
+    let pass = 0, fail = 0, stub = 0, untested = 0, stubbed = 0, pending = 0, withSchema = 0;
     for (const e of endpoints) {
       if (e.isStubbed) stubbed++;
+      if (e.status === 'pending') pending++;
+      if (e.hasResponseSchema) withSchema++;
       const r = results[e.id];
       if (!r) { untested++; continue; }
       if (r.match === 'pass') pass++;
       else if (r.match === 'stub-ok') stub++;
       else if (r.match === 'fail' || r.match === 'error') fail++;
     }
-    return { total, pass, fail, stub, untested, stubbed };
+    return { total, pass, fail, stub, untested, stubbed, pending, withSchema };
   }, [endpoints, results]);
 
   if (!config) return <div className="p-4 text-xs text-[var(--text-secondary)]">Loading…</div>;
@@ -263,6 +267,8 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
           <option value="pass">Pass</option>
           <option value="fail">Fail</option>
           <option value="stubbed">Stubbed</option>
+          <option value="migrated">Migrated</option>
+          <option value="pending">Pending (no doc)</option>
         </select>
         <button onClick={() => setShowConfig(v => !v)}
           className="text-xs px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]">
@@ -277,7 +283,8 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
         <span className="text-blue-400">{stats.stub} stub-ok</span>
         <span className="text-red-400">{stats.fail} fail</span>
         <span className="text-gray-400">{stats.untested} untested</span>
-        <span className="text-gray-500">({stats.stubbed} stubbed)</span>
+        <span className="text-gray-500">({stats.stubbed} stub · {stats.pending} pending · {stats.withSchema} w/ schema)</span>
+        <span className="text-purple-400">mode: {config.diffMode || 'shape'}</span>
         {batchProgress && (
           <span className={batchProgress.running ? 'text-yellow-400' : 'text-emerald-400'}>
             {batchProgress.running ? '⏳' : '✓'} {batchProgress.done}/{batchProgress.total}
@@ -418,11 +425,24 @@ function ConfigPanel({ config, onSave, onClose }: { config: MigrationConfig; onS
           onChange={e => setDraft({ ...draft, auth: { ...draft.auth, tokenEnv: e.target.value } })}
           placeholder="FORTINAC_TOKEN" />
       </Field>
-      <Field label="Per-controller docs dir">
+      <Field label="OpenAPI spec (primary source)">
+        <input className="cfg-input" value={draft.endpointSource.openApiSpec || ''}
+          onChange={e => setDraft({ ...draft, endpointSource: { ...draft.endpointSource, openApiSpec: e.target.value } })}
+          placeholder="docs/fnac-rest-schema-7.6.json" />
+      </Field>
+      <Field label="Diff mode">
+        <select className="cfg-input" value={draft.diffMode || 'shape'}
+          onChange={e => setDraft({ ...draft, diffMode: e.target.value as any })}>
+          <option value="shape">shape — validate new vs OpenAPI schema (legacy not needed)</option>
+          <option value="exact">exact — deep-equal both sides (legacy required)</option>
+          <option value="both">both — deep-equal + schema validation</option>
+        </select>
+      </Field>
+      <Field label="Per-controller docs dir (annotation)">
         <input className="cfg-input" value={draft.endpointSource.primary}
           onChange={e => setDraft({ ...draft, endpointSource: { ...draft.endpointSource, primary: e.target.value } })} />
       </Field>
-      <Field label="History fallback">
+      <Field label="History fallback (annotation)">
         <input className="cfg-input" value={draft.endpointSource.fallback || ''}
           onChange={e => setDraft({ ...draft, endpointSource: { ...draft.endpointSource, fallback: e.target.value } })} />
       </Field>

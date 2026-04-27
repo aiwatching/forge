@@ -5,16 +5,23 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 
 
 export interface Endpoint {
   id: string;                        // stable hash of `${method} ${path}`
-  controller: string;                // e.g. "ControlService"
+  controller: string;                // tag from OpenAPI or controller name from doc
   file?: string;                     // legacy or migrated file path
   method: HttpMethod;
   path: string;                      // raw path with `{id}` style placeholders
   status: EndpointStatus;
   expectedHttpStatus: number;        // 200 normally, 501 for stubbed
   isStubbed: boolean;
-  source: string;                    // doc file this came from
+  source: string;                    // primary source (OpenAPI / doc file)
   notes?: string;
   acceptance?: string[];
+  // OpenAPI cross-reference (when OpenAPI is the primary source)
+  operationId?: string;
+  tag?: string;
+  summary?: string;
+  hasResponseSchema?: boolean;
+  // Migration doc cross-reference
+  docFile?: string;                  // docs/migration/<X>.java.md if matched
 }
 
 export interface RunResult {
@@ -62,6 +69,8 @@ export interface FailureCluster {
   controllers: { controller: string; failures: Failure[] }[];
 }
 
+export type DiffMode = 'exact' | 'shape' | 'both';
+
 export interface MigrationConfig {
   legacy: { baseUrl: string };
   next: { baseUrl: string; sourceDir?: string };
@@ -78,10 +87,12 @@ export interface MigrationConfig {
     skipUnhealthy: boolean;
   };
   clusterMode: 'simple' | 'ai';
+  diffMode: DiffMode;                // exact = compare both sides; shape = validate new against schema; both = both
   endpointSource: {
     type: 'docs' | 'openapi' | 'source-scan' | 'mixed';
     primary: string;                 // dir for per-controller docs
     fallback?: string;               // history file
+    openApiSpec?: string;            // path to OpenAPI 3 JSON (preferred when set)
   };
   pathSubstitutions?: Record<string, string>; // {id} → "1" etc
 }
@@ -93,10 +104,12 @@ export const DEFAULT_CONFIG: MigrationConfig = {
   ignorePaths: ['$.timestamp', '$.requestId', '$.traceId'],
   healthCheck: { legacyTimeout: 2000, newTimeout: 2000, skipUnhealthy: true },
   clusterMode: 'simple',
+  diffMode: 'shape',
   endpointSource: {
-    type: 'docs',
+    type: 'mixed',
     primary: 'docs/migration',
     fallback: 'docs/lead/migration-history.md',
+    openApiSpec: 'docs/fnac-rest-schema-7.6.json',
   },
   pathSubstitutions: { id: '1', dbid: '1', ip: '127.0.0.1', mac: '00:00:00:00:00:00' },
 };

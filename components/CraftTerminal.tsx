@@ -26,9 +26,17 @@ export interface CraftTerminalProps {
   craftName: string;
   preferredSessionName: string;     // e.g. mw-craft-<hash>-<name>; component will create if missing
   craftDir: string;                 // <project>/.forge/crafts/<name>/
+  // Initial agent + session choice from the picker. Used when CraftTerminal
+  // has to create a fresh tmux session and start the agent CLI.
+  initialAgentId?: string;
+  initialResumeSessionId?: string;
+  onPickAgain?: () => void;         // toolbar handler — re-open the picker
 }
 
-export default function CraftTerminal({ projectPath, craftName, preferredSessionName, craftDir }: CraftTerminalProps) {
+export default function CraftTerminal({
+  projectPath, craftName, preferredSessionName, craftDir,
+  initialAgentId, initialResumeSessionId, onPickAgain,
+}: CraftTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -61,11 +69,12 @@ export default function CraftTerminal({ projectPath, craftName, preferredSession
       .then((res: any) => {
         const list = (res.agents || []).filter((a: any) => a.enabled !== false);
         setAgents(list);
-        const def = res.defaultAgent && list.find((a: any) => a.id === res.defaultAgent) ? res.defaultAgent : list[0]?.id || '';
+        const wanted = initialAgentId || res.defaultAgent;
+        const def = wanted && list.find((a: any) => a.id === wanted) ? wanted : list[0]?.id || '';
         setAgentId(def);
       });
     fetch('/api/settings').then(r => r.ok ? r.json() : null).then((s: any) => { if (s?.skipPermissions === false) skipPermRef.current = false; });
-  }, []);
+  }, [initialAgentId]);
 
   // Mount xterm + connect
   useEffect(() => {
@@ -121,7 +130,8 @@ export default function CraftTerminal({ projectPath, craftName, preferredSession
                   const a = agents.find(x => x.id === agentId) || agents[0];
                   const cli = a?.path || a?.id || 'claude';
                   const sf = (a?.id === 'claude' && skipPermRef.current) ? ' --dangerously-skip-permissions' : '';
-                  ws.send(JSON.stringify({ type: 'input', data: `cd "${craftDir}" && ${cli}${sf}\n` }));
+                  const resume = initialResumeSessionId && (a?.id === 'claude') ? ` --resume ${initialResumeSessionId}` : '';
+                  ws.send(JSON.stringify({ type: 'input', data: `cd "${craftDir}" && ${cli}${sf}${resume}\n` }));
                 }
               }, 400);
             }
@@ -225,6 +235,13 @@ export default function CraftTerminal({ projectPath, craftName, preferredSession
           title="Start a fresh tmux session for this craft">
           + Fresh
         </button>
+        {onPickAgain && (
+          <button onClick={onPickAgain}
+            className="text-[10px] px-2 py-0.5 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--accent)]"
+            title="Re-pick agent + session">
+            ⚙
+          </button>
+        )}
       </div>
 
       {/* Session picker dropdown */}

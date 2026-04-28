@@ -7,6 +7,25 @@ import * as ReactJsxRuntime from 'react/jsx-runtime';
 import { CraftSDKProvider, getSDK, setGlobalToast } from '@/lib/craft-sdk/client';
 
 const CraftTerminalLazy = lazy(() => import('./CraftTerminal'));
+const CraftTerminalPickerLazy = lazy(() => import('./CraftTerminalPicker'));
+
+interface CraftTermChoice {
+  agentId: string;
+  resumeSessionId?: string;
+}
+function termChoiceKey(projectPath: string, craftName: string): string {
+  return `forge.craft.term.${projectPath}::${craftName}`;
+}
+function loadTermChoice(projectPath: string, craftName: string): CraftTermChoice | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(termChoiceKey(projectPath, craftName));
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function saveTermChoice(projectPath: string, craftName: string, c: CraftTermChoice) {
+  try { localStorage.setItem(termChoiceKey(projectPath, craftName), JSON.stringify(c)); } catch {}
+}
 
 export interface CraftSummary {
   name: string;
@@ -58,7 +77,10 @@ export function CraftTab({ craft, projectPath, projectName }: Props) {
     const v = parseFloat(localStorage.getItem(SPLIT_KEY) || '');
     return isFinite(v) && v > 0.15 && v < 0.95 ? v : DEFAULT_SPLIT;
   });
-  const [showTerm, setShowTerm] = useState<boolean>(true);
+  // Terminal hidden by default — user chooses agent + session before it mounts
+  const [showTerm, setShowTerm] = useState<boolean>(false);
+  const [termChoice, setTermChoice] = useState<CraftTermChoice | null>(() => loadTermChoice(projectPath, craft.name));
+  const [pickerOpen, setPickerOpen] = useState<boolean>(false);
   const mountedRef = useRef(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
@@ -134,9 +156,16 @@ export function CraftTab({ craft, projectPath, projectName }: Props) {
         <button onClick={() => setReloadTick(t => t + 1)}
           className="px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
           title="Re-fetch ui.tsx (after agent edits)">↻ reload</button>
-        <button onClick={() => setShowTerm(v => !v)}
+        <button onClick={() => {
+            if (showTerm) { setShowTerm(false); return; }
+            // Showing — if we already have a remembered choice, just open it
+            if (termChoice) setShowTerm(true);
+            else setPickerOpen(true);
+          }}
           className="px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
-          title="Toggle terminal panel">{showTerm ? '⊟ hide terminal' : '⊞ show terminal'}</button>
+          title={showTerm ? 'Hide terminal' : (termChoice ? `Show terminal (${termChoice.agentId}${termChoice.resumeSessionId ? ' · resume ' + termChoice.resumeSessionId.slice(0, 8) : ''})` : 'Show terminal — pick agent + session')}>
+          {showTerm ? '⊟ hide terminal' : '⊞ show terminal'}
+        </button>
       </div>
 
       {/* Top: UI */}
@@ -145,7 +174,7 @@ export function CraftTab({ craft, projectPath, projectName }: Props) {
       </div>
 
       {/* Drag handle + bottom: terminal */}
-      {showTerm && (
+      {showTerm && termChoice && (
         <>
           <div onMouseDown={onDragStart}
             className="h-1 cursor-row-resize bg-[var(--border)] hover:bg-[var(--accent)] transition-colors shrink-0" />
@@ -156,10 +185,34 @@ export function CraftTab({ craft, projectPath, projectName }: Props) {
                 craftName={craft.name}
                 preferredSessionName={craft.preferredSessionName || `mw-craft-${craft.name}`}
                 craftDir={craft.dir || `${projectPath}/.forge/crafts/${craft.name}`}
+                initialAgentId={termChoice.agentId}
+                initialResumeSessionId={termChoice.resumeSessionId}
+                onPickAgain={() => setPickerOpen(true)}
               />
             </Suspense>
           </div>
         </>
+      )}
+
+      {/* Picker overlay */}
+      {pickerOpen && (
+        <Suspense fallback={null}>
+          <CraftTerminalPickerLazy
+            projectName={projectName}
+            defaultAgentId={termChoice?.agentId}
+            onPick={(c) => {
+              const next: CraftTermChoice = {
+                agentId: c.agentId,
+                resumeSessionId: c.sessionMode === 'new' ? undefined : c.sessionId,
+              };
+              saveTermChoice(projectPath, craft.name, next);
+              setTermChoice(next);
+              setPickerOpen(false);
+              setShowTerm(true);
+            }}
+            onCancel={() => setPickerOpen(false)}
+          />
+        </Suspense>
       )}
     </div>
   );

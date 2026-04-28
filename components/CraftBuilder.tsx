@@ -50,14 +50,18 @@ export function CraftBuilderModal({ projectPath, projectName, refineCraftName, o
     }
   }, [text, nameTouched, refining]);
 
-  // Load available agents
+  // Load available agents (Forge returns { agents, defaultAgent })
   useEffect(() => {
     fetch('/api/agents')
-      .then(r => r.ok ? r.json() : [])
-      .then((list: AgentSummary[]) => {
-        const enabled = (list || []).filter((a: any) => a.enabled !== false && a.detected !== false);
+      .then(r => r.ok ? r.json() : { agents: [], defaultAgent: null })
+      .then((res: { agents?: AgentSummary[]; defaultAgent?: string | null }) => {
+        const list = res.agents || [];
+        // Show all enabled agents — API/custom agents may not set `detected`, so don't filter on it.
+        const enabled = list.filter((a: any) => a.enabled !== false);
         setAgents(enabled);
-        if (enabled.length > 0 && !agentId) setAgentId(enabled[0].id);
+        if (enabled.length > 0 && !agentId) {
+          setAgentId(res.defaultAgent && enabled.find(a => a.id === res.defaultAgent) ? res.defaultAgent : enabled[0].id);
+        }
       })
       .catch(() => {});
   }, []);

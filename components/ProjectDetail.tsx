@@ -12,6 +12,7 @@ const CraftTabLazy = lazy(() => import('./CraftTabs').then(m => ({ default: m.Cr
 const CraftBuilderModalLazy = lazy(() => import('./CraftBuilder').then(m => ({ default: m.CraftBuilderModal })));
 const CraftMarketplaceModalLazy = lazy(() => import('./CraftMarketplaceModal'));
 const CraftPublishModalLazy = lazy(() => import('./CraftPublishModal'));
+const CraftManifestEditorLazy = lazy(() => import('./CraftManifestEditor'));
 import CraftsDropdown from './CraftsDropdown';
 
 // ─── Syntax highlighting ─────────────────────────────────
@@ -96,6 +97,7 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [craftBuilder, setCraftBuilder] = useState<{ refineName?: string } | null>(null);
   const [craftMarketplaceOpen, setCraftMarketplaceOpen] = useState(false);
   const [craftPublishName, setCraftPublishName] = useState<string | null>(null);
+  const [craftManifestName, setCraftManifestName] = useState<string | null>(null);
   // Once a craft is visited it stays mounted (hidden via CSS) so its terminal + WS persist.
   const [visitedCrafts, setVisitedCrafts] = useState<Set<string>>(() => new Set());
   useEffect(() => {
@@ -658,6 +660,7 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
               onRefine={(name) => setCraftBuilder({ refineName: name })}
               onPublish={(name) => setCraftPublishName(name)}
               onMarketplace={() => setCraftMarketplaceOpen(true)}
+              onEditManifest={(name) => setCraftManifestName(name)}
               onDelete={async (name, displayName) => {
                 if (!confirm(`Delete craft "${displayName}"?\n\nThis removes <project>/.forge/crafts/${name}/ permanently.`)) return;
                 const r = await fetch(`/api/craft-system/delete?projectPath=${encodeURIComponent(projectPath)}&name=${encodeURIComponent(name)}`, { method: 'DELETE' });
@@ -1461,6 +1464,17 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
             projectPath={projectPath}
             craftName={craftPublishName}
             onClose={() => setCraftPublishName(null)}
+          />
+        </Suspense>
+      )}
+
+      {/* Craft Manifest editor */}
+      {craftManifestName && (
+        <Suspense fallback={null}>
+          <CraftManifestEditorLazy
+            projectPath={projectPath}
+            craftName={craftManifestName}
+            onClose={() => setCraftManifestName(null)}
           />
         </Suspense>
       )}

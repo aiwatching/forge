@@ -11,11 +11,14 @@ interface PublishBundle {
   instructions: string[];
 }
 
+const CraftManifestEditorLazy = React.lazy(() => import('./CraftManifestEditor'));
+
 export default function CraftPublishModal({ projectPath, craftName, onClose }: {
   projectPath: string;
   craftName: string;
   onClose: () => void;
 }) {
+  const [editingManifest, setEditingManifest] = useState(false);
   const [bundle, setBundle] = useState<PublishBundle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<'instructions' | 'entry' | 'files'>('instructions');
@@ -83,6 +86,12 @@ export default function CraftPublishModal({ projectPath, craftName, onClose }: {
         onClick={e => e.stopPropagation()}>
         <div className="px-4 py-2.5 border-b border-[var(--border)] flex items-center gap-2">
           <span className="text-sm font-semibold text-[var(--text-primary)]">📦 Publish craft: {craftName}</span>
+          {bundle?.entry?.version && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] font-mono text-[var(--text-secondary)]">v{bundle.entry.version}</span>}
+          <button onClick={() => setEditingManifest(true)}
+            className="text-[10px] px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--accent)]"
+            title="Edit craft.yaml — bump version, tweak metadata, etc.">
+            📝 Edit manifest
+          </button>
           <div className="flex-1" />
           <button onClick={onClose} className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]">✕</button>
         </div>
@@ -246,6 +255,31 @@ export default function CraftPublishModal({ projectPath, craftName, onClose }: {
           </>
         )}
       </div>
+
+      {/* Manifest editor mounted on top — saving re-fetches the bundle so the publish flow uses fresh values */}
+      {editingManifest && (
+        <React.Suspense fallback={null}>
+          <CraftManifestEditorLazy
+            projectPath={projectPath}
+            craftName={craftName}
+            onClose={() => setEditingManifest(false)}
+            onSaved={() => {
+              setEditingManifest(false);
+              // Re-fetch the bundle so the new version/metadata appears in publish UI + auto-publish
+              setBundle(null);
+              setError(null);
+              fetch('/api/craft-system/publish', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ projectPath, name: craftName }),
+              })
+                .then(async r => { if (!r.ok) throw new Error((await r.json()).error || `${r.status}`); return r.json(); })
+                .then((j: PublishBundle) => { setBundle(j); setActiveFile(j.files[0]?.path || ''); })
+                .catch(e => setError(e?.message || String(e)));
+            }}
+          />
+        </React.Suspense>
+      )}
     </div>
   );
 }

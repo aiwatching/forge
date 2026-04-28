@@ -24,6 +24,7 @@ export default function CraftsDropdown({
   onDelete,
   onMarketplace,
   onPublish,
+  onEditManifest,
 }: {
   crafts: Craft[];
   activeTab: string;
@@ -34,6 +35,7 @@ export default function CraftsDropdown({
   onDelete: (name: string, displayName: string) => void;
   onMarketplace: () => void;
   onPublish: (name: string) => void;
+  onEditManifest: (name: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -89,9 +91,12 @@ export default function CraftsDropdown({
           </button>
           {active.scope === 'project' && (
             <>
+              <button onClick={() => onEditManifest(active.name)}
+                className="text-[10px] px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)]"
+                title="Edit craft.yaml (version, displayName, tags, requires)">📝</button>
               <button onClick={() => onRefine(active.name)}
                 className="text-[10px] px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)]"
-                title="Refine this craft">⚙</button>
+                title="Refine this craft (AI iterates on it)">⚙</button>
               <button onClick={() => onPublish(active.name)}
                 className="text-[10px] px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)]"
                 title="Publish to the crafts marketplace">📦</button>

@@ -38,7 +38,7 @@ function buildPrompt(req: BuildRequest, refining?: boolean, existing?: { manifes
     lines.push('Pick a kebab-case name based on what the user wants. After writing files, the new tab will show up automatically.');
   }
   lines.push('');
-  lines.push('Reference sample: `lib/builtin-crafts/file-counter/` (in the Forge install). Read it for the file shape.');
+  lines.push('Reference: see the "Minimum viable example" in the `craft-builder` skill for file shape + SDK use.');
   return lines.join('\n');
 }
 

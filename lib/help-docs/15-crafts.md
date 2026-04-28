@@ -86,9 +86,7 @@ server:
 
 ## Builtins
 
-`lib/builtin-crafts/<name>/` ships with Forge as samples. Every project sees them automatically. Project-local crafts override builtins by name.
-
-Current builtin: `file-counter` (📊 Files) — file extension stats + largest files in the project. Read it as a reference for the minimum viable craft.
+`lib/builtin-crafts/<name>/` is the slot for crafts that ship with Forge by default. Currently empty — every craft is project-local at `<project>/.forge/crafts/<name>/`. Builtins (when present) appear automatically in every project; project-local crafts override builtins by name.
 
 ## Architectural model
 

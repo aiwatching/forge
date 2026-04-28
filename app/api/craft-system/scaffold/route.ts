@@ -47,7 +47,7 @@ function buildScaffoldPrompt(displayName: string, description: string, name: str
     '## After you finish',
     '',
     'The craft will hot-reload in Forge as soon as the files exist. Tell the user to switch to the new tab in Forge to test it.',
-    'Refer to `lib/builtin-crafts/file-counter/` (in the Forge install path) for a working sample if you need one.',
+    'Refer to the "Minimum viable example" in the `craft-builder` skill for the file shape and SDK use.',
     '',
     'Begin by reading `prompt.md` (this file) and the craft-builder skill, then write `ui.tsx`. End with `[FORGE_DONE]`.',
   ].join('\n');

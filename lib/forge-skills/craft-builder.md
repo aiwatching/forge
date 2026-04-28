@@ -143,9 +143,50 @@ Always write/update this file with:
 
 When called to refine an existing craft (the dir already exists), READ existing files first, KEEP what works, change only what the user asked. Append the refine request to `prompt.md`.
 
-## Examples to follow
+## Minimum viable example
 
-There's a sample at `lib/builtin-crafts/file-counter/` that demonstrates the minimum viable shape. Read it before writing your own.
+```yaml
+# craft.yaml
+name: hello
+displayName: 👋 Hello
+description: Demo craft — counts project files by extension
+version: 0.1.0
+ui:
+  tab: ui.tsx
+server:
+  entry: server.ts
+```
+
+```ts
+// server.ts
+import { defineCraftServer } from '@forge/craft/server';
+
+export default defineCraftServer({
+  routes: {
+    'GET /count': async ({ forge }) => {
+      const r = forge.exec(`git ls-files | awk -F. 'NF>1{print $NF}' | sort | uniq -c | sort -rn | head -20`);
+      return { lines: r.stdout.split('\n').filter(Boolean) };
+    },
+  },
+});
+```
+
+```tsx
+// ui.tsx
+import { useProject, useForgeFetch } from '@forge/craft';
+
+export default function Tab() {
+  const { projectName } = useProject();
+  const { data, loading } = useForgeFetch<{ lines: string[] }>('/api/crafts/hello/count');
+  return (
+    <div className="flex-1 p-4 text-xs overflow-auto">
+      <h2 className="font-semibold mb-2">{projectName} — file counts</h2>
+      {loading && <div className="text-[var(--text-secondary)]">Loading…</div>}
+      {data?.lines.map((l, i) => <div key={i} className="font-mono">{l}</div>)}
+    </div>
+  );
+}
+```
 
 ## Style guide
 

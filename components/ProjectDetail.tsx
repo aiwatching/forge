@@ -10,6 +10,7 @@ const SessionViewLazy = lazy(() => import('./SessionView'));
 const MigrationCockpitLazy = lazy(() => import('./MigrationCockpit'));
 const CraftTabLazy = lazy(() => import('./CraftTabs').then(m => ({ default: m.CraftTab })));
 const CraftBuilderModalLazy = lazy(() => import('./CraftBuilder').then(m => ({ default: m.CraftBuilderModal })));
+import CraftsDropdown from './CraftsDropdown';
 
 // ─── Syntax highlighting ─────────────────────────────────
 const KEYWORDS = new Set([
@@ -644,39 +645,21 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
               }`}
               title="API Migration Cockpit — parity testing between legacy and new modules"
             >🚚 Migration</button>
-            {crafts.map(c => {
-              const tabId = `craft:${c.name}`;
-              const active = projectTab === tabId;
-              const isProject = c.scope === 'project';
-              return (
-                <span key={c.name} className="relative inline-flex items-stretch">
-                  <button onClick={() => setProjectTab(tabId)}
-                    className={`text-[11px] font-medium px-2.5 py-1 rounded transition-all ${
-                      active ? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm ring-1 ring-[var(--accent)]/40' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]'
-                    }`}
-                    title={c.description || c.displayName}>
-                    {c.displayName}
-                  </button>
-                  {active && isProject && (
-                    <span className="ml-0.5 flex items-center gap-0.5">
-                      <button onClick={() => setCraftBuilder({ refineName: c.name })}
-                        className="text-[10px] px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)]"
-                        title="Refine this craft (AI iterates on it)">⚙</button>
-                      <button onClick={async () => {
-                          if (!confirm(`Delete craft "${c.displayName}"?\n\nThis removes <project>/.forge/crafts/${c.name}/ permanently.`)) return;
-                          const r = await fetch(`/api/craft-system/delete?projectPath=${encodeURIComponent(projectPath)}&name=${encodeURIComponent(c.name)}`, { method: 'DELETE' });
-                          if (r.ok) {
-                            setProjectTab('code');
-                            refreshCrafts();
-                          }
-                        }}
-                        className="text-[10px] px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:bg-red-500/20 hover:text-red-300"
-                        title="Delete this craft">🗑</button>
-                    </span>
-                  )}
-                </span>
-              );
-            })}
+            <CraftsDropdown
+              crafts={crafts}
+              activeTab={projectTab}
+              onPick={(name) => setProjectTab(`craft:${name}`)}
+              onNew={() => setCraftBuilder({})}
+              onRefine={(name) => setCraftBuilder({ refineName: name })}
+              onDelete={async (name, displayName) => {
+                if (!confirm(`Delete craft "${displayName}"?\n\nThis removes <project>/.forge/crafts/${name}/ permanently.`)) return;
+                const r = await fetch(`/api/craft-system/delete?projectPath=${encodeURIComponent(projectPath)}&name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+                if (r.ok) {
+                  setProjectTab('code');
+                  refreshCrafts();
+                }
+              }}
+            />
             <button onClick={() => setCraftBuilder({})}
               className="text-[11px] font-medium px-2 py-1 rounded text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10"
               title="Build a new craft for this project (AI-generated)">

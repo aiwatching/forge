@@ -168,10 +168,24 @@ export default function CraftMarketplaceModal({ projectPath, onClose, onInstalle
                   </button>
                 )}
                 {it.installed && it.hasUpdate && (
-                  <button onClick={async () => { await uninstall(it.name); await install(it.name); }}
+                  <button onClick={async () => {
+                      setBusyId(it.name);
+                      try {
+                        const res = await fetch('/api/craft-system/marketplace/update', {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ projectPath, name: it.name }),
+                        });
+                        const j = await res.json();
+                        if (!j.ok) throw new Error(j.error || 'update failed');
+                        onInstalled();
+                        await refresh();
+                      } catch (e: any) { setError(e?.message || String(e)); }
+                      finally { setBusyId(null); }
+                    }}
                     disabled={busyId === it.name}
-                    className="text-[10px] px-2.5 py-1 rounded bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 disabled:opacity-40">
-                    {busyId === it.name ? '…' : 'Update'}
+                    className="text-[10px] px-2.5 py-1 rounded bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 disabled:opacity-40"
+                    title={`Update v${it.installedVersion} → v${it.version}, preserves your data/`}>
+                    {busyId === it.name ? '…' : `Update → v${it.version}`}
                   </button>
                 )}
                 {it.installed && (

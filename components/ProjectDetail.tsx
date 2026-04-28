@@ -652,6 +652,7 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
             <CraftsDropdown
               crafts={crafts}
               activeTab={projectTab}
+              projectPath={projectPath}
               onPick={(name) => setProjectTab(`craft:${name}`)}
               onNew={() => setCraftBuilder({})}
               onRefine={(name) => setCraftBuilder({ refineName: name })}

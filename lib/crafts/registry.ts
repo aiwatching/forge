@@ -146,6 +146,57 @@ export function uninstallCraft(name: string, projectPath: string): { ok: boolean
   return { ok: true };
 }
 
+// In-place update — preserves <project>/.forge/crafts/<name>/data/ (which holds
+// useStore JSON) and overwrites everything else. Atomic: downloads first, then
+// writes; if any download fails the existing install is untouched.
+export async function updateCraft(name: string, projectPath: string): Promise<{ ok: boolean; error?: string; from?: string; to?: string }> {
+  const targetDir = join(projectPath, '.forge', 'crafts', name);
+  if (!existsSync(targetDir)) return { ok: false, error: 'not installed' };
+
+  const entries = await fetchRegistry(true);
+  const entry = entries.find(e => e.name === name);
+  if (!entry) return { ok: false, error: `craft "${name}" not in registry` };
+
+  // Read current version from local craft.yaml for the response
+  let fromVersion: string | undefined;
+  try {
+    const m = YAML.parse(readFileSync(join(targetDir, 'craft.yaml'), 'utf8')) as any;
+    fromVersion = m?.version;
+  } catch {}
+
+  // Download everything into memory first
+  const baseUrl = getBaseUrl();
+  const downloaded: { rel: string; content: string }[] = [];
+  for (const rel of entry.files) {
+    try {
+      const res = await fetch(`${baseUrl}/${name}/${rel}`);
+      if (!res.ok) throw new Error(`${rel}: HTTP ${res.status}`);
+      downloaded.push({ rel, content: await res.text() });
+    } catch (e: any) {
+      return { ok: false, error: `download failed for ${rel}: ${e?.message || e}` };
+    }
+  }
+
+  // All downloads succeeded — write them. data/ stays intact.
+  const fs = require('node:fs');
+  for (const d of downloaded) {
+    const dest = join(targetDir, d.rel);
+    mkdirSync(dest.split('/').slice(0, -1).join('/'), { recursive: true });
+    fs.writeFileSync(dest, d.content, 'utf8');
+  }
+  return { ok: true, from: fromVersion, to: entry.version };
+}
+
+// Returns just the names of installed crafts that have updates available.
+// Used by the dropdown badge — cheap, no per-craft enrichment beyond version
+// compare.
+export async function listAvailableUpdates(projectPath: string): Promise<{ name: string; from?: string; to: string }[]> {
+  const items = await listMarketplace(projectPath);
+  return items
+    .filter(it => it.installed && it.hasUpdate)
+    .map(it => ({ name: it.name, from: it.installedVersion, to: it.version }));
+}
+
 // ── Publish helper ─────────────────────────────────────
 // MVP: returns a registry-entry JSON snippet + a tar of the craft dir for
 // the user to attach to a PR on the registry repo. Real "press a button to

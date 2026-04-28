@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
+import { createHash } from 'node:crypto';
 import { listProjectCrafts, shouldShow } from '@/lib/crafts/loader';
+
+function tmuxSessionName(projectPath: string, craftName: string): string {
+  const projHash = createHash('md5').update(projectPath).digest('hex').slice(0, 6);
+  return `mw-craft-${projHash}-${craftName}`;
+}
 
 // GET /api/crafts?projectPath=...
 export async function GET(req: Request) {
@@ -17,5 +23,7 @@ export async function GET(req: Request) {
     scope: c.__scope,
     hasUi: c.hasUi,
     hasServer: c.hasServer,
+    dir: c.__dir,
+    preferredSessionName: tmuxSessionName(projectPath, c.name),
   })) });
 }

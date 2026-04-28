@@ -44,6 +44,7 @@ The token is valid for 24 hours. Store it in a variable and reuse for all API ca
 | `11-workspace.md` | Workspace (Forge Smiths) — multi-agent orchestration, daemon, message bus, profiles |
 | `12-usage.md` | Token usage analytics — charts, heatmap, cost estimation, by model/project/source |
 | `13-ide-plugins.md` | VSCode extension + IntelliJ plugin — install, tabs, multi-connection, agent terminal launching |
+| `15-crafts.md` | Crafts — project-scoped mini-app tabs with SDK; AI-generated via "+ Craft" button |
 
 ## Matching questions to docs
 
@@ -67,3 +68,4 @@ The token is valid for 24 hours. Store it in a variable and reuse for all API ca
 - Sidebar collapse/project tabs/favorites → `07-projects.md`
 - VSCode/IntelliJ/IDE plugin/extension/marketplace → `13-ide-plugins.md`
 - vsce/vsix/JetBrains marketplace publish → `13-ide-plugins.md`
+- Craft/custom tab/mini-app/extend project/AI-generated tab/builder → `15-crafts.md`

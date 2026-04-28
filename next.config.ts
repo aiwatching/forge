@@ -10,7 +10,7 @@ const localIPs = Object.values(networkInterfaces())
   .map(i => i!.address);
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ['better-sqlite3'],
+  serverExternalPackages: ['better-sqlite3', 'esbuild'],
   allowedDevOrigins: localIPs,
   async rewrites() {
     return [

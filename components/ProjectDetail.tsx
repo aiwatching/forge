@@ -7,6 +7,12 @@ import { TerminalSessionPickerLazy, fetchProjectSessions } from './TerminalLaunc
 const InlinePipelineView = lazy(() => import('./InlinePipelineView'));
 const WorkspaceViewLazy = lazy(() => import('./WorkspaceView'));
 const SessionViewLazy = lazy(() => import('./SessionView'));
+const CraftTabLazy = lazy(() => import('./CraftTabs').then(m => ({ default: m.CraftTab })));
+const CraftBuilderModalLazy = lazy(() => import('./CraftBuilder').then(m => ({ default: m.CraftBuilderModal })));
+const CraftMarketplaceModalLazy = lazy(() => import('./CraftMarketplaceModal'));
+const CraftPublishModalLazy = lazy(() => import('./CraftPublishModal'));
+const CraftManifestEditorLazy = lazy(() => import('./CraftManifestEditor'));
+import CraftsDropdown from './CraftsDropdown';
 
 // ─── Syntax highlighting ─────────────────────────────────
 const KEYWORDS = new Set([
@@ -85,7 +91,27 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [diffFile, setDiffFile] = useState<string | null>(null);
   const [projectSkills, setProjectSkills] = useState<{ name: string; displayName: string; type: string; scope: string; version: string; installedVersion: string; hasUpdate: boolean; source: 'registry' | 'local' }[]>([]);
   const [showSkillsDetail, setShowSkillsDetail] = useState(false);
-  const [projectTab, setProjectTab] = useState<'workspace' | 'sessions' | 'code' | 'skills' | 'claudemd' | 'pipelines'>('code');
+  const [projectTab, setProjectTab] = useState<string>('code');
+  const [crafts, setCrafts] = useState<Array<{ name: string; displayName: string; icon?: string; description?: string; scope: string; hasUi: boolean; hasServer: boolean }>>([]);
+  const [craftBuilder, setCraftBuilder] = useState<{ refineName?: string } | null>(null);
+  const [craftMarketplaceOpen, setCraftMarketplaceOpen] = useState(false);
+  const [craftPublishName, setCraftPublishName] = useState<string | null>(null);
+  const [craftManifestName, setCraftManifestName] = useState<string | null>(null);
+  // Once a craft is visited it stays mounted (hidden via CSS) so its terminal + WS persist.
+  const [visitedCrafts, setVisitedCrafts] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    if (projectTab.startsWith('craft:')) {
+      const name = projectTab.slice('craft:'.length);
+      setVisitedCrafts(prev => prev.has(name) ? prev : new Set(prev).add(name));
+    }
+  }, [projectTab]);
+  const refreshCrafts = useCallback(() => {
+    fetch(`/api/crafts?projectPath=${encodeURIComponent(projectPath)}`)
+      .then(r => r.ok ? r.json() : { crafts: [] })
+      .then(j => setCrafts(j.crafts || []))
+      .catch(() => {});
+  }, [projectPath]);
+  useEffect(() => { refreshCrafts(); }, [refreshCrafts]);
   // Lazy-mount workspace: only mount after first visit, keep mounted to preserve terminal state
   const [wsMounted, setWsMounted] = useState(false);
   useEffect(() => { if (projectTab === 'workspace') setWsMounted(true); }, [projectTab]);
@@ -617,6 +643,25 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
               Pipelines
               {pipelineBindings.length > 0 && <span className="ml-1 text-[9px] opacity-70">({pipelineBindings.length})</span>}
             </button>
+            <CraftsDropdown
+              crafts={crafts}
+              activeTab={projectTab}
+              projectPath={projectPath}
+              onPick={(name) => setProjectTab(`craft:${name}`)}
+              onNew={() => setCraftBuilder({})}
+              onRefine={(name) => setCraftBuilder({ refineName: name })}
+              onPublish={(name) => setCraftPublishName(name)}
+              onMarketplace={() => setCraftMarketplaceOpen(true)}
+              onEditManifest={(name) => setCraftManifestName(name)}
+              onDelete={async (name, displayName) => {
+                if (!confirm(`Delete craft "${displayName}"?\n\nThis removes <project>/.forge/crafts/${name}/ permanently.`)) return;
+                const r = await fetch(`/api/craft-system/delete?projectPath=${encodeURIComponent(projectPath)}&name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+                if (r.ok) {
+                  setProjectTab('code');
+                  refreshCrafts();
+                }
+              }}
+            />
           </div>
         </div>
         {projectTab === 'code' && gitInfo?.lastCommit && (
@@ -1371,6 +1416,65 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
             </div>
           )}
         </div>
+      )}
+
+      {/* Craft tabs — lazy-mount on first visit, then keep mounted (hidden via CSS)
+          so each craft's terminal panel + WebSocket survive tab switches. */}
+      {crafts.filter(c => visitedCrafts.has(c.name)).map(c => {
+        const isActive = projectTab === `craft:${c.name}`;
+        return (
+          <div key={c.name} className={`flex-1 flex flex-col min-h-0 overflow-hidden ${isActive ? '' : 'hidden'}`}>
+            <Suspense fallback={<div className="p-4 text-xs text-[var(--text-secondary)]">Loading craft {c.displayName}…</div>}>
+              <CraftTabLazy craft={c as any} projectPath={projectPath} projectName={projectName} />
+            </Suspense>
+          </div>
+        );
+      })}
+
+      {/* Craft Marketplace modal */}
+      {craftMarketplaceOpen && (
+        <Suspense fallback={null}>
+          <CraftMarketplaceModalLazy
+            projectPath={projectPath}
+            onClose={() => setCraftMarketplaceOpen(false)}
+            onInstalled={refreshCrafts}
+          />
+        </Suspense>
+      )}
+
+      {/* Craft Publish modal */}
+      {craftPublishName && (
+        <Suspense fallback={null}>
+          <CraftPublishModalLazy
+            projectPath={projectPath}
+            craftName={craftPublishName}
+            onClose={() => setCraftPublishName(null)}
+          />
+        </Suspense>
+      )}
+
+      {/* Craft Manifest editor */}
+      {craftManifestName && (
+        <Suspense fallback={null}>
+          <CraftManifestEditorLazy
+            projectPath={projectPath}
+            craftName={craftManifestName}
+            onClose={() => setCraftManifestName(null)}
+          />
+        </Suspense>
+      )}
+
+      {/* Craft Builder modal */}
+      {craftBuilder && (
+        <Suspense fallback={null}>
+          <CraftBuilderModalLazy
+            projectPath={projectPath}
+            projectName={projectName}
+            refineCraftName={craftBuilder.refineName}
+            onClose={() => setCraftBuilder(null)}
+            onCreated={() => { refreshCrafts(); setCraftBuilder(null); }}
+          />
+        </Suspense>
       )}
 
       {/* Git panel — bottom (code tab only) */}

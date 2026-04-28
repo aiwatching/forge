@@ -209,6 +209,7 @@ function cleanupOrphanedSessions() {
   for (const s of sessions) {
     if (s.attached) continue;
     if (s.name.startsWith(`${SESSION_PREFIX}forge-`)) continue; // workspace agent session — managed by orchestrator
+    if (s.name.startsWith('mw-craft-')) continue;               // craft session — managed by craft loader
     if (knownSessions.has(s.name)) continue; // saved in terminal state — preserve
     const clients = sessionClients.get(s.name)?.size ?? 0;
     if (clients === 0) {

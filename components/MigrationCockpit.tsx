@@ -179,25 +179,36 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
     }
   }, [projectPath, endpoints.length, flash, refreshFailures]);
 
-  // ─── AI Fix ────────────────────────────────────────────
-  const requestFix = useCallback(async (ids: string[], mode: 'inject' | 'task') => {
-    let sessionName: string | undefined;
-    if (mode === 'inject') {
-      sessionName = window.prompt('tmux session name to inject into (e.g. mw-projectname):') || undefined;
-      if (!sessionName) return;
-    }
-    const res = await fetch('/api/migration/fix', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectPath, projectName, mode, endpointIds: ids, sessionName }),
-    });
-    const r = await res.json();
-    if (r.ok) flash(mode === 'task' ? `Task created: ${r.taskId} (${r.count} endpoints)` : `Sent to ${r.sessionName}`);
-    else flash('Fix failed: ' + (r.error || 'unknown'));
-  }, [projectPath, projectName, flash]);
 
   // ─── Diagnose: open detail drawer with full context ────
   const [diagnoseFor, setDiagnoseFor] = useState<{ markdown: string; endpointId: string } | null>(null);
+  const [sessionInfo, setSessionInfo] = useState<{ name: string; cwd: string; attached: boolean }[]>([]);
+  const [pickedSession, setPickedSession] = useState<string | null>(null);
+
+  // Discover terminal sessions tied to this project once on mount
+  useEffect(() => {
+    fetch(`/api/migration/sessions?projectPath=${encodeURIComponent(projectPath)}`)
+      .then(r => r.ok ? r.json() : { matches: [] })
+      .then(d => {
+        setSessionInfo(d.matches || []);
+        // Auto-pick the first attached session, otherwise the first match
+        const auto = (d.matches || []).find((s: any) => s.attached) || (d.matches || [])[0];
+        if (auto) setPickedSession(auto.name);
+      })
+      .catch(() => {});
+  }, [projectPath]);
+
+  const refreshSessions = useCallback(async () => {
+    const res = await fetch(`/api/migration/sessions?projectPath=${encodeURIComponent(projectPath)}`);
+    if (!res.ok) return;
+    const d = await res.json();
+    setSessionInfo(d.matches || []);
+    if (!pickedSession || !(d.matches || []).find((s: any) => s.name === pickedSession)) {
+      const auto = (d.matches || []).find((s: any) => s.attached) || (d.matches || [])[0];
+      if (auto) setPickedSession(auto.name);
+    }
+  }, [projectPath, pickedSession]);
+
   const openDiagnose = useCallback(async (endpointId: string) => {
     const res = await fetch(`/api/migration/diagnose?projectPath=${encodeURIComponent(projectPath)}&endpointId=${endpointId}`);
     if (!res.ok) { flash('Diagnose failed'); return; }
@@ -205,16 +216,29 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
     setDiagnoseFor({ markdown: j.markdown, endpointId });
   }, [projectPath, flash]);
 
-  const sendDiagnoseToTask = useCallback(async (endpointIds: string[]) => {
+  // Send the diagnosis: prefer inject to bound terminal, fall back to task if none.
+  const sendDiagnose = useCallback(async (endpointIds: string[], opts: { forceTask?: boolean; sessionName?: string } = {}) => {
+    const target = opts.sessionName ?? pickedSession;
+    if (!opts.forceTask && target) {
+      const res = await fetch('/api/migration/fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectPath, projectName, mode: 'inject', endpointIds, sessionName: target }),
+      });
+      const r = await res.json();
+      if (r.ok) { flash(`Sent to terminal ${target} (${r.count} endpoints)`); return; }
+      flash(`Inject failed: ${r.error || 'unknown'} — falling back to task`);
+    }
+    // Fall back to task
     const res = await fetch('/api/migration/diagnose', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectPath, projectName, endpointIds, mode: 'task' }),
     });
     const r = await res.json();
-    if (r.ok) flash(`Diagnose task created: ${r.taskId} (${r.count} endpoints)`);
+    if (r.ok) flash(`Task created: ${r.taskId} (${r.count} endpoints)`);
     else flash('Diagnose failed: ' + (r.error || 'unknown'));
-  }, [projectPath, projectName, flash]);
+  }, [projectPath, projectName, pickedSession, flash]);
 
   const copyCurl = useCallback(async (endpointId: string) => {
     const res = await fetch(`/api/migration/diagnose?projectPath=${encodeURIComponent(projectPath)}&endpointId=${endpointId}`);
@@ -307,13 +331,15 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
               className="text-xs px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30">
               Run selected ({selectedIds.size})
             </button>
-            <button onClick={() => requestFix([...selectedIds], 'task')}
-              className="text-xs px-2.5 py-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30">
-              AI fix → task
+            <button onClick={() => sendDiagnose([...selectedIds])}
+              className="text-xs px-2.5 py-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30"
+              title={pickedSession ? `Inject into ${pickedSession}` : 'No bound terminal — will fall back to task'}>
+              🤖 Fix selected{pickedSession ? ` → ${pickedSession.replace(/^mw[a-z0-9]*-/, '')}` : ' → task'}
             </button>
-            <button onClick={() => requestFix([...selectedIds], 'inject')}
-              className="text-xs px-2.5 py-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30">
-              AI fix → inject
+            <button onClick={() => sendDiagnose([...selectedIds], { forceTask: true })}
+              className="text-xs px-2.5 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]"
+              title="Spawn background task instead of injecting">
+              → task
             </button>
           </>
         )}
@@ -333,6 +359,24 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
           <option value="migrated">Migrated</option>
           <option value="pending">Pending (no doc)</option>
         </select>
+        {/* Bound terminal picker */}
+        <div className="flex items-center gap-1 text-[10px]">
+          <span className="text-[var(--text-secondary)]">→</span>
+          {sessionInfo.length > 0 ? (
+            <select value={pickedSession || ''} onChange={e => setPickedSession(e.target.value || null)}
+              className="text-[10px] bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-1.5 py-0.5 max-w-[200px]"
+              title="Bound terminal — fixes inject here">
+              {sessionInfo.map(s => (
+                <option key={s.name} value={s.name}>
+                  {s.name.replace(/^mw[a-z0-9]*-/, '')}{s.attached ? ' ●' : ''}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-orange-300/70" title="Open a terminal in this project to enable inject">no bound terminal</span>
+          )}
+          <button onClick={refreshSessions} className="text-[9px] text-[var(--text-secondary)] hover:text-[var(--accent)]" title="Refresh terminal list">↻</button>
+        </div>
         <button onClick={() => setShowConfig(v => !v)}
           className="text-xs px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]">
           {showConfig ? 'Hide config' : 'Config'}
@@ -450,9 +494,9 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
                             title="Show full diagnosis context">
                             🔍
                           </button>
-                          <button onClick={() => sendDiagnoseToTask([ep.id])}
+                          <button onClick={() => sendDiagnose([ep.id])}
                             className="text-[10px] px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30"
-                            title="Spawn AI fix task with full context">
+                            title={pickedSession ? `Inject diagnosis into ${pickedSession}` : 'No bound terminal — will fall back to background task'}>
                             🤖 Fix
                           </button>
                         </>
@@ -501,9 +545,10 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
                   </div>
                 ))}
                 <button
-                  onClick={() => requestFix(c.controllers.flatMap(cc => cc.failures.map(f => f.endpointId)), 'task')}
-                  className="mt-1 text-[10px] w-full py-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30">
-                  Fix cluster → task
+                  onClick={() => sendDiagnose(c.controllers.flatMap(cc => cc.failures.map(f => f.endpointId)))}
+                  className="mt-1 text-[10px] w-full py-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30"
+                  title={pickedSession ? `Inject into ${pickedSession}` : 'No bound terminal — will fall back to task'}>
+                  🤖 Fix cluster {pickedSession ? '→ terminal' : '→ task'}
                 </button>
               </div>
             ))}
@@ -525,9 +570,15 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
             <div className="px-4 py-2 border-b border-[var(--border)] flex items-center gap-2">
               <span className="text-xs font-semibold text-[var(--text-primary)]">🔍 Diagnosis</span>
               <div className="flex-1" />
-              <button onClick={() => sendDiagnoseToTask([diagnoseFor.endpointId])}
-                className="text-[10px] px-2 py-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30">
-                🤖 Send to AI fix task
+              <button onClick={() => sendDiagnose([diagnoseFor.endpointId])}
+                className="text-[10px] px-2 py-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30"
+                title={pickedSession ? `Inject into ${pickedSession}` : 'No bound terminal — will fall back to task'}>
+                🤖 {pickedSession ? `Send to ${pickedSession.replace(/^mw[a-z0-9]*-/, '')}` : 'Send as task'}
+              </button>
+              <button onClick={() => sendDiagnose([diagnoseFor.endpointId], { forceTask: true })}
+                className="text-[10px] px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]"
+                title="Force background task instead of inject">
+                → task
               </button>
               <button onClick={async () => { try { await navigator.clipboard.writeText(diagnoseFor.markdown); flash('Copied prompt'); } catch {} }}
                 className="text-[10px] px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]">

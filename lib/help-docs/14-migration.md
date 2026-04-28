@@ -147,7 +147,7 @@ When a row fails, four buttons appear next to it:
 |---|---|
 | `Run` | Re-run just this endpoint |
 | `🔍` | Open the **Diagnose drawer** — full markdown with request URL, actual response, expected schema, schema violations, OpenAPI metadata, and the migration doc snippet |
-| `🤖 Fix` | Spawn a Forge background task seeded with that same diagnosis markdown — runs in the **project's working dir**, so the project's own CLAUDE.md and migration playbook drive the fix |
+| `🤖 Fix` | Inject the diagnosis markdown into the **bound terminal** (the live tmux session whose pane cwd is at/under this project). Falls back to spawning a background task if no terminal matches. |
 | `📋` | Copy a reproduction `curl` to clipboard |
 
 After a batch run, failure clusters appear in the sidebar grouped by error type with sub-counts per controller. From a cluster you can `Fix cluster → task` to send the entire cluster as one diagnosis prompt.
@@ -160,8 +160,11 @@ If more than 50% of runs fail with the same connectivity error type (`new-unreac
 
 Forge is the **tool / orchestrator**: it discovers endpoints from your OpenAPI spec, runs HTTP parity tests, surfaces failures, and packages diagnosis context. Forge intentionally does NOT hard-code source-file paths or migration conventions — those belong to your project's `CLAUDE.md` and migration playbook. The Diagnose / Fix tasks spawn inside the project's working directory so the project's own conventions drive the fix.
 
-- **AI fix → task** sends the rich diagnosis prompt to a fresh Forge background task in the project.
-- **AI fix → inject** pastes the same prompt + Enter into a named tmux session — use when you have a Claude session already open.
+### Bound terminal
+
+The toolbar shows `→ <session-name> ●` when Forge has detected an active tmux session whose pane is in this project's directory (●  = currently attached). All `🤖 Fix` actions default to **injecting into that session** rather than creating a task — your already-running Claude takes over the fix in-place. If multiple sessions match, pick one from the dropdown. If none match (no terminal open in the project), the fix falls back to a background task.
+
+Use the small **→ task** button next to any fix action to force a fresh background task instead.
 
 ## Tips
 

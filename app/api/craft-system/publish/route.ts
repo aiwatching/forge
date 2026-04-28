@@ -36,10 +36,11 @@ export async function POST(req: Request) {
     repo: { owner: ownerRepo.split('/')[0], name: ownerRepo.split('/')[1], url: ghBase },
     registryEditUrl: editFileUrl('registry.json'),
     instructions: [
-      `You don't need write access to ${ownerRepo} — GitHub auto-forks the repo when you click any of the file links below.`,
-      `1. Click each file's "Open in GitHub" button. GitHub creates each file in YOUR fork.`,
-      `2. After all files are created, open registry.json (auto-forked) and append the JSON entry shown in the "registry.json entry" tab.`,
-      `3. Open a PR from your fork. Once merged, all Forge users can install via the marketplace.`,
+      `All publishes go through a pull request — direct pushes to main are not accepted, even from maintainers.`,
+      `1. Click each file's "Open in GitHub" button. GitHub auto-forks ${ownerRepo} into your account (if you don't have write access) and creates the file there.`,
+      `2. After all files are created, open registry.json and append the JSON entry from the "registry.json entry" tab.`,
+      `3. In each commit dialog, pick "Create a new branch for this commit and start a pull request" — never commit to main directly.`,
+      `4. After the last commit, GitHub takes you straight to the PR. Submit it; once merged, the craft appears in every Forge user's marketplace.`,
     ],
   });
 }

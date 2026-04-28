@@ -64,10 +64,10 @@ export default function CraftPublishModal({ projectPath, craftName, onClose }: {
             {tab === 'instructions' && (
               <div className="flex-1 overflow-auto p-4 text-[11px] text-[var(--text-primary)] space-y-3">
                 <div className="text-[var(--text-secondary)]">
-                  You don't need write access to{' '}
+                  Every publish goes through a pull request to{' '}
                   {bundle.repo
                     ? <a href={bundle.repo.url} target="_blank" rel="noreferrer" className="text-[var(--accent)] hover:underline">{bundle.repo.owner}/{bundle.repo.name}</a>
-                    : 'the registry'} — GitHub auto-forks the repo when you click any of the buttons below.
+                    : 'the registry'} — GitHub auto-forks the repo if you don't have write access. Maintainers also use the PR flow; direct commits to main are not accepted.
                 </div>
                 <ol className="list-decimal pl-5 space-y-1.5">
                   {bundle.instructions.map((line, i) => <li key={i}>{line}</li>)}

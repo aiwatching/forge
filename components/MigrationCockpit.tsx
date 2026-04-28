@@ -517,7 +517,7 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
                         {r.errorMessage}
                       </div>
                     )}
-                    {exp && r && <RunResultDetail r={r} />}
+                    {exp && r && <RunResultDetail r={r} projectPath={projectPath} endpointId={ep.id} flash={flash} />}
                   </div>
                 );
               })}
@@ -684,48 +684,182 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-// ─── Run result detail ───────────────────────────────────
+// ─── Run result detail (inspector) ───────────────────────
 
-function RunResultDetail({ r }: { r: RunResult }) {
+function prettyJson(v: any, max = 12000): string {
+  try {
+    const s = JSON.stringify(v, null, 2);
+    return s.length > max ? s.slice(0, max) + '\n…(truncated)' : s;
+  } catch { return String(v); }
+}
+
+function copyText(s: string, flash?: (m: string) => void) {
+  navigator.clipboard.writeText(s).then(
+    () => flash?.('Copied'),
+    () => flash?.('Could not access clipboard')
+  );
+}
+
+function RunResultDetail({ r, projectPath, endpointId, flash }: {
+  r: RunResult; projectPath: string; endpointId: string; flash: (m: string) => void;
+}) {
+  const [schema, setSchema] = React.useState<any | null>(null);
+  const [schemaOpen, setSchemaOpen] = React.useState(false);
+  const [headersOpen, setHeadersOpen] = React.useState(false);
+  const hasLegacy = r.legacy.url && !r.legacy.url.startsWith('(skipped');
+
+  React.useEffect(() => {
+    if (!schemaOpen || schema !== null) return;
+    fetch(`/api/migration/diagnose?projectPath=${encodeURIComponent(projectPath)}&endpointId=${endpointId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(j => setSchema(j?.context?.schema ?? false))
+      .catch(() => setSchema(false));
+  }, [schemaOpen, schema, projectPath, endpointId]);
+
   return (
-    <div className="px-6 py-2 bg-[var(--bg-tertiary)]/40 text-[10px] font-mono space-y-1">
-      <div className="grid grid-cols-2 gap-3">
-        <SidePane label="Legacy" side={r.legacy} />
-        <SidePane label="New" side={r.next} />
+    <div className="px-4 py-2 bg-[var(--bg-tertiary)]/40 text-[10px] space-y-2 border-t border-[var(--border)]/50">
+      {/* Top summary */}
+      <div className="flex items-center gap-3 text-[11px]">
+        <span className={`px-1.5 py-0.5 rounded font-semibold ${r.match === 'pass' || r.match === 'stub-ok' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'}`}>
+          {r.match}
+        </span>
+        {r.errorType && <span className="text-yellow-400">{r.errorType}</span>}
+        {r.errorMessage && <span className="text-[var(--text-secondary)] truncate">{r.errorMessage}</span>}
+        <span className="ml-auto text-[9px] text-[var(--text-secondary)]">{r.durationMs}ms · {r.startedAt}</span>
       </div>
+
+      {/* Side-by-side request/response */}
+      <div className={`grid gap-3 ${hasLegacy ? 'grid-cols-2' : 'grid-cols-1'}`}>
+        {hasLegacy && <SidePane label="Legacy" side={r.legacy} method={r.legacy.method} flash={flash} />}
+        <SidePane label="New (web-server)" side={r.next} method={r.next.method} flash={flash} />
+      </div>
+
+      {/* Toggle headers */}
+      <div className="flex items-center gap-3">
+        <button onClick={() => setHeadersOpen(v => !v)}
+          className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--accent)]">
+          {headersOpen ? '▼' : '▶'} Headers
+        </button>
+        <button onClick={() => setSchemaOpen(v => !v)}
+          className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--accent)]">
+          {schemaOpen ? '▼' : '▶'} Expected schema (OpenAPI)
+        </button>
+      </div>
+
+      {headersOpen && (
+        <div className={`grid gap-3 ${hasLegacy ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {hasLegacy && <HeadersPane side={r.legacy} />}
+          <HeadersPane side={r.next} />
+        </div>
+      )}
+
+      {schemaOpen && (
+        <div>
+          {schema === null && <div className="text-[10px] text-[var(--text-secondary)]">Loading…</div>}
+          {schema === false && <div className="text-[10px] text-[var(--text-secondary)]">No schema available for this endpoint.</div>}
+          {schema && schema !== false && (
+            <pre className="text-[9px] max-h-64 overflow-auto whitespace-pre-wrap break-words bg-[var(--bg-primary)] border border-[var(--border)] rounded p-2 font-mono text-[var(--text-primary)]">
+              {prettyJson(schema)}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {/* Diffs / violations */}
       {r.diff && r.diff.length > 0 && (
-        <div className="mt-2 border-t border-[var(--border)] pt-2">
-          <div className="text-[10px] text-yellow-400 mb-1">Diffs ({r.diff.length}):</div>
-          <div className="max-h-40 overflow-y-auto">
-            {r.diff.map((d, i) => (
-              <div key={i} className="flex gap-2 py-0.5">
-                <span className="text-cyan-300 w-32 truncate" title={d.jsonPath}>{d.jsonPath}</span>
-                <span className="text-red-300 truncate flex-1" title={JSON.stringify(d.legacy)}>L: {JSON.stringify(d.legacy)}</span>
-                <span className="text-emerald-300 truncate flex-1" title={JSON.stringify(d.next)}>N: {JSON.stringify(d.next)}</span>
-              </div>
-            ))}
+        <div className="border-t border-[var(--border)] pt-2">
+          <div className="text-[10px] text-yellow-400 mb-1 font-semibold">
+            {r.errorType === 'schema-violation' ? 'Schema violations' : 'Diffs'} ({r.diff.length})
+          </div>
+          <div className="max-h-48 overflow-y-auto bg-[var(--bg-primary)] border border-[var(--border)] rounded">
+            <table className="w-full text-[10px] font-mono">
+              <thead className="sticky top-0 bg-[var(--bg-tertiary)]">
+                <tr className="text-[var(--text-secondary)]">
+                  <th className="text-left px-2 py-1 font-normal">JSON path</th>
+                  <th className="text-left px-2 py-1 font-normal">Reason</th>
+                  <th className="text-left px-2 py-1 font-normal">{r.errorType === 'schema-violation' ? 'Expected' : 'Legacy'}</th>
+                  <th className="text-left px-2 py-1 font-normal">{r.errorType === 'schema-violation' ? 'Actual' : 'New'}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {r.diff.map((d, i) => (
+                  <tr key={i} className="border-t border-[var(--border)]/40">
+                    <td className="px-2 py-0.5 text-cyan-300 align-top break-all">{d.jsonPath}</td>
+                    <td className="px-2 py-0.5 text-yellow-300/80 align-top">{d.reason}</td>
+                    <td className="px-2 py-0.5 text-emerald-300/80 align-top break-all">{JSON.stringify(d.legacy)}</td>
+                    <td className="px-2 py-0.5 text-red-300/80 align-top break-all">{JSON.stringify(d.next)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
-      {r.errorMessage && <div className="text-red-400">⚠ {r.errorType}: {r.errorMessage}</div>}
     </div>
   );
 }
 
-function SidePane({ label, side }: { label: string; side: any }) {
+function SidePane({ label, side, method, flash }: { label: string; side: any; method?: string; flash: (m: string) => void }) {
+  const statusColor = side.error ? 'text-red-400'
+    : side.status >= 200 && side.status < 300 ? 'text-emerald-400'
+    : side.status === 501 ? 'text-blue-400'
+    : 'text-orange-400';
   return (
-    <div className="space-y-0.5">
-      <div className="text-[10px] text-[var(--text-secondary)] flex items-center gap-2">
-        <span>{label}</span>
-        <span className={side.ok ? 'text-emerald-400' : 'text-red-400'}>{side.status || side.error}</span>
-        <span className="text-[9px] opacity-60">{side.durationMs}ms</span>
+    <div className="space-y-1 bg-[var(--bg-primary)] border border-[var(--border)] rounded p-2">
+      <div className="flex items-center gap-2 text-[10px]">
+        <span className="font-semibold text-[var(--text-primary)]">{label}</span>
+        <span className={`font-mono font-bold ${statusColor}`}>
+          {side.status || side.error || '—'}
+          {side.statusText && side.status ? ` ${side.statusText}` : ''}
+        </span>
+        <span className="text-[9px] text-[var(--text-secondary)]">{side.durationMs}ms</span>
+        <button onClick={() => copyText(side.bodyExcerpt || '', flash)}
+          className="ml-auto text-[9px] text-[var(--text-secondary)] hover:text-[var(--accent)]" title="Copy response body">📋</button>
       </div>
-      <div className="text-[9px] text-[var(--text-secondary)] truncate" title={side.url}>{side.url}</div>
+      <div className="text-[9px] font-mono text-[var(--text-secondary)] break-all">
+        <span className="text-yellow-300">{method || ''}</span> {side.url}
+      </div>
+      {side.error && (
+        <div className="text-[10px] text-red-300 font-mono bg-red-500/10 rounded p-1">
+          {side.error}
+        </div>
+      )}
       {side.bodyExcerpt && (
-        <pre className="text-[9px] max-h-24 overflow-auto whitespace-pre-wrap break-words bg-[var(--bg-primary)] border border-[var(--border)] rounded p-1">
-          {side.bodyExcerpt.slice(0, 800)}
+        <pre className="text-[10px] max-h-48 overflow-auto whitespace-pre-wrap break-words bg-[var(--bg-tertiary)]/40 rounded p-1.5 font-mono text-[var(--text-primary)]">
+          {tryFormatJson(side.bodyExcerpt)}
         </pre>
       )}
+    </div>
+  );
+}
+
+function tryFormatJson(s: string): string {
+  try {
+    const parsed = JSON.parse(s);
+    const pretty = JSON.stringify(parsed, null, 2);
+    return pretty.length > 6000 ? pretty.slice(0, 6000) + '\n…(truncated)' : pretty;
+  } catch {
+    return s.length > 6000 ? s.slice(0, 6000) + '\n…(truncated)' : s;
+  }
+}
+
+function HeadersPane({ side }: { side: any }) {
+  return (
+    <div className="space-y-1 bg-[var(--bg-primary)] border border-[var(--border)] rounded p-2 text-[9px] font-mono">
+      <div className="text-[10px] text-[var(--text-secondary)] mb-1">Request headers</div>
+      <div className="space-y-0.5">
+        {Object.entries(side.requestHeaders || {}).map(([k, v]) => (
+          <div key={k} className="flex gap-2"><span className="text-cyan-300">{k}:</span><span className="text-[var(--text-primary)] break-all">{String(v)}</span></div>
+        ))}
+        {Object.keys(side.requestHeaders || {}).length === 0 && <div className="text-[var(--text-secondary)]">(none)</div>}
+      </div>
+      <div className="text-[10px] text-[var(--text-secondary)] mt-2 mb-1">Response headers</div>
+      <div className="space-y-0.5 max-h-32 overflow-auto">
+        {Object.entries(side.responseHeaders || {}).map(([k, v]) => (
+          <div key={k} className="flex gap-2"><span className="text-purple-300">{k}:</span><span className="text-[var(--text-primary)] break-all">{String(v)}</span></div>
+        ))}
+        {Object.keys(side.responseHeaders || {}).length === 0 && <div className="text-[var(--text-secondary)]">(none)</div>}
+      </div>
     </div>
   );
 }

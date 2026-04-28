@@ -44,24 +44,29 @@ async function fetchOne(baseUrl: string, ep: Endpoint, config: MigrationConfig, 
   const start = Date.now();
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeout);
+  const requestHeaders = buildHeaders(config);
   try {
     const resp = await fetch(url, {
       method: ep.method,
-      headers: buildHeaders(config),
+      headers: requestHeaders,
       signal: ctrl.signal,
     });
     const text = await resp.text();
     let bodyJson: any = undefined;
     try { bodyJson = text ? JSON.parse(text) : undefined; } catch {}
+    const responseHeaders: Record<string, string> = {};
+    resp.headers.forEach((v, k) => { responseHeaders[k] = v; });
     return {
-      url, status: resp.status, ok: resp.ok,
-      bodyExcerpt: text.slice(0, 4096),
+      url, method: ep.method, status: resp.status, statusText: resp.statusText, ok: resp.ok,
+      requestHeaders, responseHeaders,
+      bodyExcerpt: text.slice(0, 8192),
       bodyJson,
       durationMs: Date.now() - start,
     };
   } catch (e: any) {
     return {
-      url, status: 0, ok: false,
+      url, method: ep.method, status: 0, ok: false,
+      requestHeaders,
       error: e?.name === 'AbortError' ? `timeout after ${timeout}ms` : (e?.message || String(e)),
       durationMs: Date.now() - start,
     };

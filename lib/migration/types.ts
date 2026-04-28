@@ -38,8 +38,12 @@ export interface RunResult {
 
 export interface SideResult {
   url: string;
+  method?: HttpMethod;
   status: number;
+  statusText?: string;
   ok: boolean;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
   bodyExcerpt?: string;
   bodyJson?: any;
   error?: string;

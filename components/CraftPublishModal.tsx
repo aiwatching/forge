@@ -20,6 +20,46 @@ export default function CraftPublishModal({ projectPath, craftName, onClose }: {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<'instructions' | 'entry' | 'files'>('instructions');
   const [activeFile, setActiveFile] = useState<string>('');
+  const [gh, setGh] = useState<{ available: boolean; user?: string } | null>(null);
+  const [autoState, setAutoState] = useState<'idle' | 'running' | 'done' | 'failed'>('idle');
+  const [autoLog, setAutoLog] = useState<string[]>([]);
+  const [prUrl, setPrUrl] = useState<string | null>(null);
+  const [autoError, setAutoError] = useState<string | null>(null);
+
+  // Probe whether gh CLI is usable for one-click publish
+  useEffect(() => {
+    fetch('/api/craft-system/publish/auto')
+      .then(r => r.ok ? r.json() : { available: false })
+      .then(setGh)
+      .catch(() => setGh({ available: false }));
+  }, []);
+
+  const oneClick = async () => {
+    setAutoState('running');
+    setAutoLog([]);
+    setAutoError(null);
+    setPrUrl(null);
+    try {
+      const res = await fetch('/api/craft-system/publish/auto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectPath, name: craftName }),
+      });
+      const j = await res.json();
+      if (!j.ok) {
+        setAutoError(j.error || 'failed');
+        setAutoLog(j.log || []);
+        setAutoState('failed');
+        return;
+      }
+      setPrUrl(j.prUrl);
+      setAutoLog(j.log || []);
+      setAutoState('done');
+    } catch (e: any) {
+      setAutoError(e?.message || String(e));
+      setAutoState('failed');
+    }
+  };
 
   useEffect(() => {
     fetch('/api/craft-system/publish', {
@@ -69,6 +109,55 @@ export default function CraftPublishModal({ projectPath, craftName, onClose }: {
                     ? <a href={bundle.repo.url} target="_blank" rel="noreferrer" className="text-[var(--accent)] hover:underline">{bundle.repo.owner}/{bundle.repo.name}</a>
                     : 'the registry'} — GitHub auto-forks the repo if you don't have write access. Maintainers also use the PR flow; direct commits to main are not accepted.
                 </div>
+
+                {/* One-click PR via gh CLI */}
+                <div className="rounded border border-[var(--accent)]/40 bg-[var(--accent)]/5 p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] font-semibold text-[var(--text-primary)]">🚀 One-click publish</span>
+                    {gh?.available && <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">gh CLI ready as @{gh.user}</span>}
+                    {gh && !gh.available && <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300">gh CLI unavailable</span>}
+                  </div>
+                  {gh?.available ? (
+                    <>
+                      <div className="text-[10px] text-[var(--text-secondary)]">
+                        Forge will fork {bundle.repo?.owner}/{bundle.repo?.name}, push the craft + registry update on a new branch, and open a PR — all from your authenticated <code>gh</code> CLI.
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={oneClick} disabled={autoState === 'running' || autoState === 'done'}
+                          className="text-[11px] px-3 py-1.5 rounded bg-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/40 disabled:opacity-40">
+                          {autoState === 'running' ? '⏳ Publishing…'
+                            : autoState === 'done' ? '✓ Submitted'
+                            : autoState === 'failed' ? 'Retry'
+                            : 'Submit PR via gh'}
+                        </button>
+                        {prUrl && (
+                          <a href={prUrl} target="_blank" rel="noreferrer"
+                            className="text-[11px] px-3 py-1.5 rounded bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30">
+                            Open PR →
+                          </a>
+                        )}
+                      </div>
+                      {autoLog.length > 0 && (
+                        <div className="bg-black/30 rounded p-2 text-[9px] font-mono text-[var(--text-secondary)] max-h-32 overflow-auto space-y-0.5">
+                          {autoLog.map((l, i) => <div key={i}>· {l}</div>)}
+                        </div>
+                      )}
+                      {autoError && (
+                        <div className="text-[10px] text-red-300 bg-red-500/10 rounded p-2 break-words">
+                          {autoError}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-[10px] text-[var(--text-secondary)]">
+                      To enable one-click publish, install + authenticate <code>gh</code> in a terminal:
+                      <pre className="mt-1 bg-black/30 rounded p-1.5 font-mono text-[var(--text-primary)]">brew install gh{'\n'}gh auth login</pre>
+                      Then refresh this dialog. Until then, use the manual steps below.
+                    </div>
+                  )}
+                </div>
+
+                <div className="text-[10px] text-[var(--text-secondary)] mt-3 mb-1">Or do it manually:</div>
                 <ol className="list-decimal pl-5 space-y-1.5">
                   {bundle.instructions.map((line, i) => <li key={i}>{line}</li>)}
                 </ol>

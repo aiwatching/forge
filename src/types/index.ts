@@ -121,6 +121,9 @@ export interface TaskLogEntry {
   content: string;
   tool?: string;
   timestamp: string;
+  // Slice-API metadata (server adds these when serving a truncated chunk)
+  _index?: number;
+  _truncated?: number;   // original content.length before truncation
 }
 
 export interface AppConfig {

@@ -142,6 +142,66 @@ export function listTasksLite(status?: TaskStatus): Task[] {
   return rows.map(r => rowToLiteTask(r));
 }
 
+// Slice the log without parsing the whole JSON in JS — sqlite JSON1's
+// json_each walks the array and we LIMIT/OFFSET in SQL. For a 1.6 MB log
+// with 238 entries this returns just the requested ~100 in milliseconds.
+export function getTaskLogSlice(id: string, opts: { offset?: number; limit?: number; truncate?: number } = {}):
+  { entries: (TaskLogEntry & { _truncated?: number; _index?: number })[]; total: number } {
+  const totalRow = db().prepare(
+    `SELECT COALESCE(json_array_length(log), 0) AS n FROM tasks WHERE id = ?`
+  ).get(id) as { n: number } | undefined;
+  const total = totalRow?.n ?? 0;
+  if (total === 0) return { entries: [], total: 0 };
+
+  const limit = Math.max(1, Math.min(opts.limit ?? 200, 2000));
+  const offset = Math.max(0, opts.offset ?? Math.max(0, total - limit));
+  const truncate = opts.truncate ?? 8192;   // per-entry content cap; 0 = no cap
+  const rows = db().prepare(
+    `SELECT json_each.key AS idx, value FROM tasks, json_each(tasks.log)
+     WHERE tasks.id = ?
+     ORDER BY json_each.key
+     LIMIT ? OFFSET ?`
+  ).all(id, limit, offset) as { idx: number; value: string }[];
+
+  const entries = rows.map(r => {
+    let entry: TaskLogEntry & { _truncated?: number; _index?: number };
+    try { entry = JSON.parse(r.value); }
+    catch { entry = { type: 'system', content: '<unparseable entry>' } as any; }
+    entry._index = r.idx;
+    if (truncate > 0 && typeof entry.content === 'string' && entry.content.length > truncate) {
+      const fullLen = entry.content.length;
+      entry.content = entry.content.slice(0, truncate);
+      entry._truncated = fullLen;
+    }
+    return entry;
+  });
+  return { entries, total };
+}
+
+// Single entry by index — used to "show full" a previously truncated entry.
+export function getTaskLogEntry(id: string, index: number): TaskLogEntry | null {
+  const row = db().prepare(
+    `SELECT value FROM tasks, json_each(tasks.log)
+     WHERE tasks.id = ? AND json_each.key = ?`
+  ).get(id, index) as { value: string } | undefined;
+  if (!row) return null;
+  try { return JSON.parse(row.value); } catch { return null; }
+}
+
+// Fetch only the heavy fields by id (used when the client needs them after
+// having gotten the lite list earlier).
+export function getTaskBody(id: string): { resultSummary?: string; gitDiff?: string; error?: string } | null {
+  const row = db().prepare(
+    `SELECT result_summary, git_diff, error FROM tasks WHERE id = ?`
+  ).get(id) as any;
+  if (!row) return null;
+  return {
+    resultSummary: row.result_summary || undefined,
+    gitDiff: row.git_diff || undefined,
+    error: row.error || undefined,
+  };
+}
+
 function rowToLiteTask(row: any): Task {
   return {
     id: row.id,

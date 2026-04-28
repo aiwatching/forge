@@ -200,15 +200,40 @@ export function CraftTab({ craft, projectPath, projectName }: Props) {
           <CraftTerminalPickerLazy
             projectName={projectName}
             defaultAgentId={termChoice?.agentId}
-            onPick={(c) => {
+            onPick={async (c) => {
               const next: CraftTermChoice = {
                 agentId: c.agentId,
                 resumeSessionId: c.sessionMode === 'new' ? undefined : c.sessionId,
               };
+              const sessionName = craft.preferredSessionName || `mw-craft-${craft.name}`;
+              const wasShowing = showTerm;
+              const choiceChanged = !termChoice
+                || termChoice.agentId !== next.agentId
+                || termChoice.resumeSessionId !== next.resumeSessionId;
+
+              // Tear down existing tmux session so CraftTerminal can recreate
+              // it with the chosen agent + --resume flag. The cleanupOrphans
+              // exemption keeps craft sessions alive otherwise.
+              if (choiceChanged) {
+                try {
+                  await fetch('/api/craft-system/kill-session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionName }),
+                  });
+                } catch {}
+              }
+
               saveTermChoice(projectPath, craft.name, next);
-              setTermChoice(next);
               setPickerOpen(false);
-              setShowTerm(true);
+              if (choiceChanged && wasShowing) {
+                // Force-remount CraftTerminal with the new choice
+                setShowTerm(false);
+                setTimeout(() => { setTermChoice(next); setShowTerm(true); }, 50);
+              } else {
+                setTermChoice(next);
+                setShowTerm(true);
+              }
             }}
             onCancel={() => setPickerOpen(false)}
           />

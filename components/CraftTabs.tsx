@@ -52,7 +52,7 @@ export function CraftTab({ craft, projectPath, projectName }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const url = `/api/crafts/_ui?projectPath=${encodeURIComponent(projectPath)}&name=${encodeURIComponent(craft.name)}&t=${Date.now()}`;
+        const url = `/api/craft-system/ui?projectPath=${encodeURIComponent(projectPath)}&name=${encodeURIComponent(craft.name)}&t=${Date.now()}`;
         // eslint-disable-next-line @next/next/no-assign-module-variable
         const mod = await import(/* webpackIgnore: true */ url);
         if (cancelled) return;

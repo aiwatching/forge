@@ -139,7 +139,7 @@ export function useStore<T = any>(file: string, defaultValue?: T): [T | null, (n
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetch(`/api/crafts/_storage?projectPath=${encodeURIComponent(projectPath)}&craft=${craftName}&file=${encodeURIComponent(file)}`)
+    fetch(`/api/craft-system/storage?projectPath=${encodeURIComponent(projectPath)}&craft=${craftName}&file=${encodeURIComponent(file)}`)
       .then(async r => r.ok ? r.json() : { value: null })
       .then(j => { if (!cancelled) { setValue(j.value ?? defaultValue ?? null); setLoading(false); } })
       .catch(e => { if (!cancelled) { setError(e?.message); setLoading(false); } });
@@ -149,7 +149,7 @@ export function useStore<T = any>(file: string, defaultValue?: T): [T | null, (n
 
   const save = useCallback(async (next: T) => {
     setValue(next);
-    await fetch(`/api/crafts/_storage?projectPath=${encodeURIComponent(projectPath)}&craft=${craftName}&file=${encodeURIComponent(file)}`, {
+    await fetch(`/api/craft-system/storage?projectPath=${encodeURIComponent(projectPath)}&craft=${craftName}&file=${encodeURIComponent(file)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: next }),
@@ -174,7 +174,7 @@ export function useOpenAPI(specPath: string): OpenAPIData {
   useEffect(() => {
     let cancelled = false;
     setState(s => ({ ...s, loading: true }));
-    fetch(`/api/crafts/_helpers/openapi?projectPath=${encodeURIComponent(projectPath)}&path=${encodeURIComponent(specPath)}`)
+    fetch(`/api/craft-system/helpers/openapi?projectPath=${encodeURIComponent(projectPath)}&path=${encodeURIComponent(specPath)}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`${r.status}`)))
       .then(j => { if (!cancelled) setState({ spec: j.spec, paths: j.paths || [], schemas: j.schemas || {}, loading: false, error: null }); })
       .catch(e => { if (!cancelled) setState(s => ({ ...s, loading: false, error: e.message })); });
@@ -193,7 +193,7 @@ export function useFile(path: string, opts: { watch?: number } = {}): { content:
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetch(`/api/crafts/_helpers/file?projectPath=${encodeURIComponent(projectPath)}&path=${encodeURIComponent(path)}`)
+    fetch(`/api/craft-system/helpers/file?projectPath=${encodeURIComponent(projectPath)}&path=${encodeURIComponent(path)}`)
       .then(r => r.ok ? r.text() : Promise.reject(new Error(`${r.status}`)))
       .then(t => { if (!cancelled) { setContent(t); setLoading(false); } })
       .catch(e => { if (!cancelled) { setError(e.message); setLoading(false); } });
@@ -211,7 +211,7 @@ export function useFile(path: string, opts: { watch?: number } = {}): { content:
 export function useShell(): (cmd: string, opts?: { timeout?: number }) => Promise<{ stdout: string; stderr: string; code: number }> {
   const { projectPath } = useCraftCtx();
   return useCallback(async (cmd, opts = {}) => {
-    const r = await fetch(`/api/crafts/_helpers/shell?projectPath=${encodeURIComponent(projectPath)}`, {
+    const r = await fetch(`/api/craft-system/helpers/shell?projectPath=${encodeURIComponent(projectPath)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cmd, timeout: opts.timeout }),

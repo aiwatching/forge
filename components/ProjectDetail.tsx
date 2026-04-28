@@ -639,8 +639,9 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
             {crafts.map(c => {
               const tabId = `craft:${c.name}`;
               const active = projectTab === tabId;
+              const isProject = c.scope === 'project';
               return (
-                <span key={c.name} className="relative inline-flex">
+                <span key={c.name} className="relative inline-flex items-stretch">
                   <button onClick={() => setProjectTab(tabId)}
                     className={`text-[11px] font-medium px-2.5 py-1 rounded transition-all ${
                       active ? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm ring-1 ring-[var(--accent)]/40' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]'
@@ -648,10 +649,22 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
                     title={c.description || c.displayName}>
                     {c.displayName}
                   </button>
-                  {active && c.scope === 'project' && (
-                    <button onClick={(e) => { e.stopPropagation(); setCraftBuilder({ refineName: c.name }); }}
-                      className="absolute -right-1 -top-1 text-[8px] px-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] hover:bg-[var(--accent)]/30"
-                      title="Refine this craft">⚙</button>
+                  {active && isProject && (
+                    <span className="ml-0.5 flex items-center gap-0.5">
+                      <button onClick={() => setCraftBuilder({ refineName: c.name })}
+                        className="text-[10px] px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)]"
+                        title="Refine this craft (AI iterates on it)">⚙</button>
+                      <button onClick={async () => {
+                          if (!confirm(`Delete craft "${c.displayName}"?\n\nThis removes <project>/.forge/crafts/${c.name}/ permanently.`)) return;
+                          const r = await fetch(`/api/craft-system/delete?projectPath=${encodeURIComponent(projectPath)}&name=${encodeURIComponent(c.name)}`, { method: 'DELETE' });
+                          if (r.ok) {
+                            setProjectTab('code');
+                            refreshCrafts();
+                          }
+                        }}
+                        className="text-[10px] px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:bg-red-500/20 hover:text-red-300"
+                        title="Delete this craft">🗑</button>
+                    </span>
                   )}
                 </span>
               );

@@ -39,9 +39,11 @@ export async function loadServer(craft: CraftDescriptor): Promise<CraftServerDef
 
   const src = readFileSync(file, 'utf8');
   const compiled = await transpileToFile(src);
-  // Bust ESM cache by adding a query string (Node ESM caches by URL)
+  // Bust ESM cache by adding a query string (Node ESM caches by URL).
+  // Use Function() so Turbopack doesn't try to statically analyze the import.
   const url = pathToFileURL(compiled).href + `?t=${stat.mtimeMs}`;
-  const mod = await import(url);
+  const dynamicImport = new Function('u', 'return import(u)') as (u: string) => Promise<any>;
+  const mod = await dynamicImport(url);
   const def: CraftServerDef = mod.default ?? mod.craft ?? mod;
   if (!def || typeof def !== 'object' || !def.routes) {
     throw new Error(`Craft "${craft.name}" server.ts must export default defineCraftServer({...})`);
@@ -187,13 +189,12 @@ export async function transpileUi(craft: CraftDescriptor): Promise<string> {
     jsx: 'automatic',
     write: false,
     // Mark React + SDK as externals so they share the host page's instances
-    external: ['react', 'react-dom', '@forge/craft'],
+    external: ['react', 'react/jsx-runtime', 'react-dom', '@forge/craft'],
   });
-  // Rewrite the SDK + react imports to the URL where the host serves them
+  // Rewrite SDK + react bare imports → absolute URLs that Forge serves.
   let code = result.outputFiles[0].text;
-  // Replace bare imports → absolute URLs Forge can resolve in the browser
-  code = code.replace(/from\s+["']react["']/g, 'from "/api/crafts/_runtime/react.js"');
-  code = code.replace(/from\s+["']react\/jsx-runtime["']/g, 'from "/api/crafts/_runtime/react-jsx.js"');
-  code = code.replace(/from\s+["']@forge\/craft["']/g, 'from "/api/crafts/_runtime/sdk.js"');
+  code = code.replace(/from\s*["']react["']/g, 'from "/api/craft-system/runtime/react"');
+  code = code.replace(/from\s*["']react\/jsx-runtime["']/g, 'from "/api/craft-system/runtime/react-jsx"');
+  code = code.replace(/from\s*["']@forge\/craft["']/g, 'from "/api/craft-system/runtime/sdk"');
   return code;
 }

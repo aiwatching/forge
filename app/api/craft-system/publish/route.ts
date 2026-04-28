@@ -16,15 +16,30 @@ export async function POST(req: Request) {
   const repoMatch = repo.match(/github\.com\/([^/]+)\/([^/]+)|raw\.githubusercontent\.com\/([^/]+)\/([^/]+)/);
   const ownerRepo = repoMatch ? `${repoMatch[1] || repoMatch[3]}/${(repoMatch[2] || repoMatch[4]).replace(/\.git$/, '')}` : 'aiwatching/forge-crafts';
 
+  // GitHub web-edit deep links — clicking "create file" without write access
+  // makes GitHub auto-fork the repo into the user's account, create the file
+  // in the fork, and prompt to open a PR. Zero local-clone required.
+  const ghBase = `https://github.com/${ownerRepo}`;
+  const newFileUrl = (path: string, content: string, filename: string) =>
+    `${ghBase}/new/main/${encodeURIComponent(path)}?filename=${encodeURIComponent(filename)}&value=${encodeURIComponent(content)}`;
+  const editFileUrl = (path: string) => `${ghBase}/edit/main/${encodeURIComponent(path)}`;
+
+  const fileLinks = bundle.files.map(f => ({
+    path: f.path,
+    githubUrl: newFileUrl(bundle.entry.name, f.content, f.path),
+  }));
+
   return NextResponse.json({
     entry: bundle.entry,
     files: bundle.files,
+    fileLinks,
+    repo: { owner: ownerRepo.split('/')[0], name: ownerRepo.split('/')[1], url: ghBase },
+    registryEditUrl: editFileUrl('registry.json'),
     instructions: [
-      `Open a PR against https://github.com/${ownerRepo}`,
-      `1. Create a folder \`${bundle.entry.name}/\` at the repo root.`,
-      `2. Add the files listed below into that folder.`,
-      `3. Append the registry-entry JSON to \`registry.json\` under \`crafts: [...]\`.`,
-      `4. Submit the PR. Once merged, all Forge users can install via the marketplace browser.`,
+      `You don't need write access to ${ownerRepo} — GitHub auto-forks the repo when you click any of the file links below.`,
+      `1. Click each file's "Open in GitHub" button. GitHub creates each file in YOUR fork.`,
+      `2. After all files are created, open registry.json (auto-forked) and append the JSON entry shown in the "registry.json entry" tab.`,
+      `3. Open a PR from your fork. Once merged, all Forge users can install via the marketplace.`,
     ],
   });
 }

@@ -5,6 +5,9 @@ import React, { useState, useEffect } from 'react';
 interface PublishBundle {
   entry: any;
   files: { path: string; content: string }[];
+  fileLinks?: { path: string; githubUrl: string }[];
+  repo?: { owner: string; name: string; url: string };
+  registryEditUrl?: string;
   instructions: string[];
 }
 
@@ -59,16 +62,57 @@ export default function CraftPublishModal({ projectPath, craftName, onClose }: {
             </div>
 
             {tab === 'instructions' && (
-              <div className="flex-1 overflow-auto p-4 text-[11px] text-[var(--text-primary)] space-y-2">
-                <div className="text-[var(--text-secondary)] mb-2">
-                  Forge doesn't have a one-click publish flow yet — the marketplace is a public GitHub repo
-                  (<code className="text-[var(--accent)]">forge-crafts</code> by default), and publishing means opening a PR.
+              <div className="flex-1 overflow-auto p-4 text-[11px] text-[var(--text-primary)] space-y-3">
+                <div className="text-[var(--text-secondary)]">
+                  You don't need write access to{' '}
+                  {bundle.repo
+                    ? <a href={bundle.repo.url} target="_blank" rel="noreferrer" className="text-[var(--accent)] hover:underline">{bundle.repo.owner}/{bundle.repo.name}</a>
+                    : 'the registry'} — GitHub auto-forks the repo when you click any of the buttons below.
                 </div>
-                <ol className="list-decimal pl-5 space-y-1">
+                <ol className="list-decimal pl-5 space-y-1.5">
                   {bundle.instructions.map((line, i) => <li key={i}>{line}</li>)}
                 </ol>
+
+                {bundle.fileLinks && bundle.fileLinks.length > 0 && (
+                  <div className="mt-3 border border-[var(--border)] rounded p-2.5 space-y-1.5">
+                    <div className="text-[10px] text-[var(--text-secondary)] mb-1">Step 1: Create each file in your fork (one click each)</div>
+                    {bundle.fileLinks.map(fl => (
+                      <a key={fl.path} href={fl.githubUrl} target="_blank" rel="noreferrer"
+                        className="flex items-center gap-2 px-2 py-1.5 rounded bg-[var(--bg-tertiary)] hover:bg-[var(--accent)]/10 border border-[var(--border)] transition-colors">
+                        <span className="text-[11px] font-mono text-[var(--text-primary)] flex-1">
+                          {bundle.entry.name}/{fl.path}
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)]">
+                          Open in GitHub →
+                        </span>
+                      </a>
+                    ))}
+                  </div>
+                )}
+
+                {bundle.registryEditUrl && (
+                  <div className="border border-[var(--border)] rounded p-2.5 space-y-1.5">
+                    <div className="text-[10px] text-[var(--text-secondary)] mb-1">Step 2: Append your craft to registry.json</div>
+                    <a href={bundle.registryEditUrl} target="_blank" rel="noreferrer"
+                      className="flex items-center gap-2 px-2 py-1.5 rounded bg-[var(--bg-tertiary)] hover:bg-[var(--accent)]/10 border border-[var(--border)] transition-colors">
+                      <span className="text-[11px] font-mono text-[var(--text-primary)] flex-1">registry.json</span>
+                      <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); copy(JSON.stringify(bundle.entry, null, 2)); }}
+                        className="text-[10px] px-2 py-0.5 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]"
+                        title="Copy entry JSON to clipboard before opening editor">
+                        📋 Copy entry
+                      </button>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)]">
+                        Open editor →
+                      </span>
+                    </a>
+                    <div className="text-[9px] text-[var(--text-secondary)] opacity-70">
+                      In the editor, paste the entry inside the <code>crafts: [...]</code> array, then commit + open PR.
+                    </div>
+                  </div>
+                )}
+
                 <div className="mt-3 text-[var(--text-secondary)] text-[10px] opacity-70">
-                  Tip: switch to the Files tab to copy each file's content; switch to the registry.json tab for the JSON snippet.
+                  Need an alternative? Use the Files tab to copy each file's content manually, or the registry.json entry tab to copy the JSON snippet.
                 </div>
               </div>
             )}

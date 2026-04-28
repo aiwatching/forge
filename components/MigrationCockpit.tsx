@@ -192,9 +192,39 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
       body: JSON.stringify({ projectPath, projectName, mode, endpointIds: ids, sessionName }),
     });
     const r = await res.json();
-    if (r.ok) flash(mode === 'task' ? `Task created: ${r.taskId}` : `Sent to ${r.sessionName}`);
+    if (r.ok) flash(mode === 'task' ? `Task created: ${r.taskId} (${r.count} endpoints)` : `Sent to ${r.sessionName}`);
     else flash('Fix failed: ' + (r.error || 'unknown'));
   }, [projectPath, projectName, flash]);
+
+  // ─── Diagnose: open detail drawer with full context ────
+  const [diagnoseFor, setDiagnoseFor] = useState<{ markdown: string; endpointId: string } | null>(null);
+  const openDiagnose = useCallback(async (endpointId: string) => {
+    const res = await fetch(`/api/migration/diagnose?projectPath=${encodeURIComponent(projectPath)}&endpointId=${endpointId}`);
+    if (!res.ok) { flash('Diagnose failed'); return; }
+    const j = await res.json();
+    setDiagnoseFor({ markdown: j.markdown, endpointId });
+  }, [projectPath, flash]);
+
+  const sendDiagnoseToTask = useCallback(async (endpointIds: string[]) => {
+    const res = await fetch('/api/migration/diagnose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectPath, projectName, endpointIds, mode: 'task' }),
+    });
+    const r = await res.json();
+    if (r.ok) flash(`Diagnose task created: ${r.taskId} (${r.count} endpoints)`);
+    else flash('Diagnose failed: ' + (r.error || 'unknown'));
+  }, [projectPath, projectName, flash]);
+
+  const copyCurl = useCallback(async (endpointId: string) => {
+    const res = await fetch(`/api/migration/diagnose?projectPath=${encodeURIComponent(projectPath)}&endpointId=${endpointId}`);
+    if (!res.ok) { flash('Failed to fetch curl'); return; }
+    const j = await res.json();
+    const curl = j.context?.curlCommand;
+    if (!curl) { flash('No curl available'); return; }
+    try { await navigator.clipboard.writeText(curl); flash('Copied curl to clipboard'); }
+    catch { flash('Could not access clipboard'); }
+  }, [projectPath, flash]);
 
   // ─── Selection ─────────────────────────────────────────
   const toggleSelect = (id: string) => {
@@ -223,6 +253,39 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
     }
     return { total, pass, fail, stub, untested, stubbed, pending, withSchema };
   }, [endpoints, results]);
+
+  // ─── Health: detect connectivity-class failures dominating the results ──
+  const health = useMemo(() => {
+    const all = Object.values(results);
+    if (all.length === 0) return null;
+    const errs = all.filter(r => r.match === 'error');
+    if (errs.length === 0) return null;
+    const ratio = errs.length / all.length;
+    if (ratio < 0.5) return null;
+
+    // Bucket errors by type and pull a sample message
+    const byType = new Map<string, { count: number; sample?: string; sampleUrl?: string }>();
+    for (const r of errs) {
+      const t = r.errorType || 'error';
+      const slot = byType.get(t) || { count: 0 };
+      slot.count++;
+      if (!slot.sample) {
+        slot.sample = r.errorMessage || r.next.error || r.legacy.error || '';
+        slot.sampleUrl = r.next.url || r.legacy.url;
+      }
+      byType.set(t, slot);
+    }
+    const top = [...byType.entries()].sort((a, b) => b[1].count - a[1].count)[0];
+    return {
+      ratio,
+      errorCount: errs.length,
+      total: all.length,
+      topType: top[0],
+      topCount: top[1].count,
+      sampleMessage: top[1].sample,
+      sampleUrl: top[1].sampleUrl,
+    };
+  }, [results]);
 
   if (!config) return <div className="p-4 text-xs text-[var(--text-secondary)]">Loading…</div>;
 
@@ -298,6 +361,39 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
         )}
       </div>
 
+      {/* Connectivity banner */}
+      {health && (
+        <div className="mx-4 mt-2 p-3 rounded border border-orange-500/40 bg-orange-500/10 text-[11px]">
+          <div className="font-semibold text-orange-300 mb-1">
+            ⚠ {health.errorCount}/{health.total} runs failed with `{health.topType}` ({Math.round(health.ratio * 100)}%)
+          </div>
+          <div className="text-[var(--text-secondary)] mb-1">
+            {health.topType === 'new-unreachable' && (
+              <>新 web-server 不可达。请检查：<b>baseUrl</b> 是否正确（当前 <code className="text-orange-300">{config.next.baseUrl}</code>）、服务是否启动、端口是否监听。</>
+            )}
+            {health.topType === 'legacy-unreachable' && (
+              <>Legacy 不可达。如果你不想跑 legacy，把 Diff mode 改为 <b>shape</b>（不需要 legacy）。当前 baseUrl: <code>{config.legacy.baseUrl}</code>。</>
+            )}
+            {health.topType !== 'new-unreachable' && health.topType !== 'legacy-unreachable' && (
+              <>大量 endpoint 报同一类错。Sample: <code>{health.sampleUrl}</code></>
+            )}
+          </div>
+          {health.sampleMessage && (
+            <div className="text-[10px] font-mono text-orange-200/80 break-all">
+              错误信息: {health.sampleMessage}
+            </div>
+          )}
+          <div className="mt-1.5 flex gap-2">
+            <button onClick={() => setShowConfig(true)} className="text-[10px] px-2 py-0.5 rounded bg-orange-500/20 text-orange-200 hover:bg-orange-500/30">
+              打开 Config
+            </button>
+            <button onClick={() => setResults({})} className="text-[10px] px-2 py-0.5 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]">
+              清空结果重新跑
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Config panel */}
       {showConfig && (
         <ConfigPanel config={config} onSave={saveConfig} onClose={() => setShowConfig(false)} />
@@ -338,19 +434,45 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
                       {ep.isStubbed && <span className="text-[9px] px-1 rounded bg-blue-500/20 text-blue-300">501</span>}
                       <span className={`text-[9px] ${STATUS_COLORS[ep.status] || ''}`}>{ep.status}</span>
                       {r && (
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded border ${MATCH_COLORS[r.match]}`}>
-                          {r.match}
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded border ${MATCH_COLORS[r.match]}`}
+                          title={r.errorMessage || r.errorType || r.match}>
+                          {r.match}{r.errorType ? ` · ${r.errorType}` : ''}
                         </span>
                       )}
                       <button onClick={() => runOne(ep)}
                         className="text-[10px] px-2 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)] hover:bg-[var(--accent)]/30">
                         Run
                       </button>
+                      {r && (r.match === 'fail' || r.match === 'error') && (
+                        <>
+                          <button onClick={() => openDiagnose(ep.id)}
+                            className="text-[10px] px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30"
+                            title="Show full diagnosis context">
+                            🔍
+                          </button>
+                          <button onClick={() => sendDiagnoseToTask([ep.id])}
+                            className="text-[10px] px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30"
+                            title="Spawn AI fix task with full context">
+                            🤖 Fix
+                          </button>
+                        </>
+                      )}
+                      <button onClick={() => copyCurl(ep.id)}
+                        className="text-[10px] px-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                        title="Copy reproduction curl">
+                        📋
+                      </button>
                       <button onClick={() => setExpandedId(exp ? null : ep.id)}
                         className="text-[10px] px-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
                         {exp ? '▼' : '▶'}
                       </button>
                     </div>
+                    {/* Inline error preview when collapsed */}
+                    {!exp && r && (r.match === 'fail' || r.match === 'error') && r.errorMessage && (
+                      <div className="px-12 pb-1 text-[10px] text-red-300/80 font-mono truncate" title={r.errorMessage}>
+                        {r.errorMessage}
+                      </div>
+                    )}
                     {exp && r && <RunResultDetail r={r} />}
                   </div>
                 );
@@ -392,6 +514,34 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
       {toast && (
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 text-xs rounded bg-[var(--bg-tertiary)] border border-[var(--border)] shadow-lg">
           {toast}
+        </div>
+      )}
+
+      {/* Diagnose drawer */}
+      {diagnoseFor && (
+        <div className="fixed inset-0 z-50 flex" onClick={() => setDiagnoseFor(null)}>
+          <div className="flex-1 bg-black/40" />
+          <div className="w-[640px] max-w-[90vw] bg-[var(--bg-primary)] border-l border-[var(--border)] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-2 border-b border-[var(--border)] flex items-center gap-2">
+              <span className="text-xs font-semibold text-[var(--text-primary)]">🔍 Diagnosis</span>
+              <div className="flex-1" />
+              <button onClick={() => sendDiagnoseToTask([diagnoseFor.endpointId])}
+                className="text-[10px] px-2 py-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30">
+                🤖 Send to AI fix task
+              </button>
+              <button onClick={async () => { try { await navigator.clipboard.writeText(diagnoseFor.markdown); flash('Copied prompt'); } catch {} }}
+                className="text-[10px] px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]">
+                Copy markdown
+              </button>
+              <button onClick={() => setDiagnoseFor(null)}
+                className="text-[10px] px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]">
+                Close
+              </button>
+            </div>
+            <pre className="flex-1 overflow-auto p-4 text-[11px] font-mono whitespace-pre-wrap break-words text-[var(--text-primary)]">
+              {diagnoseFor.markdown}
+            </pre>
+          </div>
         </div>
       )}
     </div>

@@ -139,12 +139,29 @@ pathSubstitutions:
 └── failures/current.json     # latest failures (used by clustering)
 ```
 
-## AI fix
+## Diagnose & fix
 
-After a batch run, failure clusters appear in the sidebar grouped by error type (`http-status-mismatch`, `json-diff`, `legacy-unreachable`, …) with sub-counts per controller.
+When a row fails, four buttons appear next to it:
 
-- **AI fix → task** spawns a Forge background task in the project; the task receives a structured prompt naming the failing endpoints + diffs and is told *not* to modify legacy code.
-- **AI fix → inject** prompts for a tmux session name and pastes the prompt + Enter into a running Claude Code session. Use this when you have a Claude terminal already open and want it to take over the fix.
+| Button | Action |
+|---|---|
+| `Run` | Re-run just this endpoint |
+| `🔍` | Open the **Diagnose drawer** — full markdown with request URL, actual response, expected schema, schema violations, OpenAPI metadata, and the migration doc snippet |
+| `🤖 Fix` | Spawn a Forge background task seeded with that same diagnosis markdown — runs in the **project's working dir**, so the project's own CLAUDE.md and migration playbook drive the fix |
+| `📋` | Copy a reproduction `curl` to clipboard |
+
+After a batch run, failure clusters appear in the sidebar grouped by error type with sub-counts per controller. From a cluster you can `Fix cluster → task` to send the entire cluster as one diagnosis prompt.
+
+### Connectivity banner
+
+If more than 50% of runs fail with the same connectivity error type (`new-unreachable`, `legacy-unreachable`, …), a banner appears at the top with the actual error message (e.g. `ECONNREFUSED 127.0.0.1:9090`) and one-click access to Config. This catches the common case of "the new server isn't running" before you start hunting individual failures.
+
+### Architectural note
+
+Forge is the **tool / orchestrator**: it discovers endpoints from your OpenAPI spec, runs HTTP parity tests, surfaces failures, and packages diagnosis context. Forge intentionally does NOT hard-code source-file paths or migration conventions — those belong to your project's `CLAUDE.md` and migration playbook. The Diagnose / Fix tasks spawn inside the project's working directory so the project's own conventions drive the fix.
+
+- **AI fix → task** sends the rich diagnosis prompt to a fresh Forge background task in the project.
+- **AI fix → inject** pastes the same prompt + Enter into a named tmux session — use when you have a Claude session already open.
 
 ## Tips
 

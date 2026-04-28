@@ -184,7 +184,8 @@ export default function TaskDetail({
             </button>
           </div>
         </div>
-        <p className="text-xs text-[var(--text-secondary)] mb-2">{task.prompt}</p>
+        <TaskPromptPreview prompt={task.prompt} />
+
         <div className="flex items-center gap-3 text-[10px] text-[var(--text-secondary)]">
           <span>Created: {new Date(task.createdAt).toLocaleString()}</span>
           {task.startedAt && <span>Started: {new Date(task.startedAt).toLocaleString()}</span>}
@@ -519,4 +520,51 @@ function formatToolContent(content: string): string {
   } catch {
     return content;
   }
+}
+
+// ─── Task prompt preview with click-to-expand ──────────────
+const PROMPT_PREVIEW_MAX = 240;
+
+function TaskPromptPreview({ prompt }: { prompt: string }) {
+  const [open, setOpen] = useState(false);
+  const long = prompt.length > PROMPT_PREVIEW_MAX || prompt.includes('\n');
+  const preview = long ? prompt.slice(0, PROMPT_PREVIEW_MAX).split('\n')[0] : prompt;
+
+  return (
+    <>
+      <div className="flex items-start gap-2 mb-2">
+        <p className="text-xs text-[var(--text-secondary)] flex-1 break-words" title={long ? 'Click to view full prompt' : undefined}>
+          {preview}
+          {long && <span className="text-[var(--text-secondary)] opacity-60">…</span>}
+        </p>
+        {long && (
+          <button
+            onClick={() => setOpen(true)}
+            className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)] shrink-0"
+            title={`${prompt.length} chars · ${prompt.split('\n').length} lines`}
+          >
+            View full
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setOpen(false)}>
+          <div className="bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg shadow-2xl w-[800px] max-w-[95vw] max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-2 border-b border-[var(--border)] flex items-center gap-2">
+              <span className="text-xs font-semibold text-[var(--text-primary)]">Task prompt</span>
+              <span className="text-[10px] text-[var(--text-secondary)]">{prompt.length.toLocaleString()} chars · {prompt.split('\n').length} lines</span>
+              <div className="flex-1" />
+              <button
+                onClick={() => { navigator.clipboard.writeText(prompt).catch(() => {}); }}
+                className="text-[10px] px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]"
+              >Copy</button>
+              <button onClick={() => setOpen(false)} className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]">✕</button>
+            </div>
+            <pre className="flex-1 overflow-auto p-4 text-[11px] font-mono whitespace-pre-wrap break-words text-[var(--text-primary)]">{prompt}</pre>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }

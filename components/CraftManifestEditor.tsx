@@ -138,7 +138,7 @@ export default function CraftManifestEditor({ projectPath, craftName, onClose, o
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div className="bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg shadow-2xl w-[640px] max-w-[95vw] max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <div className="bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg shadow-2xl w-[900px] max-w-[95vw] max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="px-4 py-2.5 border-b border-[var(--border)] flex items-center gap-2">
           <span className="text-sm font-semibold text-[var(--text-primary)]">📝 Edit manifest: {craftName}</span>
           {dirty && <span className="text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300">unsaved</span>}

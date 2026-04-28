@@ -87,7 +87,7 @@ export interface SchemaViolation {
   detail?: any;
 }
 
-export function validateAgainstSchema(value: any, schema: any, path = '$', out: SchemaViolation[] = [], ignore?: RegExp[]): SchemaViolation[] {
+export function validateAgainstSchema(value: any, schema: any, path = '$', out: SchemaViolation[] = [], ignore?: RegExp[], opts: { lenientNullable?: boolean } = {}): SchemaViolation[] {
   if (!schema || typeof schema !== 'object') return out;
   if (schema.__cycle || schema.__unresolved) return out;
   if (ignore && ignore.some(re => re.test(path))) return out;
@@ -98,7 +98,7 @@ export function validateAgainstSchema(value: any, schema: any, path = '$', out: 
     let bestErrors: SchemaViolation[] | null = null;
     for (const branch of branches) {
       const errs: SchemaViolation[] = [];
-      validateAgainstSchema(value, branch, path, errs, ignore);
+      validateAgainstSchema(value, branch, path, errs, ignore, opts);
       if (errs.length === 0) return out;
       if (!bestErrors || errs.length < bestErrors.length) bestErrors = errs;
     }
@@ -106,7 +106,7 @@ export function validateAgainstSchema(value: any, schema: any, path = '$', out: 
     return out;
   }
   if (Array.isArray(schema.allOf)) {
-    for (const branch of schema.allOf) validateAgainstSchema(value, branch, path, out, ignore);
+    for (const branch of schema.allOf) validateAgainstSchema(value, branch, path, out, ignore, opts);
     return out;
   }
 
@@ -118,6 +118,9 @@ export function validateAgainstSchema(value: any, schema: any, path = '$', out: 
     if (schema.nullable === true) return out;
     if (Array.isArray(t) && t.includes('null')) return out;
     if (t === 'null') return out;
+    // Lenient: spec authors commonly forget `nullable: true` on optional scalars.
+    // For string / number / boolean, accept null unless the field is in `required`.
+    if (opts.lenientNullable !== false && (t === 'string' || t === 'number' || t === 'integer' || t === 'boolean')) return out;
     out.push({ jsonPath: path, expected: String(t || 'non-null'), actual: 'null', reason: 'type-mismatch' });
     return out;
   }
@@ -135,7 +138,7 @@ export function validateAgainstSchema(value: any, schema: any, path = '$', out: 
     }
     const props = schema.properties || {};
     for (const [k, sub] of Object.entries(props)) {
-      if (k in value) validateAgainstSchema(value[k], sub, `${path}.${k}`, out, ignore);
+      if (k in value) validateAgainstSchema(value[k], sub, `${path}.${k}`, out, ignore, opts);
     }
     return out;
   }
@@ -150,7 +153,7 @@ export function validateAgainstSchema(value: any, schema: any, path = '$', out: 
       // Validate first 10 items only — keeps reports tractable for large arrays.
       const sample = value.slice(0, 10);
       for (let i = 0; i < sample.length; i++) {
-        validateAgainstSchema(sample[i], item, `${path}[${i}]`, out, ignore);
+        validateAgainstSchema(sample[i], item, `${path}[${i}]`, out, ignore, opts);
       }
     }
     return out;

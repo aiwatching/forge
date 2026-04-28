@@ -92,6 +92,7 @@ export interface MigrationConfig {
   };
   clusterMode: 'simple' | 'ai';
   diffMode: DiffMode;                // exact = compare both sides; shape = validate new against schema; both = both
+  lenientNullable?: boolean;         // when true (default), accept null for string/number/boolean fields even if spec didn't mark nullable
   endpointSource: {
     type: 'docs' | 'openapi' | 'source-scan' | 'mixed';
     primary: string;                 // dir for per-controller docs
@@ -109,6 +110,7 @@ export const DEFAULT_CONFIG: MigrationConfig = {
   healthCheck: { legacyTimeout: 2000, newTimeout: 2000, skipUnhealthy: true },
   clusterMode: 'simple',
   diffMode: 'shape',
+  lenientNullable: true,
   endpointSource: {
     type: 'mixed',
     primary: 'docs/migration',

@@ -132,7 +132,7 @@ export async function runEndpoint(ep: Endpoint, config: MigrationConfig, openApi
         // No schema — treat as smoke pass (endpoint responded 2xx with no body check)
         match = 'pass';
       } else {
-        const vios = validateAgainstSchema(next.bodyJson, schema, '$', [], compileIgnore(config.ignorePaths));
+        const vios = validateAgainstSchema(next.bodyJson, schema, '$', [], compileIgnore(config.ignorePaths), { lenientNullable: config.lenientNullable !== false });
         if (vios.length > 0) {
           match = 'fail';
           errorType = 'schema-violation';
@@ -164,7 +164,7 @@ export async function runEndpoint(ep: Endpoint, config: MigrationConfig, openApi
       if (mode === 'both' && openApi) {
         const schema = getOpResponseSchema(openApi, ep);
         if (schema) {
-          const vios = validateAgainstSchema(next.bodyJson, schema, '$', [], compileIgnore(config.ignorePaths));
+          const vios = validateAgainstSchema(next.bodyJson, schema, '$', [], compileIgnore(config.ignorePaths), { lenientNullable: config.lenientNullable !== false });
           if (vios.length > 0 && match === 'pass') {
             match = 'fail';
             errorType = 'schema-violation';

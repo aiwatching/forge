@@ -536,7 +536,16 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
                         {r.errorMessage}
                       </div>
                     )}
-                    {exp && r && <RunResultDetail r={r} projectPath={projectPath} endpointId={ep.id} flash={flash} />}
+                    {exp && r && <RunResultDetail r={r} projectPath={projectPath} endpointId={ep.id} flash={flash}
+                      onIgnorePath={async (p) => {
+                        if (!config) return;
+                        const generalized = p.replace(/\[\d+\]/g, '[*]');
+                        if (config.ignorePaths.includes(generalized)) { flash('Already ignored'); return; }
+                        const next = { ...config, ignorePaths: [...config.ignorePaths, generalized] };
+                        await saveConfig(next);
+                        flash(`Added ${generalized} — re-running`);
+                        runOne(ep);
+                      }} />}
                   </div>
                 );
               })}
@@ -735,8 +744,8 @@ function copyText(s: string, flash?: (m: string) => void) {
   );
 }
 
-function RunResultDetail({ r, projectPath, endpointId, flash }: {
-  r: RunResult; projectPath: string; endpointId: string; flash: (m: string) => void;
+function RunResultDetail({ r, projectPath, endpointId, flash, onIgnorePath }: {
+  r: RunResult; projectPath: string; endpointId: string; flash: (m: string) => void; onIgnorePath: (p: string) => void;
 }) {
   const [schema, setSchema] = React.useState<any | null>(null);
   const [schemaOpen, setSchemaOpen] = React.useState(false);
@@ -814,15 +823,23 @@ function RunResultDetail({ r, projectPath, endpointId, flash }: {
                   <th className="text-left px-2 py-1 font-normal">Reason</th>
                   <th className="text-left px-2 py-1 font-normal">{r.errorType === 'schema-violation' ? 'Expected' : 'Legacy'}</th>
                   <th className="text-left px-2 py-1 font-normal">{r.errorType === 'schema-violation' ? 'Actual' : 'New'}</th>
+                  <th className="text-right px-2 py-1 font-normal w-12"></th>
                 </tr>
               </thead>
               <tbody>
                 {r.diff.map((d, i) => (
-                  <tr key={i} className="border-t border-[var(--border)]/40">
+                  <tr key={i} className="border-t border-[var(--border)]/40 group">
                     <td className="px-2 py-0.5 text-cyan-300 align-top break-all">{d.jsonPath}</td>
                     <td className="px-2 py-0.5 text-yellow-300/80 align-top">{d.reason}</td>
                     <td className="px-2 py-0.5 text-emerald-300/80 align-top break-all">{JSON.stringify(d.legacy)}</td>
                     <td className="px-2 py-0.5 text-red-300/80 align-top break-all">{JSON.stringify(d.next)}</td>
+                    <td className="px-1 py-0.5 align-top text-right">
+                      <button onClick={() => onIgnorePath(d.jsonPath)}
+                        className="text-[9px] px-1.5 py-0 rounded bg-orange-500/10 text-orange-300/80 hover:bg-orange-500/20 opacity-0 group-hover:opacity-100"
+                        title={`Add ${d.jsonPath} to ignorePaths and re-run`}>
+                        🚫 ignore
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

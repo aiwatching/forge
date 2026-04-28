@@ -24,6 +24,7 @@ interface AgentSummary { id: string; name?: string; path?: string; }
 export interface CraftTerminalProps {
   projectPath: string;
   craftName: string;
+  craftDisplayName?: string;
   preferredSessionName: string;     // e.g. mw-craft-<hash>-<name>; component will create if missing
   craftDir: string;                 // <project>/.forge/crafts/<name>/
   // Initial agent + session choice from the picker. Used when CraftTerminal
@@ -31,11 +32,13 @@ export interface CraftTerminalProps {
   initialAgentId?: string;
   initialResumeSessionId?: string;
   onPickAgain?: () => void;         // toolbar handler — re-open the picker
+  onHide?: () => void;              // hide panel (preserve tmux + agent)
+  onClose?: () => void;             // close = kill tmux + clear choice
 }
 
 export default function CraftTerminal({
-  projectPath, craftName, preferredSessionName, craftDir,
-  initialAgentId, initialResumeSessionId, onPickAgain,
+  projectPath, craftName, craftDisplayName, preferredSessionName, craftDir,
+  initialAgentId, initialResumeSessionId, onPickAgain, onHide, onClose,
 }: CraftTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -257,7 +260,21 @@ export default function CraftTerminal({
           <button onClick={onPickAgain}
             className="text-[10px] px-2 py-0.5 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--accent)]"
             title="Re-pick agent + session">
-            ⚙
+            ⚙ session
+          </button>
+        )}
+        {onHide && (
+          <button onClick={onHide}
+            className="text-[10px] px-2 py-0.5 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--accent)]"
+            title="Hide this panel — tmux session keeps running so you can re-open right back where you left off">
+            ⊟ hide
+          </button>
+        )}
+        {onClose && (
+          <button onClick={onClose}
+            className="text-[10px] px-2 py-0.5 rounded text-[var(--text-secondary)] hover:text-red-300 hover:bg-red-500/10"
+            title="Close — kills the tmux session and forgets the agent/session choice">
+            ✕ close
           </button>
         )}
       </div>

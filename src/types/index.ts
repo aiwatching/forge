@@ -109,6 +109,10 @@ export interface Task {
   startedAt?: string;
   completedAt?: string;
   scheduledAt?: string;
+  agent?: string;
+  // Lite-list metadata: present in /api/tasks responses, undefined in detail
+  logSize?: number;
+  hasGitDiff?: boolean;
 }
 
 export interface TaskLogEntry {
@@ -117,6 +121,9 @@ export interface TaskLogEntry {
   content: string;
   tool?: string;
   timestamp: string;
+  // Slice-API metadata (server adds these when serving a truncated chunk)
+  _index?: number;
+  _truncated?: number;   // original content.length before truncation
 }
 
 export interface AppConfig {

@@ -1,9 +1,16 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, memo, useCallback, useMemo } from 'react';
 import MarkdownContent from './MarkdownContent';
 import NewTaskModal from './NewTaskModal';
 import type { Task, TaskLogEntry } from '@/src/types';
+
+// Bound the rendered log/diff to keep React from choking on huge sessions.
+// Each LogEntry can include MarkdownContent and tool_use payloads (often
+// kilobytes per entry); rendering even ~200 fat entries can take a beat.
+const LOG_DEFAULT_TAIL = 100;        // initial fetch from server
+const LOG_LOAD_CHUNK = 100;          // each "load earlier" press
+const DIFF_DEFAULT_LINES = 1000;
 
 export default function TaskDetail({
   task,
@@ -16,11 +23,66 @@ export default function TaskDetail({
 }) {
   const [liveLog, setLiveLog] = useState<TaskLogEntry[]>(task.log);
   const [liveStatus, setLiveStatus] = useState(task.status);
+  const [taskBody, setTaskBody] = useState<{ resultSummary?: string; gitDiff?: string; error?: string } | null>(null);
+  const [logTotal, setLogTotal] = useState<number>(task.log?.length ?? 0);
+  const [logOffset, setLogOffset] = useState<number>(0);   // offset of liveLog[0] in the full log
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [tab, setTab] = useState<'log' | 'diff' | 'result'>('log');
   const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set());
   const [followUpText, setFollowUpText] = useState('');
   const [editing, setEditing] = useState(false);
+  const [visibleTail, setVisibleTail] = useState(LOG_DEFAULT_TAIL);
+  const [showFullDiff, setShowFullDiff] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const logScrollRef = useRef<HTMLDivElement>(null);
+
+  // Chunked log fetch — list endpoint ships only metadata, so for finished
+  // tasks we pull the LAST chunk of log entries via the JSON1-backed slice
+  // endpoint. JSON1 lets sqlite slice the array without parsing the whole
+  // 1+ MB blob in either node or the browser.
+  useEffect(() => {
+    let cancelled = false;
+    if (task.status === 'running' || task.status === 'queued') return;  // SSE handles it
+    if (task.log && task.log.length > 0) return;                         // already populated
+    setDetailLoading(true);
+    fetch(`/api/tasks/${task.id}/log?limit=${LOG_DEFAULT_TAIL}&body=1`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data: { entries: TaskLogEntry[]; total: number; body: any } | null) => {
+        if (cancelled || !data) return;
+        setLiveLog(data.entries);
+        setLogTotal(data.total);
+        setLogOffset(Math.max(0, data.total - data.entries.length));
+        if (data.body) setTaskBody(data.body);
+      })
+      .finally(() => { if (!cancelled) setDetailLoading(false); });
+    return () => { cancelled = true; };
+  }, [task.id, task.status, task.log]);
+
+  const loadFullEntry = useCallback(async (index: number) => {
+    const res = await fetch(`/api/tasks/${task.id}/log/entry?i=${index}`);
+    if (!res.ok) return;
+    const full = await res.json() as TaskLogEntry;
+    full._index = index;
+    setLiveLog(prev => prev.map(e => e._index === index ? full : e));
+  }, [task.id]);
+
+  const loadEarlier = useCallback(async (chunk: number) => {
+    if (loadingMore || logOffset === 0) return;
+    setLoadingMore(true);
+    const wantOffset = Math.max(0, logOffset - chunk);
+    const wantLimit = logOffset - wantOffset;
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/log?offset=${wantOffset}&limit=${wantLimit}`);
+      if (!res.ok) return;
+      const data = await res.json() as { entries: TaskLogEntry[]; total: number };
+      setLiveLog(prev => [...data.entries, ...prev]);
+      setLogOffset(wantOffset);
+      setLogTotal(data.total);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [task.id, logOffset, loadingMore]);
 
   // SSE stream for running tasks
   useEffect(() => {
@@ -58,9 +120,22 @@ export default function TaskDetail({
     return () => es.close();
   }, [task.id, task.status, onRefresh]);
 
+  // Auto-scroll only when the user is already near the bottom — otherwise we yank
+  // them away from a line they're trying to read.
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [liveLog]);
+    const el = logScrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
+    if (nearBottom) logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [liveLog.length]);
+
+  const toggleTool = useCallback((i: number) => {
+    setExpandedTools(prev => {
+      const next = new Set(prev);
+      next.has(i) ? next.delete(i) : next.add(i);
+      return next;
+    });
+  }, []);
 
   const handleAction = async (action: string) => {
     await fetch(`/api/tasks/${task.id}`, {
@@ -71,15 +146,14 @@ export default function TaskDetail({
     onRefresh();
   };
 
-  const toggleTool = (i: number) => {
-    setExpandedTools(prev => {
-      const next = new Set(prev);
-      next.has(i) ? next.delete(i) : next.add(i);
-      return next;
-    });
-  };
-
   const displayLog = liveLog.length > 0 ? liveLog : task.log;
+  // Two layers of "hidden": (a) entries on disk we haven't fetched yet (logOffset > 0),
+  // (b) entries we've fetched but are clipped by the in-memory tail cap.
+  const inMemoryStart = Math.max(0, displayLog.length - visibleTail);
+  const visibleLog = useMemo(() => displayLog.slice(inMemoryStart), [displayLog, inMemoryStart]);
+  const hiddenInMemory = inMemoryStart;
+  const hiddenOnServer = logOffset;
+  const hiddenTotal = hiddenInMemory + hiddenOnServer;
 
   return (
     <div className="flex flex-col h-full">
@@ -129,18 +203,55 @@ export default function TaskDetail({
               tab === t ? 'border-[var(--accent)] text-[var(--accent)]' : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             }`}
           >
-            {t === 'log' ? `Log (${displayLog.length})` : t === 'diff' ? 'Git Diff' : 'Result'}
+            {t === 'log' ? `Log (${logTotal || displayLog.length})` : t === 'diff' ? 'Git Diff' : 'Result'}
           </button>
         ))}
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4 text-sm">
+      <div ref={logScrollRef} className="flex-1 overflow-y-auto p-4 text-sm">
         {tab === 'log' && (
           <div className="space-y-2">
-            {displayLog.map((entry, i) => (
-              <LogEntry key={i} entry={entry} index={i} expanded={expandedTools.has(i)} onToggle={() => toggleTool(i)} />
-            ))}
+            {detailLoading && displayLog.length === 0 && (
+              <div className="text-[var(--text-secondary)] text-xs py-2">
+                Loading last {LOG_DEFAULT_TAIL} entries{logTotal ? ` of ${logTotal}` : ''}…
+              </div>
+            )}
+            {hiddenTotal > 0 && (
+              <div className="flex items-center justify-between gap-2 py-1.5 px-2 text-[10px] text-[var(--text-secondary)] bg-[var(--bg-tertiary)] rounded border border-[var(--border)]">
+                <span>
+                  {hiddenTotal} earlier {hiddenTotal === 1 ? 'entry' : 'entries'} hidden
+                  {hiddenOnServer > 0 && <span className="opacity-60"> ({hiddenOnServer} not yet fetched)</span>}
+                </span>
+                <div className="flex gap-1">
+                  {hiddenInMemory > 0 ? (
+                    <button
+                      onClick={() => setVisibleTail(v => v + LOG_LOAD_CHUNK)}
+                      className="px-2 py-0.5 rounded bg-[var(--accent)]/15 text-[var(--accent)] hover:bg-[var(--accent)]/25"
+                    >Show {Math.min(LOG_LOAD_CHUNK, hiddenInMemory)} more</button>
+                  ) : (
+                    <button
+                      onClick={() => loadEarlier(LOG_LOAD_CHUNK)}
+                      disabled={loadingMore}
+                      className="px-2 py-0.5 rounded bg-[var(--accent)]/15 text-[var(--accent)] hover:bg-[var(--accent)]/25 disabled:opacity-50"
+                    >{loadingMore ? 'Loading…' : `Fetch ${Math.min(LOG_LOAD_CHUNK, hiddenOnServer)} earlier`}</button>
+                  )}
+                </div>
+              </div>
+            )}
+            {visibleLog.map((entry, i) => {
+              const absoluteIndex = entry._index ?? (logOffset + inMemoryStart + i);
+              return (
+                <LogEntry
+                  key={absoluteIndex}
+                  entry={entry}
+                  index={absoluteIndex}
+                  expanded={expandedTools.has(absoluteIndex)}
+                  onToggle={toggleTool}
+                  onLoadFull={loadFullEntry}
+                />
+              );
+            })}
             {liveStatus === 'running' && (
               <div className="text-[var(--accent)] animate-pulse py-1 text-xs">working...</div>
             )}
@@ -150,45 +261,22 @@ export default function TaskDetail({
 
         {tab === 'result' && (
           <div className="prose-container">
-            {task.resultSummary ? (
-              <MarkdownContent content={task.resultSummary} />
-            ) : task.error ? (
+            {(taskBody?.resultSummary ?? task.resultSummary) ? (
+              <MarkdownContent content={(taskBody?.resultSummary ?? task.resultSummary)!} />
+            ) : (taskBody?.error ?? task.error) ? (
               <div className="p-3 bg-red-900/10 border border-red-800/20 rounded">
-                <pre className="whitespace-pre-wrap break-words text-[var(--red)] text-xs font-mono">{task.error}</pre>
+                <pre className="whitespace-pre-wrap break-words text-[var(--red)] text-xs font-mono">{taskBody?.error ?? task.error}</pre>
               </div>
             ) : (
               <p className="text-[var(--text-secondary)] text-xs">
-                {liveStatus === 'running' || liveStatus === 'queued' ? 'Task is still running...' : 'No result'}
+                {liveStatus === 'running' || liveStatus === 'queued' ? 'Task is still running...' : detailLoading ? 'Loading…' : 'No result'}
               </p>
             )}
           </div>
         )}
 
         {tab === 'diff' && (
-          <div>
-            {task.gitDiff ? (
-              <div className="bg-[var(--bg-tertiary)] rounded border border-[var(--border)] overflow-hidden">
-                <pre className="p-3 text-xs font-mono overflow-x-auto">
-                  {task.gitDiff.split('\n').map((line, i) => (
-                    <div key={i} className={`px-2 ${
-                      line.startsWith('+++') || line.startsWith('---') ? 'text-[var(--text-secondary)] font-semibold' :
-                      line.startsWith('+') ? 'text-[var(--green)] bg-green-500/5' :
-                      line.startsWith('-') ? 'text-[var(--red)] bg-red-500/5' :
-                      line.startsWith('@@') ? 'text-[var(--accent)] bg-[var(--accent)]/5 font-semibold' :
-                      line.startsWith('diff ') ? 'text-[var(--text-primary)] font-bold border-t border-[var(--border)] pt-2 mt-2' :
-                      'text-[var(--text-secondary)]'
-                    }`}>
-                      {line}
-                    </div>
-                  ))}
-                </pre>
-              </div>
-            ) : (
-              <p className="text-[var(--text-secondary)] text-xs">
-                {liveStatus === 'running' ? 'Diff will be captured after completion' : 'No changes detected'}
-              </p>
-            )}
-          </div>
+          <DiffView gitDiff={taskBody?.gitDiff ?? task.gitDiff} status={liveStatus} showAll={showFullDiff} onShowAll={() => setShowFullDiff(true)} />
         )}
       </div>
 
@@ -263,12 +351,25 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function LogEntry({ entry, index, expanded, onToggle }: {
+const LogEntry = memo(function LogEntry({ entry, index, expanded, onToggle, onLoadFull }: {
   entry: TaskLogEntry;
   index: number;
   expanded: boolean;
-  onToggle: () => void;
+  onToggle: (index: number) => void;
+  onLoadFull?: (index: number) => void;
 }) {
+  const handleToggle = () => onToggle(index);
+  const handleLoadFull = () => onLoadFull?.(index);
+  const truncatedBanner = entry._truncated ? (
+    <div className="text-[9px] text-yellow-400/80 italic mt-1">
+      Truncated to {(entry.content.length / 1024).toFixed(1)} KB of {(entry._truncated / 1024).toFixed(1)} KB.{' '}
+      {onLoadFull && (
+        <button onClick={handleLoadFull} className="text-[var(--accent)] hover:underline">
+          Show full
+        </button>
+      )}
+    </div>
+  ) : null;
   // System init
   if (entry.type === 'system' && entry.subtype === 'init') {
     return (
@@ -283,6 +384,7 @@ function LogEntry({ entry, index, expanded, onToggle }: {
     return (
       <div className="p-2 bg-red-900/10 border border-red-800/20 rounded text-xs">
         <pre className="whitespace-pre-wrap break-words text-[var(--red)] font-mono">{entry.content}</pre>
+        {truncatedBanner}
       </div>
     );
   }
@@ -295,7 +397,7 @@ function LogEntry({ entry, index, expanded, onToggle }: {
     return (
       <div className="border border-[var(--border)] rounded overflow-hidden">
         <button
-          onClick={onToggle}
+          onClick={handleToggle}
           className="w-full flex items-center gap-2 px-2 py-1.5 bg-[var(--bg-tertiary)] hover:bg-[var(--border)]/30 transition-colors text-left"
         >
           <span className="text-[10px] px-1.5 py-0.5 bg-[var(--accent)]/15 text-[var(--accent)] rounded font-medium font-mono">
@@ -313,6 +415,7 @@ function LogEntry({ entry, index, expanded, onToggle }: {
             {toolContent}
           </pre>
         )}
+        {truncatedBanner}
       </div>
     );
   }
@@ -328,10 +431,11 @@ function LogEntry({ entry, index, expanded, onToggle }: {
           {content}
         </pre>
         {isLong && !expanded && (
-          <button onClick={onToggle} className="text-[9px] text-[var(--accent)] hover:underline mt-0.5">
+          <button onClick={handleToggle} className="text-[9px] text-[var(--accent)] hover:underline mt-0.5">
             show more
           </button>
         )}
+        {truncatedBanner}
       </div>
     );
   }
@@ -341,6 +445,7 @@ function LogEntry({ entry, index, expanded, onToggle }: {
     return (
       <div className="p-3 bg-green-900/5 border border-green-800/15 rounded">
         <MarkdownContent content={entry.content} />
+        {truncatedBanner}
       </div>
     );
   }
@@ -349,11 +454,56 @@ function LogEntry({ entry, index, expanded, onToggle }: {
   return (
     <div className="py-1">
       <MarkdownContent content={entry.content} />
+      {truncatedBanner}
+    </div>
+  );
+});
+
+// Diff view — caps at DIFF_DEFAULT_LINES until "Show all" clicked.
+function DiffView({ gitDiff, status, showAll, onShowAll }: {
+  gitDiff?: string;
+  status: string;
+  showAll: boolean;
+  onShowAll: () => void;
+}) {
+  const allLines = useMemo(() => (gitDiff ? gitDiff.split('\n') : []), [gitDiff]);
+  if (!gitDiff) {
+    return (
+      <p className="text-[var(--text-secondary)] text-xs">
+        {status === 'running' ? 'Diff will be captured after completion' : 'No changes detected'}
+      </p>
+    );
+  }
+  const lines = showAll ? allLines : allLines.slice(0, DIFF_DEFAULT_LINES);
+  const truncated = !showAll && allLines.length > DIFF_DEFAULT_LINES;
+
+  return (
+    <div className="bg-[var(--bg-tertiary)] rounded border border-[var(--border)] overflow-hidden">
+      {truncated && (
+        <div className="flex items-center justify-between gap-2 py-1.5 px-3 text-[10px] text-[var(--text-secondary)] border-b border-[var(--border)] bg-[var(--bg-secondary)]">
+          <span>Showing first {DIFF_DEFAULT_LINES} of {allLines.length} lines</span>
+          <button onClick={onShowAll} className="px-2 py-0.5 rounded bg-[var(--accent)]/15 text-[var(--accent)] hover:bg-[var(--accent)]/25">
+            Show all
+          </button>
+        </div>
+      )}
+      <pre className="p-3 text-xs font-mono overflow-x-auto">
+        {lines.map((line, i) => (
+          <div key={i} className={`px-2 ${
+            line.startsWith('+++') || line.startsWith('---') ? 'text-[var(--text-secondary)] font-semibold' :
+            line.startsWith('+') ? 'text-[var(--green)] bg-green-500/5' :
+            line.startsWith('-') ? 'text-[var(--red)] bg-red-500/5' :
+            line.startsWith('@@') ? 'text-[var(--accent)] bg-[var(--accent)]/5 font-semibold' :
+            line.startsWith('diff ') ? 'text-[var(--text-primary)] font-bold border-t border-[var(--border)] pt-2 mt-2' :
+            'text-[var(--text-secondary)]'
+          }`}>
+            {line}
+          </div>
+        ))}
+      </pre>
     </div>
   );
 }
-
-// MarkdownContent is now imported from ./MarkdownContent
 
 function formatToolContent(content: string): string {
   try {

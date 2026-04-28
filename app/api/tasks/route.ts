@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createTask, listTasks } from '@/lib/task-manager';
+import { createTask, listTasksLite } from '@/lib/task-manager';
 import { ensureInitialized } from '@/lib/init';
 import { getProjectInfo } from '@/lib/projects';
 import type { TaskStatus } from '@/src/types';
@@ -9,7 +9,7 @@ export async function GET(req: Request) {
   ensureInitialized();
   const url = new URL(req.url);
   const status = url.searchParams.get('status') as TaskStatus | null;
-  return NextResponse.json(listTasks(status || undefined));
+  return NextResponse.json(listTasksLite(status || undefined));
 }
 
 // Create a new task

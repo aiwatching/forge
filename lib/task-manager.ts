@@ -119,6 +119,116 @@ export function listTasks(status?: TaskStatus): Task[] {
   return rows.map(rowToTask);
 }
 
+// Slim list — omits the heavy fields (log / git_diff / result_summary) so the
+// task list view doesn't pull megabytes of JSON for tasks with long sessions.
+// Callers that need the full body should fetch /api/tasks/[id] on demand.
+export function listTasksLite(status?: TaskStatus): Task[] {
+  const SLIM_COLS = `
+    id, project_name, project_path, prompt, mode, status, priority,
+    conversation_id, watch_config, git_branch, cost_usd, error, agent,
+    created_at, started_at, completed_at, scheduled_at,
+    length(log) AS log_size,
+    CASE WHEN result_summary IS NULL THEN NULL ELSE substr(result_summary, 1, 1024) END AS result_summary,
+    CASE WHEN git_diff IS NULL THEN 0 ELSE 1 END AS has_git_diff
+  `;
+  let query = `SELECT ${SLIM_COLS} FROM tasks`;
+  const params: string[] = [];
+  if (status) {
+    query += ' WHERE status = ?';
+    params.push(status);
+  }
+  query += ' ORDER BY created_at DESC';
+  const rows = db().prepare(query).all(...params) as any[];
+  return rows.map(r => rowToLiteTask(r));
+}
+
+// Slice the log without parsing the whole JSON in JS — sqlite JSON1's
+// json_each walks the array and we LIMIT/OFFSET in SQL. For a 1.6 MB log
+// with 238 entries this returns just the requested ~100 in milliseconds.
+export function getTaskLogSlice(id: string, opts: { offset?: number; limit?: number; truncate?: number } = {}):
+  { entries: (TaskLogEntry & { _truncated?: number; _index?: number })[]; total: number } {
+  const totalRow = db().prepare(
+    `SELECT COALESCE(json_array_length(log), 0) AS n FROM tasks WHERE id = ?`
+  ).get(id) as { n: number } | undefined;
+  const total = totalRow?.n ?? 0;
+  if (total === 0) return { entries: [], total: 0 };
+
+  const limit = Math.max(1, Math.min(opts.limit ?? 200, 2000));
+  const offset = Math.max(0, opts.offset ?? Math.max(0, total - limit));
+  const truncate = opts.truncate ?? 8192;   // per-entry content cap; 0 = no cap
+  const rows = db().prepare(
+    `SELECT json_each.key AS idx, value FROM tasks, json_each(tasks.log)
+     WHERE tasks.id = ?
+     ORDER BY json_each.key
+     LIMIT ? OFFSET ?`
+  ).all(id, limit, offset) as { idx: number; value: string }[];
+
+  const entries = rows.map(r => {
+    let entry: TaskLogEntry & { _truncated?: number; _index?: number };
+    try { entry = JSON.parse(r.value); }
+    catch { entry = { type: 'system', content: '<unparseable entry>' } as any; }
+    entry._index = r.idx;
+    if (truncate > 0 && typeof entry.content === 'string' && entry.content.length > truncate) {
+      const fullLen = entry.content.length;
+      entry.content = entry.content.slice(0, truncate);
+      entry._truncated = fullLen;
+    }
+    return entry;
+  });
+  return { entries, total };
+}
+
+// Single entry by index — used to "show full" a previously truncated entry.
+export function getTaskLogEntry(id: string, index: number): TaskLogEntry | null {
+  const row = db().prepare(
+    `SELECT value FROM tasks, json_each(tasks.log)
+     WHERE tasks.id = ? AND json_each.key = ?`
+  ).get(id, index) as { value: string } | undefined;
+  if (!row) return null;
+  try { return JSON.parse(row.value); } catch { return null; }
+}
+
+// Fetch only the heavy fields by id (used when the client needs them after
+// having gotten the lite list earlier).
+export function getTaskBody(id: string): { resultSummary?: string; gitDiff?: string; error?: string } | null {
+  const row = db().prepare(
+    `SELECT result_summary, git_diff, error FROM tasks WHERE id = ?`
+  ).get(id) as any;
+  if (!row) return null;
+  return {
+    resultSummary: row.result_summary || undefined,
+    gitDiff: row.git_diff || undefined,
+    error: row.error || undefined,
+  };
+}
+
+function rowToLiteTask(row: any): Task {
+  return {
+    id: row.id,
+    projectName: row.project_name,
+    projectPath: row.project_path,
+    prompt: row.prompt,
+    mode: row.mode || 'prompt',
+    status: row.status,
+    priority: row.priority,
+    conversationId: row.conversation_id || undefined,
+    watchConfig: row.watch_config ? JSON.parse(row.watch_config) : undefined,
+    log: [],                                              // slim — fetch detail separately
+    resultSummary: row.result_summary || undefined,      // first 1KB only
+    gitDiff: undefined,                                   // not loaded
+    gitBranch: row.git_branch || undefined,
+    costUSD: row.cost_usd || undefined,
+    error: row.error || undefined,
+    createdAt: toIsoUTC(row.created_at) ?? row.created_at,
+    startedAt: toIsoUTC(row.started_at) ?? undefined,
+    completedAt: toIsoUTC(row.completed_at) ?? undefined,
+    scheduledAt: toIsoUTC(row.scheduled_at) ?? undefined,
+    agent: row.agent || undefined,
+    logSize: row.log_size || 0,
+    hasGitDiff: !!row.has_git_diff,
+  } as Task;
+}
+
 export function cancelTask(id: string): boolean {
   const task = getTask(id);
   if (!task) return false;

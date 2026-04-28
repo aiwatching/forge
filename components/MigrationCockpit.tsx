@@ -181,7 +181,7 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
 
 
   // ─── Diagnose: open detail drawer with full context ────
-  const [diagnoseFor, setDiagnoseFor] = useState<{ markdown: string; endpointId: string } | null>(null);
+  const [diagnoseFor, setDiagnoseFor] = useState<{ markdown: string; endpointId: string; original: string } | null>(null);
   const [sessionInfo, setSessionInfo] = useState<{ name: string; cwd: string; attached: boolean }[]>([]);
   const [pickedSession, setPickedSession] = useState<string | null>(null);
 
@@ -213,8 +213,27 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
     const res = await fetch(`/api/migration/diagnose?projectPath=${encodeURIComponent(projectPath)}&endpointId=${endpointId}`);
     if (!res.ok) { flash('Diagnose failed'); return; }
     const j = await res.json();
-    setDiagnoseFor({ markdown: j.markdown, endpointId });
+    setDiagnoseFor({ markdown: j.markdown, original: j.markdown, endpointId });
   }, [projectPath, flash]);
+
+  // Send an arbitrary prompt (typically the edited drawer content) via inject or task.
+  const sendCustomPrompt = useCallback(async (prompt: string, opts: { forceTask?: boolean; sessionName?: string; endpointIds?: string[] } = {}) => {
+    const target = opts.sessionName ?? pickedSession;
+    const mode = !opts.forceTask && target ? 'inject' : 'task';
+    const body: any = { projectPath, projectName, mode, promptOverride: prompt, endpointIds: opts.endpointIds || [] };
+    if (mode === 'inject') body.sessionName = target;
+    const res = await fetch('/api/migration/fix', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const r = await res.json();
+    if (r.ok) {
+      flash(mode === 'inject' ? `Sent to terminal ${target}` : `Task created: ${r.taskId}`);
+    } else {
+      flash('Send failed: ' + (r.error || 'unknown'));
+    }
+  }, [projectPath, projectName, pickedSession, flash]);
 
   // Send the diagnosis: prefer inject to bound terminal, fall back to task if none.
   const sendDiagnose = useCallback(async (endpointIds: string[], opts: { forceTask?: boolean; sessionName?: string } = {}) => {
@@ -566,32 +585,48 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
       {diagnoseFor && (
         <div className="fixed inset-0 z-50 flex" onClick={() => setDiagnoseFor(null)}>
           <div className="flex-1 bg-black/40" />
-          <div className="w-[640px] max-w-[90vw] bg-[var(--bg-primary)] border-l border-[var(--border)] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="px-4 py-2 border-b border-[var(--border)] flex items-center gap-2">
-              <span className="text-xs font-semibold text-[var(--text-primary)]">🔍 Diagnosis</span>
+          <div className="w-[720px] max-w-[95vw] bg-[var(--bg-primary)] border-l border-[var(--border)] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-2 border-b border-[var(--border)] flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-semibold text-[var(--text-primary)]">🔍 Diagnosis (editable)</span>
+              {diagnoseFor.markdown !== diagnoseFor.original && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300">edited</span>
+              )}
               <div className="flex-1" />
-              <button onClick={() => sendDiagnose([diagnoseFor.endpointId])}
+              <button onClick={() => setDiagnoseFor({ ...diagnoseFor, markdown: diagnoseFor.original })}
+                disabled={diagnoseFor.markdown === diagnoseFor.original}
+                className="text-[10px] px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] disabled:opacity-30">
+                Reset
+              </button>
+              <button onClick={() => sendCustomPrompt(diagnoseFor.markdown, { endpointIds: [diagnoseFor.endpointId] })}
                 className="text-[10px] px-2 py-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30"
-                title={pickedSession ? `Inject into ${pickedSession}` : 'No bound terminal — will fall back to task'}>
+                title={pickedSession ? `Inject edited prompt into ${pickedSession}` : 'No bound terminal — will fall back to task'}>
                 🤖 {pickedSession ? `Send to ${pickedSession.replace(/^mw[a-z0-9]*-/, '')}` : 'Send as task'}
               </button>
-              <button onClick={() => sendDiagnose([diagnoseFor.endpointId], { forceTask: true })}
+              <button onClick={() => sendCustomPrompt(diagnoseFor.markdown, { forceTask: true, endpointIds: [diagnoseFor.endpointId] })}
                 className="text-[10px] px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]"
-                title="Force background task instead of inject">
+                title="Force background task">
                 → task
               </button>
-              <button onClick={async () => { try { await navigator.clipboard.writeText(diagnoseFor.markdown); flash('Copied prompt'); } catch {} }}
+              <button onClick={async () => { try { await navigator.clipboard.writeText(diagnoseFor.markdown); flash('Copied'); } catch {} }}
                 className="text-[10px] px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]">
-                Copy markdown
+                Copy
               </button>
               <button onClick={() => setDiagnoseFor(null)}
                 className="text-[10px] px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]">
                 Close
               </button>
             </div>
-            <pre className="flex-1 overflow-auto p-4 text-[11px] font-mono whitespace-pre-wrap break-words text-[var(--text-primary)]">
-              {diagnoseFor.markdown}
-            </pre>
+            <textarea
+              value={diagnoseFor.markdown}
+              onChange={e => setDiagnoseFor({ ...diagnoseFor, markdown: e.target.value })}
+              spellCheck={false}
+              className="flex-1 resize-none bg-[var(--bg-primary)] text-[11px] font-mono leading-relaxed text-[var(--text-primary)] p-4 outline-none border-0 focus:ring-0"
+            />
+            <div className="px-4 py-1.5 border-t border-[var(--border)] text-[9px] text-[var(--text-secondary)] flex items-center gap-3">
+              <span>{diagnoseFor.markdown.length.toLocaleString()} chars</span>
+              <span>{diagnoseFor.markdown.split('\n').length} lines</span>
+              <span className="ml-auto opacity-60">edits stay local until you click Send</span>
+            </div>
           </div>
         </div>
       )}

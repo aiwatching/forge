@@ -8,6 +8,8 @@ const InlinePipelineView = lazy(() => import('./InlinePipelineView'));
 const WorkspaceViewLazy = lazy(() => import('./WorkspaceView'));
 const SessionViewLazy = lazy(() => import('./SessionView'));
 const MigrationCockpitLazy = lazy(() => import('./MigrationCockpit'));
+const CraftTabLazy = lazy(() => import('./CraftTabs').then(m => ({ default: m.CraftTab })));
+const CraftBuilderModalLazy = lazy(() => import('./CraftBuilder').then(m => ({ default: m.CraftBuilderModal })));
 
 // ─── Syntax highlighting ─────────────────────────────────
 const KEYWORDS = new Set([
@@ -86,7 +88,16 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [diffFile, setDiffFile] = useState<string | null>(null);
   const [projectSkills, setProjectSkills] = useState<{ name: string; displayName: string; type: string; scope: string; version: string; installedVersion: string; hasUpdate: boolean; source: 'registry' | 'local' }[]>([]);
   const [showSkillsDetail, setShowSkillsDetail] = useState(false);
-  const [projectTab, setProjectTab] = useState<'workspace' | 'sessions' | 'code' | 'skills' | 'claudemd' | 'pipelines' | 'migration'>('code');
+  const [projectTab, setProjectTab] = useState<string>('code');
+  const [crafts, setCrafts] = useState<Array<{ name: string; displayName: string; icon?: string; description?: string; scope: string; hasUi: boolean; hasServer: boolean }>>([]);
+  const [craftBuilder, setCraftBuilder] = useState<{ refineName?: string } | null>(null);
+  const refreshCrafts = useCallback(() => {
+    fetch(`/api/crafts?projectPath=${encodeURIComponent(projectPath)}`)
+      .then(r => r.ok ? r.json() : { crafts: [] })
+      .then(j => setCrafts(j.crafts || []))
+      .catch(() => {});
+  }, [projectPath]);
+  useEffect(() => { refreshCrafts(); }, [refreshCrafts]);
   // Lazy-mount workspace: only mount after first visit, keep mounted to preserve terminal state
   const [wsMounted, setWsMounted] = useState(false);
   useEffect(() => { if (projectTab === 'workspace') setWsMounted(true); }, [projectTab]);
@@ -625,6 +636,31 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
               }`}
               title="API Migration Cockpit — parity testing between legacy and new modules"
             >🚚 Migration</button>
+            {crafts.map(c => {
+              const tabId = `craft:${c.name}`;
+              const active = projectTab === tabId;
+              return (
+                <span key={c.name} className="relative inline-flex">
+                  <button onClick={() => setProjectTab(tabId)}
+                    className={`text-[11px] font-medium px-2.5 py-1 rounded transition-all ${
+                      active ? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm ring-1 ring-[var(--accent)]/40' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]'
+                    }`}
+                    title={c.description || c.displayName}>
+                    {c.displayName}
+                  </button>
+                  {active && c.scope === 'project' && (
+                    <button onClick={(e) => { e.stopPropagation(); setCraftBuilder({ refineName: c.name }); }}
+                      className="absolute -right-1 -top-1 text-[8px] px-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] hover:bg-[var(--accent)]/30"
+                      title="Refine this craft">⚙</button>
+                  )}
+                </span>
+              );
+            })}
+            <button onClick={() => setCraftBuilder({})}
+              className="text-[11px] font-medium px-2 py-1 rounded text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10"
+              title="Build a new craft for this project (AI-generated)">
+              + Craft
+            </button>
           </div>
         </div>
         {projectTab === 'code' && gitInfo?.lastCommit && (
@@ -1385,6 +1421,26 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
       {projectTab === 'migration' && (
         <Suspense fallback={<div className="p-4 text-xs text-[var(--text-secondary)]">Loading migration cockpit…</div>}>
           <MigrationCockpitLazy projectPath={projectPath} projectName={projectName} />
+        </Suspense>
+      )}
+
+      {/* Craft tabs */}
+      {crafts.map(c => projectTab === `craft:${c.name}` && (
+        <Suspense key={c.name} fallback={<div className="p-4 text-xs text-[var(--text-secondary)]">Loading craft {c.displayName}…</div>}>
+          <CraftTabLazy craft={c as any} projectPath={projectPath} projectName={projectName} />
+        </Suspense>
+      ))}
+
+      {/* Craft Builder modal */}
+      {craftBuilder && (
+        <Suspense fallback={null}>
+          <CraftBuilderModalLazy
+            projectPath={projectPath}
+            projectName={projectName}
+            refineCraftName={craftBuilder.refineName}
+            onClose={() => setCraftBuilder(null)}
+            onCreated={() => { refreshCrafts(); setCraftBuilder(null); }}
+          />
         </Suspense>
       )}
 

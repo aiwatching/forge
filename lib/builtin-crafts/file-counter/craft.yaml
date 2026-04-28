@@ -1,0 +1,9 @@
+name: file-counter
+displayName: 📊 Files
+description: Quick file-extension stats for the current project
+version: 0.1.0
+icon: "📊"
+ui:
+  tab: ui.tsx
+server:
+  entry: server.ts

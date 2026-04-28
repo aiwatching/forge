@@ -25,6 +25,12 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@forge/craft": [
+        "./lib/craft-sdk/client.tsx"
+      ],
+      "@forge/craft/server": [
+        "./lib/craft-sdk/server.ts"
       ]
     }
   },

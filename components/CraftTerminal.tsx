@@ -49,7 +49,17 @@ export default function CraftTerminal({
   const skipPermRef = useRef(true);
   const [showPicker, setShowPicker] = useState(false);
 
+  // Refs that the WS message handler can read at fire time (avoids closure
+  // staleness — agents/agentId load async, but the handler runs right after
+  // the tmux session is created which is before the fetch settles).
+  const agentsRef = useRef<AgentSummary[]>([]);
+  const agentIdRef = useRef<string>('');
+  const resumeIdRef = useRef<string | undefined>(initialResumeSessionId);
+
   activeSessionRef.current = activeSession;
+  agentsRef.current = agents;
+  agentIdRef.current = agentId;
+  resumeIdRef.current = initialResumeSessionId;
 
   // Load sessions + agents
   const refreshSessions = useCallback(async () => {
@@ -125,15 +135,23 @@ export default function CraftTerminal({
               pendingCreate = true;
               ws.send(JSON.stringify({ type: 'create', sessionName: activeSessionRef.current, cols: term.cols, rows: term.rows }));
               // After creation, cd into craft dir and start the chosen agent
-              setTimeout(() => {
-                if (ws.readyState === WebSocket.OPEN) {
-                  const a = agents.find(x => x.id === agentId) || agents[0];
-                  const cli = a?.path || a?.id || 'claude';
-                  const sf = (a?.id === 'claude' && skipPermRef.current) ? ' --dangerously-skip-permissions' : '';
-                  const resume = initialResumeSessionId && (a?.id === 'claude') ? ` --resume ${initialResumeSessionId}` : '';
-                  ws.send(JSON.stringify({ type: 'input', data: `cd "${craftDir}" && ${cli}${sf}${resume}\n` }));
+              // Wait until agents fetch settles so we can pick the right CLI + resume flag
+              const tryLaunch = (attempt = 0) => {
+                if (ws.readyState !== WebSocket.OPEN) return;
+                const list = agentsRef.current;
+                const id = agentIdRef.current;
+                if (list.length === 0 && attempt < 10) {
+                  setTimeout(() => tryLaunch(attempt + 1), 200);
+                  return;
                 }
-              }, 400);
+                const a = list.find(x => x.id === id) || list[0];
+                const cli = a?.path || a?.id || 'claude';
+                const isClaude = (a?.id === 'claude') || (a as any)?.cliType === 'claude-code';
+                const sf = (isClaude && skipPermRef.current) ? ' --dangerously-skip-permissions' : '';
+                const resume = resumeIdRef.current && isClaude ? ` --resume ${resumeIdRef.current}` : '';
+                ws.send(JSON.stringify({ type: 'input', data: `cd "${craftDir}" && ${cli}${sf}${resume}\n` }));
+              };
+              setTimeout(() => tryLaunch(), 500);
             }
           }
         } catch {}

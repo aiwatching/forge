@@ -666,11 +666,6 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
                 }
               }}
             />
-            <button onClick={() => setCraftBuilder({})}
-              className="text-[11px] font-medium px-2 py-1 rounded text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10"
-              title="Build a new craft for this project (AI-generated)">
-              + Craft
-            </button>
           </div>
         </div>
         {projectTab === 'code' && gitInfo?.lastCommit && (

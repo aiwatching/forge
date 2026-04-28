@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import type { Endpoint, RunResult, MigrationConfig, FailureCluster } from '@/lib/migration/types';
+import type { Endpoint, RunResult, MigrationConfig, FailureCluster, Annotation } from '@/lib/migration/types';
 
 // ─── Helpers ─────────────────────────────────────────────
 
@@ -19,6 +19,14 @@ const MATCH_COLORS: Record<string, string> = {
   fail: 'bg-red-500/20 text-red-300 border-red-500/40',
   'stub-ok': 'bg-blue-500/20 text-blue-300 border-blue-500/40',
   error: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
+  flagged: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
+};
+
+const FLAG_LABELS: Record<string, string> = {
+  deviated: '🏷 deviated',
+  accepted: '✅ accepted',
+  wontfix: '⛔ wontfix',
+  flaky: '〰 flaky',
 };
 
 interface Props {
@@ -33,7 +41,9 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
   const [results, setResults] = useState<Record<string, RunResult>>({});
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number; running: boolean } | null>(null);
   const [failures, setFailures] = useState<FailureCluster[]>([]);
-  const [filter, setFilter] = useState<'all' | 'fail' | 'pass' | 'untested' | 'stubbed' | 'pending' | 'migrated'>('all');
+  const [filter, setFilter] = useState<'all' | 'fail' | 'pass' | 'untested' | 'stubbed' | 'pending' | 'migrated' | 'flagged'>('all');
+  const [annotations, setAnnotations] = useState<Record<string, Annotation>>({});
+  const [flagPopover, setFlagPopover] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -51,21 +61,50 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [cRes, dRes, fRes] = await Promise.all([
+      const [cRes, dRes, fRes, aRes] = await Promise.all([
         fetch(`/api/migration/config?projectPath=${encodeURIComponent(projectPath)}`),
         fetch(`/api/migration/discover?projectPath=${encodeURIComponent(projectPath)}`),
         fetch(`/api/migration/failures?projectPath=${encodeURIComponent(projectPath)}`),
+        fetch(`/api/migration/annotations?projectPath=${encodeURIComponent(projectPath)}`),
       ]);
       const c = await cRes.json();
       const d = await dRes.json();
       const f = await fRes.json();
+      const a = aRes.ok ? await aRes.json() : {};
       if (cancelled) return;
       setConfig(c);
       setEndpoints(d.endpoints || []);
       setFailures(f.clusters || []);
+      setAnnotations(a || {});
     })();
     return () => { cancelled = true; };
   }, [projectPath]);
+
+  const upsertAnnotation = useCallback(async (ann: Annotation) => {
+    const res = await fetch('/api/migration/annotations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectPath, annotation: ann }),
+    });
+    if (res.ok) {
+      setAnnotations(prev => ({ ...prev, [ann.endpointId]: ann }));
+      flash(`Flagged as ${ann.flag}`);
+    } else flash('Failed to flag');
+  }, [projectPath, flash]);
+
+  const deleteAnnotation = useCallback(async (endpointId: string) => {
+    const res = await fetch(`/api/migration/annotations?projectPath=${encodeURIComponent(projectPath)}&endpointId=${endpointId}`, {
+      method: 'DELETE',
+    });
+    if (res.ok) {
+      setAnnotations(prev => {
+        const n = { ...prev };
+        delete n[endpointId];
+        return n;
+      });
+      flash('Flag removed');
+    }
+  }, [projectPath, flash]);
 
   const saveConfig = useCallback(async (cfg: MigrationConfig) => {
     setConfig(cfg);
@@ -114,6 +153,7 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
         case 'migrated': return e.status === 'migrated' && !e.isStubbed;
         case 'pass': return r?.match === 'pass' || r?.match === 'stub-ok';
         case 'fail': return r?.match === 'fail' || r?.match === 'error';
+        case 'flagged': return !!annotations[e.id];
       }
     });
   }, [endpoints, results, filter, search]);
@@ -283,7 +323,7 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
   // ─── Stats ─────────────────────────────────────────────
   const stats = useMemo(() => {
     const total = endpoints.length;
-    let pass = 0, fail = 0, stub = 0, untested = 0, stubbed = 0, pending = 0, withSchema = 0;
+    let pass = 0, fail = 0, stub = 0, untested = 0, stubbed = 0, pending = 0, withSchema = 0, flaggedRun = 0;
     for (const e of endpoints) {
       if (e.isStubbed) stubbed++;
       if (e.status === 'pending') pending++;
@@ -292,10 +332,12 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
       if (!r) { untested++; continue; }
       if (r.match === 'pass') pass++;
       else if (r.match === 'stub-ok') stub++;
+      else if (r.match === 'flagged') flaggedRun++;
       else if (r.match === 'fail' || r.match === 'error') fail++;
     }
-    return { total, pass, fail, stub, untested, stubbed, pending, withSchema };
-  }, [endpoints, results]);
+    const flagged = Object.keys(annotations).length;
+    return { total, pass, fail, stub, untested, stubbed, pending, withSchema, flagged, flaggedRun };
+  }, [endpoints, results, annotations]);
 
   // ─── Health: detect connectivity-class failures dominating the results ──
   const health = useMemo(() => {
@@ -377,6 +419,7 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
           <option value="stubbed">Stubbed</option>
           <option value="migrated">Migrated</option>
           <option value="pending">Pending (no doc)</option>
+          <option value="flagged">Flagged</option>
         </select>
         {/* Bound terminal picker */}
         <div className="flex items-center gap-1 text-[10px]">
@@ -409,6 +452,7 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
         <span className="text-blue-400">{stats.stub} stub-ok</span>
         <span className="text-red-400">{stats.fail} fail</span>
         <span className="text-gray-400">{stats.untested} untested</span>
+        {stats.flagged > 0 && <span className="text-yellow-400">🏷 {stats.flagged} flagged</span>}
         <span className="text-gray-500">({stats.stubbed} stub · {stats.pending} pending · {stats.withSchema} w/ schema)</span>
         <span className="text-purple-400">mode: {config.diffMode || 'shape'}</span>
         {batchProgress && (
@@ -487,14 +531,20 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
               {filtered.map(ep => {
                 const r = results[ep.id];
                 const exp = expandedId === ep.id;
+                const ann = annotations[ep.id];
                 return (
-                  <div key={ep.id} className="border-b border-[var(--border)]/50">
-                    <div className="px-3 py-1.5 flex items-center gap-2 hover:bg-[var(--bg-secondary)]/50">
+                  <div key={ep.id} className={`border-b border-[var(--border)]/50 ${ann ? 'bg-yellow-500/5' : ''}`}>
+                    <div className="px-3 py-1.5 flex items-center gap-2 hover:bg-[var(--bg-secondary)]/50 relative">
                       <input type="checkbox" checked={selectedIds.has(ep.id)} onChange={() => toggleSelect(ep.id)} />
                       <span className={`font-mono font-bold w-12 text-right ${methodColor(ep.method)}`}>{ep.method}</span>
                       <span className="font-mono flex-1 truncate">{ep.path}</span>
                       <span className="text-[10px] text-[var(--text-secondary)] w-32 truncate">{ep.controller}</span>
                       {ep.isStubbed && <span className="text-[9px] px-1 rounded bg-blue-500/20 text-blue-300">501</span>}
+                      {ann && (
+                        <span className="text-[9px] px-1 rounded bg-yellow-500/20 text-yellow-300" title={ann.note}>
+                          {FLAG_LABELS[ann.flag] || ann.flag}
+                        </span>
+                      )}
                       <span className={`text-[9px] ${STATUS_COLORS[ep.status] || ''}`}>{ep.status}</span>
                       {r && (
                         <span className={`text-[9px] px-1.5 py-0.5 rounded border ${MATCH_COLORS[r.match]}`}
@@ -525,6 +575,11 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
                         title="Copy reproduction curl">
                         📋
                       </button>
+                      <button onClick={() => setFlagPopover(flagPopover === ep.id ? null : ep.id)}
+                        className={`text-[10px] px-1.5 ${ann ? 'text-yellow-300' : 'text-[var(--text-secondary)]'} hover:text-yellow-200`}
+                        title={ann ? 'Edit flag' : 'Flag as known deviation / accepted / wontfix'}>
+                        🏷
+                      </button>
                       <button onClick={() => setExpandedId(exp ? null : ep.id)}
                         className="text-[10px] px-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
                         {exp ? '▼' : '▶'}
@@ -535,6 +590,23 @@ export default function MigrationCockpit({ projectPath, projectName }: Props) {
                       <div className="px-12 pb-1 text-[10px] text-red-300/80 font-mono truncate" title={r.errorMessage}>
                         {r.errorMessage}
                       </div>
+                    )}
+                    {/* Flag indicator note */}
+                    {!exp && ann?.note && (
+                      <div className="px-12 pb-1 text-[10px] text-yellow-300/80 italic truncate" title={ann.note}>
+                        🏷 {ann.note}
+                      </div>
+                    )}
+                    {/* Flag popover */}
+                    {flagPopover === ep.id && (
+                      <FlagPopover
+                        endpoint={ep}
+                        existing={ann}
+                        suggestedPaths={r?.diff?.map(d => d.jsonPath).filter((v, i, a) => a.indexOf(v) === i).slice(0, 10) || []}
+                        onSave={async (a) => { await upsertAnnotation(a); setFlagPopover(null); runOne(ep); }}
+                        onDelete={async () => { await deleteAnnotation(ep.id); setFlagPopover(null); runOne(ep); }}
+                        onClose={() => setFlagPopover(null)}
+                      />
                     )}
                     {exp && r && <RunResultDetail r={r} projectPath={projectPath} endpointId={ep.id} flash={flash}
                       onIgnorePath={async (p) => {
@@ -911,6 +983,83 @@ function HeadersPane({ side }: { side: any }) {
           <div key={k} className="flex gap-2"><span className="text-purple-300">{k}:</span><span className="text-[var(--text-primary)] break-all">{String(v)}</span></div>
         ))}
         {Object.keys(side.responseHeaders || {}).length === 0 && <div className="text-[var(--text-secondary)]">(none)</div>}
+      </div>
+    </div>
+  );
+}
+
+function FlagPopover({ endpoint, existing, suggestedPaths, onSave, onDelete, onClose }: {
+  endpoint: Endpoint;
+  existing?: Annotation;
+  suggestedPaths: string[];
+  onSave: (a: Annotation) => void | Promise<void>;
+  onDelete: () => void | Promise<void>;
+  onClose: () => void;
+}) {
+  const [flag, setFlag] = React.useState<Annotation['flag']>(existing?.flag || 'deviated');
+  const [note, setNote] = React.useState(existing?.note || '');
+  const [pathsText, setPathsText] = React.useState((existing?.ignorePaths || []).join('\n'));
+
+  const togglePath = (p: string) => {
+    const lines = pathsText.split('\n').map(s => s.trim()).filter(Boolean);
+    const generalized = p.replace(/\[\d+\]/g, '[*]');
+    const set = new Set(lines);
+    if (set.has(generalized)) set.delete(generalized); else set.add(generalized);
+    setPathsText([...set].join('\n'));
+  };
+
+  return (
+    <div className="px-4 py-2 bg-yellow-500/5 border-t border-yellow-500/30 space-y-2 text-[10px]">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="font-semibold text-yellow-300">Flag this endpoint</span>
+        <select value={flag} onChange={e => setFlag(e.target.value as any)}
+          className="text-[10px] bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-1.5 py-0.5">
+          <option value="deviated">🏷 deviated — intentional spec divergence</option>
+          <option value="accepted">✅ accepted — current behavior is the new truth</option>
+          <option value="wontfix">⛔ wontfix — known broken, deferred</option>
+          <option value="flaky">〰 flaky — passes intermittently</option>
+        </select>
+      </div>
+      <input value={note} onChange={e => setNote(e.target.value)}
+        placeholder="Why? e.g. removed deprecated `legacyId` per FCS-2024-103"
+        className="w-full text-[10px] bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 font-mono" />
+      <div>
+        <div className="text-[var(--text-secondary)] mb-0.5">Per-endpoint ignored paths (one per line)</div>
+        <textarea value={pathsText} onChange={e => setPathsText(e.target.value)}
+          placeholder="$.legacyId&#10;$.results[*].deprecatedField"
+          className="w-full text-[10px] bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 font-mono min-h-[50px]" />
+        {suggestedPaths.length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            <span className="text-[9px] text-[var(--text-secondary)]">From current diffs:</span>
+            {suggestedPaths.map(p => (
+              <button key={p} onClick={() => togglePath(p)}
+                className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-300 hover:bg-orange-500/20 font-mono">
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="flex items-center justify-end gap-2 pt-1">
+        {existing && (
+          <button onClick={() => onDelete()}
+            className="text-[10px] px-2 py-1 rounded text-red-300 hover:bg-red-500/10">
+            Remove flag
+          </button>
+        )}
+        <button onClick={() => onClose()}
+          className="text-[10px] px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]">
+          Cancel
+        </button>
+        <button onClick={() => onSave({
+          endpointId: endpoint.id,
+          flag, note,
+          ignorePaths: pathsText.split('\n').map(s => s.trim()).filter(Boolean),
+          flaggedAt: new Date().toISOString(),
+        })}
+          className="text-[10px] px-2.5 py-1 rounded bg-yellow-500/30 text-yellow-200 hover:bg-yellow-500/40">
+          Save flag
+        </button>
       </div>
     </div>
   );

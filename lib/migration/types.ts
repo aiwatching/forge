@@ -30,10 +30,11 @@ export interface RunResult {
   durationMs: number;
   legacy: SideResult;
   next: SideResult;
-  match: 'pass' | 'fail' | 'stub-ok' | 'error';
+  match: 'pass' | 'fail' | 'stub-ok' | 'error' | 'flagged';
   diff?: DiffEntry[];
   errorType?: string;
   errorMessage?: string;
+  flagged?: { flag: Annotation['flag']; note: string };  // attached when annotation re-classified the result
 }
 
 export interface SideResult {
@@ -55,6 +56,18 @@ export interface DiffEntry {
   legacy: any;
   next: any;
   reason: 'value' | 'missing-in-next' | 'missing-in-legacy' | 'type-mismatch';
+}
+
+// Per-endpoint annotation. User explicitly marks an endpoint as having a known
+// design deviation from the OpenAPI spec — its violations are then re-classified
+// from `fail` to `flagged` and the diagnose prompt is told this is intentional.
+export interface Annotation {
+  endpointId: string;
+  flag: 'deviated' | 'accepted' | 'wontfix' | 'flaky';
+  note: string;
+  ignorePaths?: string[];           // jsonpaths to skip when diff/validating this endpoint
+  flaggedAt: string;
+  flaggedBy?: string;
 }
 
 export interface Failure {

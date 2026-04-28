@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { loadConfig, loadEndpoints, saveRun } from '@/lib/migration/store';
 import { runEndpoint } from '@/lib/migration/runner';
 import { loadOpenApi } from '@/lib/migration/openapi';
+import { getAnnotation } from '@/lib/migration/annotations';
 
 // POST /api/migration/run — body: { projectPath, endpointId }
 export async function POST(req: Request) {
@@ -16,7 +17,8 @@ export async function POST(req: Request) {
   const openApi = config.endpointSource.openApiSpec
     ? loadOpenApi(projectPath, config.endpointSource.openApiSpec)
     : null;
-  const result = await runEndpoint(ep, config, openApi);
+  const annotation = getAnnotation(projectPath, endpointId);
+  const result = await runEndpoint(ep, config, openApi, annotation);
   saveRun(projectPath, [result]);
   return NextResponse.json(result);
 }

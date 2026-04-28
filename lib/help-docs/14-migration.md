@@ -96,6 +96,24 @@ The runner fires `legacy` and `new` in parallel for each endpoint, with concurre
 | `stub-ok` | Endpoint marked stubbed; new side returned 501 as expected |
 | `fail` | Schema violation, status mismatch, or JSON diff |
 | `error` | Unreachable or timed out |
+| `flagged` | Endpoint has a user-set annotation (deviated/accepted/wontfix/flaky); failures are re-classified out of the failure list |
+
+### Flagging known deviations
+
+When the new module intentionally diverges from the OpenAPI spec (e.g. you removed a deprecated field as part of the migration), don't keep seeing it as "fail". Click the 🏷 button on the row to attach an annotation:
+
+| Flag | Use it when |
+|---|---|
+| `🏷 deviated` | The migration intentionally changed the response shape; spec is being updated separately |
+| `✅ accepted` | The current new-side behavior is the new contract; spec is just stale |
+| `⛔ wontfix` | Known broken, deferred to later milestone |
+| `〰 flaky` | Passes intermittently — track separately |
+
+The popover lets you also pin **per-endpoint ignored paths** (suggested directly from the current run's diff). Annotations are stored in `<project>/.forge/migration/annotations.json` and applied on every subsequent run for that endpoint:
+
+- The endpoint-level ignorePaths are merged into the global ignorePaths for that endpoint only.
+- If after that any violations remain, the result is shown as `flagged` (yellow), not `fail` (red), and is excluded from failure clusters.
+- Diagnose / Fix prompts include the annotation note so the AI knows the deviation is intentional and doesn't try to "fix" it.
 
 Top-level arrays are sorted before exact comparison so order alone won't fail. Schema mode samples the first 10 array items to keep reports tractable.
 

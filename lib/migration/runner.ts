@@ -6,6 +6,7 @@
 
 import type { Endpoint, MigrationConfig, RunResult, SideResult } from './types';
 import { diff, validateAgainstSchema, type SchemaViolation } from './differ';
+import type { Annotation } from './types';
 
 function compileIgnore(patterns: string[]): RegExp[] {
   return patterns.map(p => {
@@ -86,7 +87,7 @@ function violationsToDiffs(vios: SchemaViolation[]): RunResult['diff'] {
   }));
 }
 
-export async function runEndpoint(ep: Endpoint, config: MigrationConfig, openApi?: OpenApiDoc | null): Promise<RunResult> {
+export async function runEndpoint(ep: Endpoint, config: MigrationConfig, openApi?: OpenApiDoc | null, annotation?: Annotation | null): Promise<RunResult> {
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
   const mode = config.diffMode || 'exact';
@@ -110,6 +111,11 @@ export async function runEndpoint(ep: Endpoint, config: MigrationConfig, openApi
   let errorMessage: string | undefined;
   let diffEntries: RunResult['diff'];
 
+  // Effective ignore list = global + per-endpoint annotation ignore.
+  const effectiveIgnore = annotation?.ignorePaths && annotation.ignorePaths.length > 0
+    ? [...config.ignorePaths, ...annotation.ignorePaths]
+    : config.ignorePaths;
+
   // ── Stubbed: only the new side matters; expect 501 ──
   if (ep.isStubbed) {
     if (next.error) {
@@ -132,7 +138,7 @@ export async function runEndpoint(ep: Endpoint, config: MigrationConfig, openApi
         // No schema — treat as smoke pass (endpoint responded 2xx with no body check)
         match = 'pass';
       } else {
-        const vios = validateAgainstSchema(next.bodyJson, schema, '$', [], compileIgnore(config.ignorePaths), { lenientNullable: config.lenientNullable !== false });
+        const vios = validateAgainstSchema(next.bodyJson, schema, '$', [], compileIgnore(effectiveIgnore), { lenientNullable: config.lenientNullable !== false });
         if (vios.length > 0) {
           match = 'fail';
           errorType = 'schema-violation';
@@ -153,7 +159,7 @@ export async function runEndpoint(ep: Endpoint, config: MigrationConfig, openApi
       errorType = 'http-status-mismatch';
       errorMessage = `legacy=${legacy.status} new=${next.status}`;
     } else {
-      const d = diff(legacy.bodyJson, next.bodyJson, config.ignorePaths, { sortArrays: true });
+      const d = diff(legacy.bodyJson, next.bodyJson, effectiveIgnore, { sortArrays: true });
       if (d.length > 0) {
         match = 'fail';
         errorType = 'json-diff';
@@ -164,7 +170,7 @@ export async function runEndpoint(ep: Endpoint, config: MigrationConfig, openApi
       if (mode === 'both' && openApi) {
         const schema = getOpResponseSchema(openApi, ep);
         if (schema) {
-          const vios = validateAgainstSchema(next.bodyJson, schema, '$', [], compileIgnore(config.ignorePaths), { lenientNullable: config.lenientNullable !== false });
+          const vios = validateAgainstSchema(next.bodyJson, schema, '$', [], compileIgnore(effectiveIgnore), { lenientNullable: config.lenientNullable !== false });
           if (vios.length > 0 && match === 'pass') {
             match = 'fail';
             errorType = 'schema-violation';
@@ -176,6 +182,14 @@ export async function runEndpoint(ep: Endpoint, config: MigrationConfig, openApi
     }
   }
 
+  // Annotation post-processing: re-classify a fail/error as `flagged` so it doesn't
+  // pollute the failure list. Pass through if the run actually passed.
+  let flagged: RunResult['flagged'];
+  if (annotation && (match === 'fail' || match === 'error')) {
+    match = 'flagged';
+    flagged = { flag: annotation.flag, note: annotation.note };
+  }
+
   return {
     endpointId: ep.id,
     startedAt,
@@ -184,6 +198,7 @@ export async function runEndpoint(ep: Endpoint, config: MigrationConfig, openApi
     diff: diffEntries,
     errorType,
     errorMessage,
+    flagged,
   };
 }
 
@@ -209,11 +224,18 @@ export async function runEndpoints(eps: Endpoint[], config: MigrationConfig, opt
     openApi = loadOpenApi(opts.projectPath, config.endpointSource.openApiSpec);
   }
 
+  // Load all annotations once for the batch
+  let annotations: Record<string, Annotation> = {};
+  if (opts.projectPath) {
+    const { loadAnnotations } = await import('./annotations');
+    annotations = loadAnnotations(opts.projectPath);
+  }
+
   async function worker() {
     while (true) {
       const idx = i++;
       if (idx >= eps.length) return;
-      const r = await runEndpoint(eps[idx], config, openApi);
+      const r = await runEndpoint(eps[idx], config, openApi, annotations[eps[idx].id] || null);
       results[idx] = r;
       done++;
       opts.onProgress?.(done, eps.length, r);

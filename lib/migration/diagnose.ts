@@ -8,6 +8,8 @@ import { join } from 'node:path';
 import type { Endpoint, RunResult, MigrationConfig } from './types';
 import { loadOpenApi, lookup, getResponseSchema, type OpenApiDoc } from './openapi';
 import { loadEndpoints, loadConfig, listRuns, loadRun } from './store';
+import { getAnnotation } from './annotations';
+import type { Annotation } from './types';
 
 export interface DiagnosisContext {
   endpoint: Endpoint;
@@ -19,6 +21,7 @@ export interface DiagnosisContext {
   docContent?: string;
   docPath?: string;
   curlCommand: string;
+  annotation?: Annotation | null;
 }
 
 function substitutePath(path: string, subs: Record<string, string> = {}): string {
@@ -85,6 +88,7 @@ export function buildDiagnosisContext(projectPath: string, endpointId: string): 
   }
 
   const curlCommand = buildCurl(config.next.baseUrl, ep, config);
+  const annotation = getAnnotation(projectPath, endpointId);
 
   return {
     endpoint: ep,
@@ -96,6 +100,7 @@ export function buildDiagnosisContext(projectPath: string, endpointId: string): 
     docContent,
     docPath,
     curlCommand,
+    annotation,
   };
 }
 
@@ -365,6 +370,14 @@ export function renderDiagnosisMarkdown(ctx: DiagnosisContext, opts: { generic?:
   if (ep.summary) lines.push(`- **Summary**: ${ep.summary}`);
   if (ctx.docPath) lines.push(`- **Migration doc** (this project): \`${ctx.docPath}\``);
   lines.push('');
+
+  if (ctx.annotation) {
+    lines.push(`> ⚠ This endpoint is **flagged as \`${ctx.annotation.flag}\`** by the project owner. The deviation from spec is intentional and should NOT be "fixed". Note: ${ctx.annotation.note || '(no note)'}.`);
+    if (ctx.annotation.ignorePaths?.length) {
+      lines.push(`> Per-endpoint ignored paths: ${ctx.annotation.ignorePaths.map(p => `\`${p}\``).join(', ')}`);
+    }
+    lines.push('');
+  }
 
   lines.push('## Reproduce manually');
   lines.push(fence('bash', ctx.curlCommand));

@@ -7,7 +7,6 @@ import { TerminalSessionPickerLazy, fetchProjectSessions } from './TerminalLaunc
 const InlinePipelineView = lazy(() => import('./InlinePipelineView'));
 const WorkspaceViewLazy = lazy(() => import('./WorkspaceView'));
 const SessionViewLazy = lazy(() => import('./SessionView'));
-const MigrationCockpitLazy = lazy(() => import('./MigrationCockpit'));
 const CraftTabLazy = lazy(() => import('./CraftTabs').then(m => ({ default: m.CraftTab })));
 const CraftBuilderModalLazy = lazy(() => import('./CraftBuilder').then(m => ({ default: m.CraftBuilderModal })));
 const CraftMarketplaceModalLazy = lazy(() => import('./CraftMarketplaceModal'));
@@ -644,13 +643,6 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
               Pipelines
               {pipelineBindings.length > 0 && <span className="ml-1 text-[9px] opacity-70">({pipelineBindings.length})</span>}
             </button>
-            <button
-              onClick={() => setProjectTab('migration')}
-              className={`text-[11px] font-medium px-2.5 py-1 rounded transition-all ${
-                projectTab === 'migration' ? 'bg-[var(--accent)]/20 text-[var(--accent)] shadow-sm ring-1 ring-[var(--accent)]/40' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]'
-              }`}
-              title="API Migration Cockpit — parity testing between legacy and new modules"
-            >🚚 Migration</button>
             <CraftsDropdown
               crafts={crafts}
               activeTab={projectTab}
@@ -1424,13 +1416,6 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
             </div>
           )}
         </div>
-      )}
-
-      {/* Migration tab */}
-      {projectTab === 'migration' && (
-        <Suspense fallback={<div className="p-4 text-xs text-[var(--text-secondary)]">Loading migration cockpit…</div>}>
-          <MigrationCockpitLazy projectPath={projectPath} projectName={projectName} />
-        </Suspense>
       )}
 
       {/* Craft tabs — lazy-mount on first visit, then keep mounted (hidden via CSS)

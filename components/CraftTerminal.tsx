@@ -67,7 +67,7 @@ export default function CraftTerminal({
   // Load sessions + agents
   const refreshSessions = useCallback(async () => {
     try {
-      const r = await fetch(`/api/migration/sessions?projectPath=${encodeURIComponent(projectPath)}`);
+      const r = await fetch(`/api/craft-system/tmux-sessions?projectPath=${encodeURIComponent(projectPath)}`);
       if (!r.ok) return;
       const j = await r.json();
       setSessions([...(j.matches || []), ...(j.others || [])]);

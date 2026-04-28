@@ -76,15 +76,10 @@ export function useForgeFetch<T = any>(path: string, opts: { auto?: boolean; ini
 export function useInject(): (text: string, opts?: { sessionName?: string }) => Promise<{ ok: boolean; sessionName?: string }> {
   const { projectPath, projectName, craftName } = useCraftCtx();
   return useCallback(async (text: string, opts = {}) => {
-    const r = await fetch('/api/migration/fix', {
+    const r = await fetch('/api/craft-system/inject', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectPath, projectName,
-        mode: opts.sessionName ? 'inject' : 'inject',
-        sessionName: opts.sessionName,
-        promptOverride: text,
-      }),
+      body: JSON.stringify({ projectPath, text, sessionName: opts.sessionName }),
     });
     const j = await r.json();
     return { ok: !!j.ok, sessionName: j.sessionName };

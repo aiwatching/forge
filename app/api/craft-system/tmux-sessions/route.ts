@@ -2,16 +2,12 @@ import { NextResponse } from 'next/server';
 import { execSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 
-// GET /api/migration/sessions?projectPath=...
-// Returns active tmux sessions whose first pane's cwd is at or under projectPath.
-// Used by the cockpit to default-inject to the project's bound terminal.
+// GET /api/craft-system/tmux-sessions?projectPath=...
+// Lists active mw-* tmux sessions and partitions by whether their
+// pane_current_path falls under projectPath. Used by CraftTerminal to let
+// the user pick a session to attach to.
 
-interface SessionInfo {
-  name: string;
-  cwd: string;
-  windows: number;
-  attached: boolean;
-}
+interface SessionInfo { name: string; cwd: string; windows: number; attached: boolean; }
 
 function listMwSessions(): { name: string; windows: number; attached: boolean }[] {
   try {
@@ -44,8 +40,8 @@ function normalize(p: string): string {
 }
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const projectPath = url.searchParams.get('projectPath');
+  const u = new URL(req.url);
+  const projectPath = u.searchParams.get('projectPath');
   if (!projectPath) return NextResponse.json({ error: 'projectPath required' }, { status: 400 });
 
   const target = normalize(projectPath).replace(/\/+$/, '');
@@ -61,8 +57,6 @@ export async function GET(req: Request) {
     if (real === target || real.startsWith(target + '/')) matches.push(info);
     else others.push(info);
   }
-
-  // Prefer attached sessions first, then by name (newest mw-* tend to sort later)
   matches.sort((a, b) => Number(b.attached) - Number(a.attached) || a.name.localeCompare(b.name));
   return NextResponse.json({ matches, others });
 }

@@ -42,7 +42,8 @@ export default function CraftsMarketplacePanel({ searchQuery = '' }: { searchQue
     finally { setLoading(false); }
   };
 
-  useEffect(() => { refresh(); }, []);
+  // Force-refresh on mount so we don't show stale entries right after a publish landed.
+  useEffect(() => { refresh(true); }, []);
 
   // Pull recent projects (favorites + last opened) for the install picker
   useEffect(() => {

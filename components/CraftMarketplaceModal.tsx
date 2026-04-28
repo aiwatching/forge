@@ -43,7 +43,10 @@ export default function CraftMarketplaceModal({ projectPath, onClose, onInstalle
     }
   };
 
-  useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Always force-refresh on initial open so users see what's actually on the
+  // remote (the server-side cache is short, but a freshly published craft
+  // could otherwise sit hidden for the cache TTL).
+  useEffect(() => { refresh(true); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

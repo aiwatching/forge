@@ -53,7 +53,15 @@ function compareVersions(a: string, b: string): number {
 // ── Registry fetch ─────────────────────────────────────
 
 let cachedRegistry: { fetchedAt: number; entries: RegistryEntry[] } | null = null;
-const REGISTRY_TTL_MS = 5 * 60_000;
+// Short TTL — registry.json is tiny + GitHub Pages caches independently anyway.
+// 5-minute cache used to leave users staring at stale data after their own
+// publish landed; 30s is the right "barely noticeable but still saves repeat
+// hits during a single UI session" balance.
+const REGISTRY_TTL_MS = 30_000;
+
+export function invalidateRegistry() {
+  cachedRegistry = null;
+}
 
 export async function fetchRegistry(force = false): Promise<RegistryEntry[]> {
   if (!force && cachedRegistry && Date.now() - cachedRegistry.fetchedAt < REGISTRY_TTL_MS) {
@@ -109,7 +117,8 @@ export async function listMarketplace(projectPath: string): Promise<RegistryItem
 // ── Install / uninstall ────────────────────────────────
 
 export async function installCraft(name: string, projectPath: string): Promise<{ ok: boolean; error?: string }> {
-  const entries = await fetchRegistry();
+  // Always pull fresh on install — user just clicked install, can't be stale.
+  const entries = await fetchRegistry(true);
   const entry = entries.find(e => e.name === name);
   if (!entry) return { ok: false, error: `craft "${name}" not in registry` };
 
@@ -123,8 +132,8 @@ export async function installCraft(name: string, projectPath: string): Promise<{
 
   for (const rel of entry.files) {
     try {
-      const url = `${baseUrl}/${name}/${rel}`;
-      const res = await fetch(url);
+      const url = `${baseUrl}/${name}/${rel}?_t=${Date.now()}`;
+      const res = await fetch(url, { headers: { 'Cache-Control': 'no-cache' } });
       if (!res.ok) throw new Error(`${url}: ${res.status}`);
       const text = await res.text();
       const dest = join(targetDir, rel);
@@ -169,7 +178,7 @@ export async function updateCraft(name: string, projectPath: string): Promise<{ 
   const downloaded: { rel: string; content: string }[] = [];
   for (const rel of entry.files) {
     try {
-      const res = await fetch(`${baseUrl}/${name}/${rel}`);
+      const res = await fetch(`${baseUrl}/${name}/${rel}?_t=${Date.now()}`, { headers: { 'Cache-Control': 'no-cache' } });
       if (!res.ok) throw new Error(`${rel}: HTTP ${res.status}`);
       downloaded.push({ rel, content: await res.text() });
     } catch (e: any) {

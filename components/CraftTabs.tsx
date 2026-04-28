@@ -156,16 +156,45 @@ export function CraftTab({ craft, projectPath, projectName }: Props) {
         <button onClick={() => setReloadTick(t => t + 1)}
           className="px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
           title="Re-fetch ui.tsx (after agent edits)">↻ reload</button>
-        <button onClick={() => {
-            if (showTerm) { setShowTerm(false); return; }
-            // Showing — if we already have a remembered choice, just open it
-            if (termChoice) setShowTerm(true);
-            else setPickerOpen(true);
-          }}
-          className="px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
-          title={showTerm ? 'Hide terminal' : (termChoice ? `Show terminal (${termChoice.agentId}${termChoice.resumeSessionId ? ' · resume ' + termChoice.resumeSessionId.slice(0, 8) : ''})` : 'Show terminal — pick agent + session')}>
-          {showTerm ? '⊟ hide terminal' : '⊞ show terminal'}
-        </button>
+        {!showTerm && (
+          <button onClick={() => setPickerOpen(true)}
+            className="px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
+            title="Open terminal — pick agent + session">
+            ⊞ open terminal
+          </button>
+        )}
+        {showTerm && (
+          <>
+            <button onClick={() => setPickerOpen(true)}
+              className="px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
+              title={`Re-pick agent + session${termChoice ? ` (current: ${termChoice.agentId}${termChoice.resumeSessionId ? ' · resume ' + termChoice.resumeSessionId.slice(0, 8) : ''})` : ''}`}>
+              ⚙ session
+            </button>
+            <button onClick={() => setShowTerm(false)}
+              className="px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
+              title="Hide panel — keeps tmux session running, agent state preserved">
+              ⊟ hide
+            </button>
+            <button onClick={async () => {
+              const sn = craft.preferredSessionName || `mw-craft-${craft.name}`;
+              if (!confirm(`Close terminal for "${craft.displayName}"?\n\nThis kills the tmux session ${sn} and stops any agent running there. The craft files stay untouched.`)) return;
+              try {
+                await fetch('/api/craft-system/kill-session', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ sessionName: sn }),
+                });
+              } catch {}
+              try { localStorage.removeItem(termChoiceKey(projectPath, craft.name)); } catch {}
+              setTermChoice(null);
+              setShowTerm(false);
+            }}
+              className="px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:text-red-300 hover:bg-red-500/10"
+              title="Close terminal — kills the tmux session and forgets the saved choice">
+              ✕ close
+            </button>
+          </>
+        )}
       </div>
 
       {/* Top: UI */}

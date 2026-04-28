@@ -91,6 +91,14 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [projectTab, setProjectTab] = useState<string>('code');
   const [crafts, setCrafts] = useState<Array<{ name: string; displayName: string; icon?: string; description?: string; scope: string; hasUi: boolean; hasServer: boolean }>>([]);
   const [craftBuilder, setCraftBuilder] = useState<{ refineName?: string } | null>(null);
+  // Once a craft is visited it stays mounted (hidden via CSS) so its terminal + WS persist.
+  const [visitedCrafts, setVisitedCrafts] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    if (projectTab.startsWith('craft:')) {
+      const name = projectTab.slice('craft:'.length);
+      setVisitedCrafts(prev => prev.has(name) ? prev : new Set(prev).add(name));
+    }
+  }, [projectTab]);
   const refreshCrafts = useCallback(() => {
     fetch(`/api/crafts?projectPath=${encodeURIComponent(projectPath)}`)
       .then(r => r.ok ? r.json() : { crafts: [] })
@@ -1437,12 +1445,18 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
         </Suspense>
       )}
 
-      {/* Craft tabs */}
-      {crafts.map(c => projectTab === `craft:${c.name}` && (
-        <Suspense key={c.name} fallback={<div className="p-4 text-xs text-[var(--text-secondary)]">Loading craft {c.displayName}…</div>}>
-          <CraftTabLazy craft={c as any} projectPath={projectPath} projectName={projectName} />
-        </Suspense>
-      ))}
+      {/* Craft tabs — lazy-mount on first visit, then keep mounted (hidden via CSS)
+          so each craft's terminal panel + WebSocket survive tab switches. */}
+      {crafts.filter(c => visitedCrafts.has(c.name)).map(c => {
+        const isActive = projectTab === `craft:${c.name}`;
+        return (
+          <div key={c.name} className={`flex-1 flex flex-col min-h-0 overflow-hidden ${isActive ? '' : 'hidden'}`}>
+            <Suspense fallback={<div className="p-4 text-xs text-[var(--text-secondary)]">Loading craft {c.displayName}…</div>}>
+              <CraftTabLazy craft={c as any} projectPath={projectPath} projectName={projectName} />
+            </Suspense>
+          </div>
+        );
+      })}
 
       {/* Craft Builder modal */}
       {craftBuilder && (

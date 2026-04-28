@@ -16,6 +16,9 @@ interface CraftTermChoice {
 function termChoiceKey(projectPath: string, craftName: string): string {
   return `forge.craft.term.${projectPath}::${craftName}`;
 }
+function termOpenKey(projectPath: string, craftName: string): string {
+  return `forge.craft.term-open.${projectPath}::${craftName}`;
+}
 function loadTermChoice(projectPath: string, craftName: string): CraftTermChoice | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -25,6 +28,16 @@ function loadTermChoice(projectPath: string, craftName: string): CraftTermChoice
 }
 function saveTermChoice(projectPath: string, craftName: string, c: CraftTermChoice) {
   try { localStorage.setItem(termChoiceKey(projectPath, craftName), JSON.stringify(c)); } catch {}
+}
+function loadTermOpen(projectPath: string, craftName: string): boolean {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem(termOpenKey(projectPath, craftName)) === '1';
+}
+function saveTermOpen(projectPath: string, craftName: string, open: boolean) {
+  try {
+    if (open) localStorage.setItem(termOpenKey(projectPath, craftName), '1');
+    else localStorage.removeItem(termOpenKey(projectPath, craftName));
+  } catch {}
 }
 
 export interface CraftSummary {
@@ -77,9 +90,17 @@ export function CraftTab({ craft, projectPath, projectName }: Props) {
     const v = parseFloat(localStorage.getItem(SPLIT_KEY) || '');
     return isFinite(v) && v > 0.15 && v < 0.95 ? v : DEFAULT_SPLIT;
   });
-  // Terminal hidden by default — user chooses agent + session before it mounts
-  const [showTerm, setShowTerm] = useState<boolean>(false);
+  // Terminal panel state — persisted per craft so toggling tabs/closing browser
+  // doesn't lose what the user had open.
   const [termChoice, setTermChoice] = useState<CraftTermChoice | null>(() => loadTermChoice(projectPath, craft.name));
+  const [showTerm, setShowTermState] = useState<boolean>(() => {
+    // If we have a saved choice + previously was open, restore. Otherwise hidden.
+    return loadTermChoice(projectPath, craft.name) != null && loadTermOpen(projectPath, craft.name);
+  });
+  const setShowTerm = useCallback((v: boolean) => {
+    setShowTermState(v);
+    saveTermOpen(projectPath, craft.name, v);
+  }, [projectPath, craft.name]);
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
   const mountedRef = useRef(true);
   const containerRef = useRef<HTMLDivElement>(null);

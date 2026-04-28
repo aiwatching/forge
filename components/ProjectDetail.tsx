@@ -10,6 +10,8 @@ const SessionViewLazy = lazy(() => import('./SessionView'));
 const MigrationCockpitLazy = lazy(() => import('./MigrationCockpit'));
 const CraftTabLazy = lazy(() => import('./CraftTabs').then(m => ({ default: m.CraftTab })));
 const CraftBuilderModalLazy = lazy(() => import('./CraftBuilder').then(m => ({ default: m.CraftBuilderModal })));
+const CraftMarketplaceModalLazy = lazy(() => import('./CraftMarketplaceModal'));
+const CraftPublishModalLazy = lazy(() => import('./CraftPublishModal'));
 import CraftsDropdown from './CraftsDropdown';
 
 // ─── Syntax highlighting ─────────────────────────────────
@@ -92,6 +94,8 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
   const [projectTab, setProjectTab] = useState<string>('code');
   const [crafts, setCrafts] = useState<Array<{ name: string; displayName: string; icon?: string; description?: string; scope: string; hasUi: boolean; hasServer: boolean }>>([]);
   const [craftBuilder, setCraftBuilder] = useState<{ refineName?: string } | null>(null);
+  const [craftMarketplaceOpen, setCraftMarketplaceOpen] = useState(false);
+  const [craftPublishName, setCraftPublishName] = useState<string | null>(null);
   // Once a craft is visited it stays mounted (hidden via CSS) so its terminal + WS persist.
   const [visitedCrafts, setVisitedCrafts] = useState<Set<string>>(() => new Set());
   useEffect(() => {
@@ -651,6 +655,8 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
               onPick={(name) => setProjectTab(`craft:${name}`)}
               onNew={() => setCraftBuilder({})}
               onRefine={(name) => setCraftBuilder({ refineName: name })}
+              onPublish={(name) => setCraftPublishName(name)}
+              onMarketplace={() => setCraftMarketplaceOpen(true)}
               onDelete={async (name, displayName) => {
                 if (!confirm(`Delete craft "${displayName}"?\n\nThis removes <project>/.forge/crafts/${name}/ permanently.`)) return;
                 const r = await fetch(`/api/craft-system/delete?projectPath=${encodeURIComponent(projectPath)}&name=${encodeURIComponent(name)}`, { method: 'DELETE' });
@@ -1440,6 +1446,28 @@ export default memo(function ProjectDetail({ projectPath, projectName, hasGit }:
           </div>
         );
       })}
+
+      {/* Craft Marketplace modal */}
+      {craftMarketplaceOpen && (
+        <Suspense fallback={null}>
+          <CraftMarketplaceModalLazy
+            projectPath={projectPath}
+            onClose={() => setCraftMarketplaceOpen(false)}
+            onInstalled={refreshCrafts}
+          />
+        </Suspense>
+      )}
+
+      {/* Craft Publish modal */}
+      {craftPublishName && (
+        <Suspense fallback={null}>
+          <CraftPublishModalLazy
+            projectPath={projectPath}
+            craftName={craftPublishName}
+            onClose={() => setCraftPublishName(null)}
+          />
+        </Suspense>
+      )}
 
       {/* Craft Builder modal */}
       {craftBuilder && (

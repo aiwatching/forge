@@ -125,12 +125,35 @@ displayName: 📊 API Dashboard  # tab label (with emoji)
 description: One-line summary of what it does
 version: 0.1.0
 icon: "📊"                     # optional, mainly cosmetic
+author: aion0                 # optional, shown in marketplace
+tags:                         # optional — for marketplace browsing
+  - openapi
+  - dashboard
+  - migration
+requires:                     # optional — project-type compatibility gate.
+  hasFile:                    # craft is hidden + can't install if NONE match.
+    - docs/openapi.json
+    - openapi.yaml
+  hasGlob:
+    - "**/*.java"             # any of the matchers passing → compatible
 ui:
   tab: ui.tsx
-  showWhen: hasFile("docs/openapi.json")  # optional condition; omit to always show
+  showWhen: hasFile("docs/openapi.json")  # optional extra UI condition
 server:
   entry: server.ts             # omit this whole block if no server.ts
 ```
+
+**Tags + requires guidance:**
+
+- `tags` are free-form keywords used by the marketplace search. Common ones:
+  language (`java`, `typescript`, `python`), framework (`spring`, `react`),
+  use-case (`migration`, `testing`, `linting`, `debugging`).
+- `requires.hasFile` lists files that MUST exist somewhere in the project for
+  the craft to make sense (any one match = compatible).
+- `requires.hasGlob` is for broader matches like `**/*.java` (project has Java)
+  or `package.json` (Node project).
+- Be specific — a craft tagged `java` + `requires.hasGlob: ["**/*.java"]` won't
+  show up in a TypeScript project's marketplace.
 
 ## prompt.md
 

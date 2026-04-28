@@ -21,6 +21,8 @@ export default function CraftsDropdown({
   onNew,
   onRefine,
   onDelete,
+  onMarketplace,
+  onPublish,
 }: {
   crafts: Craft[];
   activeTab: string;
@@ -28,6 +30,8 @@ export default function CraftsDropdown({
   onNew: () => void;
   onRefine: (name: string) => void;
   onDelete: (name: string, displayName: string) => void;
+  onMarketplace: () => void;
+  onPublish: (name: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -62,6 +66,9 @@ export default function CraftsDropdown({
               <button onClick={() => onRefine(active.name)}
                 className="text-[10px] px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)]"
                 title="Refine this craft">⚙</button>
+              <button onClick={() => onPublish(active.name)}
+                className="text-[10px] px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)]"
+                title="Publish to the crafts marketplace">📦</button>
               <button onClick={() => onDelete(active.name, active.displayName)}
                 className="text-[10px] px-1.5 py-0.5 rounded text-[var(--text-secondary)] hover:bg-red-500/20 hover:text-red-300"
                 title="Delete this craft">🗑</button>
@@ -114,6 +121,11 @@ export default function CraftsDropdown({
               className="text-[10px] px-2 py-1 rounded bg-[var(--accent)]/20 text-[var(--accent)] hover:bg-[var(--accent)]/30 flex-1 text-left"
               title="Build a new craft">
               + New craft
+            </button>
+            <button onClick={() => { setOpen(false); onMarketplace(); }}
+              className="text-[10px] px-2 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--accent)]"
+              title="Browse the crafts marketplace">
+              🛒 Marketplace
             </button>
           </div>
         </div>

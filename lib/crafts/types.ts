@@ -1,12 +1,21 @@
 // Craft = a project-scoped mini-app: UI tab + optional API routes.
 // Lives at <project>/.forge/crafts/<name>/ or in lib/builtin-crafts/<name>/.
 
+export interface CraftRequirements {
+  hasFile?: string[];                 // any of these paths must exist (relative to project)
+  hasGlob?: string[];                 // any glob must match (e.g. "**/*.java")
+  // future: language, framework detection
+}
+
 export interface CraftManifest {
   name: string;                       // unique slug, dir name
   displayName?: string;               // tab label (default = name)
   icon?: string;                      // emoji shown in tab
   description?: string;
   version?: string;
+  author?: string;                    // marketplace metadata
+  tags?: string[];                    // for marketplace browsing/filtering
+  requires?: CraftRequirements;       // project-type compatibility gate
 
   ui?: {
     tab?: string;                     // path to ui.tsx (default 'ui.tsx')

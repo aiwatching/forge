@@ -67,10 +67,51 @@ export function getCraft(projectPath: string, name: string): CraftDescriptor | n
 //   hasFile("path/relative/to/project")
 //   always
 export function shouldShow(craft: CraftDescriptor, projectPath: string): boolean {
+  // First gate: requirements (project-type compatibility). If any are declared,
+  // at least one matcher must match. This is the same gate the marketplace uses.
+  if (craft.requires) {
+    if (!matchesRequirements(craft.requires, projectPath)) return false;
+  }
+  // Second gate: explicit ui.showWhen expression
   const expr = craft.ui?.showWhen;
   if (!expr || expr.trim() === 'always') return true;
   const m = expr.match(/^hasFile\(\s*["']([^"']+)["']\s*\)$/);
   if (m) return existsSync(join(projectPath, m[1]));
-  // Unknown — default show
   return true;
+}
+
+// Evaluate craft's requires field against a project path. Returns true when
+// the project satisfies at least one of the declared requirements (OR logic).
+// An empty requires object means "no constraint" → true.
+export function matchesRequirements(req: NonNullable<CraftDescriptor['requires']>, projectPath: string): boolean {
+  const files = req.hasFile || [];
+  const globs = req.hasGlob || [];
+  if (files.length === 0 && globs.length === 0) return true;
+
+  for (const f of files) {
+    if (existsSync(join(projectPath, f))) return true;
+  }
+
+  // Cheap glob match via shell. Bounded; runs once per craft, not per file.
+  for (const g of globs) {
+    try {
+      const r = require('node:child_process').execSync(
+        `find "${projectPath}" -path "${projectPath}/node_modules" -prune -o -path "${projectPath}/.git" -prune -o -name '*' -print 2>/dev/null | head -200 | grep -q -E "${globToRegex(g)}"`,
+        { timeout: 3000, stdio: 'pipe' }
+      );
+      if (r) return true;
+    } catch {
+      // grep -q returns 1 when no match, but execSync throws — ignore
+    }
+  }
+  return false;
+}
+
+function globToRegex(glob: string): string {
+  // Tiny glob → regex: ** → .*, * → [^/]*, . escaped
+  return glob
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*/g, '§§')
+    .replace(/\*/g, '[^/]*')
+    .replace(/§§/g, '.*');
 }

@@ -13,17 +13,26 @@ import type { CraftDescriptor, CraftServerDef, CraftRouteHandler, ForgeServerApi
 interface CachedMod { mtimeMs: number; def: CraftServerDef; }
 const cache = new Map<string, CachedMod>();
 
-async function transpileToFile(src: string): Promise<string> {
-  // Compile TS → JS into a tmp file we can `import()`. Caching by hash.
-  const hash = require('node:crypto').createHash('md5').update(src).digest('hex').slice(0, 16);
+// Function-wrapped dynamic import so Turbopack doesn't try to statically resolve the URL.
+const dynamicImport = new Function('u', 'return import(u)') as (u: string) => Promise<any>;
+
+async function transpileToFile(src: string, resolveDir: string): Promise<string> {
+  // Compile TS → JS, bundling the @forge/craft/server SDK inline (node_modules stays external).
+  // Cache key includes a salt so older transpile outputs are skipped after format changes.
+  const hash = require('node:crypto').createHash('md5').update('v2:' + src).digest('hex').slice(0, 16);
   const out = join(tmpdir(), `forge-craft-${hash}.mjs`);
   if (existsSync(out)) return out;
+  const sdkServerEntry = require('node:path').resolve(process.cwd(), 'lib/craft-sdk/server.ts');
   const result = await esbuild.build({
-    stdin: { contents: src, loader: 'ts', resolveDir: process.cwd() },
-    bundle: false,
+    stdin: { contents: src, loader: 'ts', resolveDir },
+    bundle: true,
     format: 'esm',
     platform: 'node',
     target: 'node20',
+    packages: 'external',
+    alias: {
+      '@forge/craft/server': sdkServerEntry,
+    },
     write: false,
   });
   writeFileSync(out, result.outputFiles[0].text, 'utf8');
@@ -38,11 +47,10 @@ export async function loadServer(craft: CraftDescriptor): Promise<CraftServerDef
   if (cached && cached.mtimeMs === stat.mtimeMs) return cached.def;
 
   const src = readFileSync(file, 'utf8');
-  const compiled = await transpileToFile(src);
+  const compiled = await transpileToFile(src, craft.__dir);
   // Bust ESM cache by adding a query string (Node ESM caches by URL).
   // Use Function() so Turbopack doesn't try to statically analyze the import.
   const url = pathToFileURL(compiled).href + `?t=${stat.mtimeMs}`;
-  const dynamicImport = new Function('u', 'return import(u)') as (u: string) => Promise<any>;
   const mod = await dynamicImport(url);
   const def: CraftServerDef = mod.default ?? mod.craft ?? mod;
   if (!def || typeof def !== 'object' || !def.routes) {

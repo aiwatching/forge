@@ -8,8 +8,8 @@
 // Install state for crafts is implicit (file-system): if
 // <project>/.forge/crafts/<name>/ exists, it's installed. No DB rows needed.
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import * as YAML from 'yaml';
 import { loadSettings } from '../settings';
 import type { CraftManifest, CraftRequirements } from './types';
@@ -206,6 +206,37 @@ export async function listAvailableUpdates(projectPath: string): Promise<{ name:
     .map(it => ({ name: it.name, from: it.installedVersion, to: it.version }));
 }
 
+// ── File scanner ───────────────────────────────────────
+
+const EXCLUDE_DIRS = new Set(['data', '.git', 'node_modules', '.next', 'dist', 'build', '.cache']);
+const EXCLUDE_FILES = new Set(['prompt.md', '.DS_Store']);
+const INCLUDE_EXT = new Set(['.yaml', '.yml', '.tsx', '.ts', '.jsx', '.js', '.md', '.json', '.css']);
+const MAX_FILE_BYTES = 1024 * 1024;   // 1 MB per file
+
+function collectCraftFiles(dir: string): { path: string; content: string }[] {
+  const out: { path: string; content: string }[] = [];
+  const walk = (d: string) => {
+    for (const name of readdirSync(d)) {
+      if (name.startsWith('.') && name !== '.gitignore') continue;
+      if (EXCLUDE_FILES.has(name)) continue;
+      const full = join(d, name);
+      const st = statSync(full);
+      if (st.isDirectory()) {
+        if (EXCLUDE_DIRS.has(name)) continue;
+        walk(full);
+        continue;
+      }
+      if (!st.isFile()) continue;
+      if (st.size > MAX_FILE_BYTES) continue;
+      const ext = name.lastIndexOf('.') >= 0 ? name.slice(name.lastIndexOf('.')) : '';
+      if (ext && !INCLUDE_EXT.has(ext)) continue;
+      out.push({ path: relative(dir, full), content: readFileSync(full, 'utf8') });
+    }
+  };
+  walk(dir);
+  return out;
+}
+
 // ── Publish helper ─────────────────────────────────────
 // MVP: returns a registry-entry JSON snippet + a tar of the craft dir for
 // the user to attach to a PR on the registry repo. Real "press a button to
@@ -222,13 +253,10 @@ export function bundleCraftForPublish(projectPath: string, craftName: string): {
     return { entry: null as any, files: [], error: 'craft.yaml unreadable' };
   }
 
-  // Collect publishable files (non-data, non-prompt history)
-  const files: { path: string; content: string }[] = [];
-  const include = ['craft.yaml', 'ui.tsx', 'server.ts', 'README.md'];
-  for (const f of include) {
-    const fp = join(dir, f);
-    if (existsSync(fp)) files.push({ path: f, content: readFileSync(fp, 'utf8') });
-  }
+  // Recursive scan — pick up arbitrary multi-file crafts (e.g. server.ts split
+  // into _types.ts / _runner.ts / etc.) while excluding runtime data, history,
+  // and anything obviously not source.
+  const files = collectCraftFiles(dir);
 
   const entry: RegistryEntry = {
     name: manifest.name,

@@ -20,14 +20,18 @@ export async function POST(req: Request) {
   // makes GitHub auto-fork the repo into the user's account, create the file
   // in the fork, and prompt to open a PR. Zero local-clone required.
   const ghBase = `https://github.com/${ownerRepo}`;
-  const newFileUrl = (path: string, content: string, filename: string) =>
-    `${ghBase}/new/main/${encodeURIComponent(path)}?filename=${encodeURIComponent(filename)}&value=${encodeURIComponent(content)}`;
   const editFileUrl = (path: string) => `${ghBase}/edit/main/${encodeURIComponent(path)}`;
 
-  const fileLinks = bundle.files.map(f => ({
-    path: f.path,
-    githubUrl: newFileUrl(bundle.entry.name, f.content, f.path),
-  }));
+  // GitHub's /new/<branch>/<dir>?filename=<name>&value=<...> — dir + filename
+  // are independent so we split nested paths into prefix dir / leaf name.
+  const fileLinks = bundle.files.map(f => {
+    const lastSlash = f.path.lastIndexOf('/');
+    const subdir = lastSlash >= 0 ? f.path.slice(0, lastSlash) : '';
+    const filename = lastSlash >= 0 ? f.path.slice(lastSlash + 1) : f.path;
+    const dirPath = subdir ? `${bundle.entry.name}/${subdir}` : bundle.entry.name;
+    const githubUrl = `${ghBase}/new/main/${dirPath.split('/').map(encodeURIComponent).join('/')}?filename=${encodeURIComponent(filename)}&value=${encodeURIComponent(f.content)}`;
+    return { path: f.path, githubUrl };
+  });
 
   return NextResponse.json({
     entry: bundle.entry,

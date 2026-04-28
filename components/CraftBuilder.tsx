@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 
 const TEMPLATES = [
   { label: '📊 Dashboard', text: 'A dashboard view that shows ' },
@@ -10,45 +10,20 @@ const TEMPLATES = [
   { label: '🧪 Tester', text: 'A tester that validates ' },
 ];
 
-interface LogLine {
-  text: string;
-  kind: 'system' | 'user' | 'assistant' | 'tool' | 'result' | 'error';
-  ts: number;
+interface AgentSummary {
+  id: string;
+  displayName?: string;
+  name?: string;
+  detected?: boolean;
+  enabled?: boolean;
 }
 
-function classify(entry: any): LogLine['kind'] {
-  if (entry?.subtype === 'error') return 'error';
-  if (entry?.type === 'result') return 'result';
-  if (entry?.type === 'system') return 'system';
-  if (entry?.type === 'user') return 'user';
-  if (entry?.type === 'assistant') return 'assistant';
-  if (entry?.type === 'tool_use' || entry?.type === 'tool_result') return 'tool';
-  return 'system';
+function slugify(text: string): string {
+  // Pull first 4-6 meaningful words → kebab-case
+  const cleaned = text.toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').replace(/\s+/g, ' ').trim();
+  const words = cleaned.split(' ').filter(w => w.length > 2 && !['the', 'and', 'for', 'with', 'that', 'this', 'show', 'shows', 'lets', 'list'].includes(w));
+  return words.slice(0, 4).join('-').slice(0, 30) || `craft-${Date.now().toString(36).slice(-4)}`;
 }
-
-function entryToText(entry: any): string {
-  if (typeof entry?.text === 'string') return entry.text;
-  if (typeof entry?.content === 'string') return entry.content;
-  if (Array.isArray(entry?.content)) {
-    return entry.content.map((c: any) => c?.text || c?.input?.command || c?.name || '').filter(Boolean).join(' ');
-  }
-  if (entry?.message?.content) {
-    if (Array.isArray(entry.message.content)) {
-      return entry.message.content.map((c: any) => c?.text || c?.input?.command || c?.name || '').filter(Boolean).join(' ');
-    }
-    return String(entry.message.content);
-  }
-  return JSON.stringify(entry).slice(0, 300);
-}
-
-const KIND_STYLE: Record<LogLine['kind'], string> = {
-  system: 'text-gray-400',
-  user: 'text-cyan-300',
-  assistant: 'text-emerald-300',
-  tool: 'text-yellow-300',
-  result: 'text-emerald-400 font-semibold',
-  error: 'text-red-400',
-};
 
 export function CraftBuilderModal({ projectPath, projectName, refineCraftName, onClose, onCreated }: {
   projectPath: string;
@@ -57,152 +32,206 @@ export function CraftBuilderModal({ projectPath, projectName, refineCraftName, o
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const [log, setLog] = useState<LogLine[]>([]);
-  const esRef = useRef<EventSource | null>(null);
-  const logEndRef = useRef<HTMLDivElement | null>(null);
   const refining = !!refineCraftName;
+  const [name, setName] = useState(refining ? refineCraftName! : '');
+  const [nameTouched, setNameTouched] = useState(false);
+  const [displayName, setDisplayName] = useState('');
+  const [text, setText] = useState('');
+  const [mode, setMode] = useState<'terminal' | 'task'>('terminal');
+  const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [agentId, setAgentId] = useState<string>('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
+  // Auto-fill name from description when user hasn't manually edited it
   useEffect(() => {
-    return () => { esRef.current?.close(); };
+    if (!nameTouched && !refining && text.trim()) {
+      setName(slugify(text));
+    }
+  }, [text, nameTouched, refining]);
+
+  // Load available agents
+  useEffect(() => {
+    fetch('/api/agents')
+      .then(r => r.ok ? r.json() : [])
+      .then((list: AgentSummary[]) => {
+        const enabled = (list || []).filter((a: any) => a.enabled !== false && a.detected !== false);
+        setAgents(enabled);
+        if (enabled.length > 0 && !agentId) setAgentId(enabled[0].id);
+      })
+      .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [log.length]);
-
-  const cancel = useCallback(async () => {
-    if (!taskId) return;
-    await fetch(`/api/tasks/${taskId}/cancel`, { method: 'POST' }).catch(() => {});
-    esRef.current?.close();
-    setBusy(false);
-    setLog(prev => [...prev, { text: '⛔ cancelled', kind: 'error', ts: Date.now() }]);
-  }, [taskId]);
-
   const submit = async () => {
-    if (!text.trim()) return;
+    setErr(null);
+    if (!text.trim()) { setErr('Description is required'); return; }
+    if (!refining && !name.trim()) { setErr('Name is required'); return; }
     setBusy(true);
-    setDone(false);
-    setLog([{ text: '🚀 Spawning craft-builder task…', kind: 'system', ts: Date.now() }]);
-    const res = await fetch('/api/craft-system/build', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectPath, projectName, request: text, craftName: refineCraftName }),
-    });
-    const j = await res.json();
-    if (!j.ok) { setLog(prev => [...prev, { text: `❌ ${j.error || 'unknown'}`, kind: 'error', ts: Date.now() }]); setBusy(false); return; }
-    setTaskId(j.taskId);
-    setLog(prev => [...prev, { text: `📌 task ${j.taskId} started — Claude is generating files`, kind: 'system', ts: Date.now() }]);
 
-    const es = new EventSource(`/api/tasks/${j.taskId}/stream`);
-    esRef.current = es;
-    es.onmessage = ev => {
-      try {
-        const d = JSON.parse(ev.data);
-        if (d.type === 'log' && d.entry) {
-          const kind = classify(d.entry);
-          const text = entryToText(d.entry);
-          if (text) setLog(prev => [...prev, { text, kind, ts: Date.now() }]);
-        } else if (d.type === 'complete') {
-          setLog(prev => [...prev, { text: '✅ Craft generation complete', kind: 'result', ts: Date.now() }]);
-          setBusy(false);
-          setDone(true);
-          es.close();
-          onCreated();   // refresh craft list, but keep modal open
-        }
-      } catch {}
-    };
-    es.onerror = () => { es.close(); setBusy(false); };
+    try {
+      if (mode === 'terminal' && !refining) {
+        const res = await fetch('/api/craft-system/scaffold', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectPath, projectName,
+            name, displayName: displayName || undefined,
+            description: text,
+            agentId,
+          }),
+        });
+        const j = await res.json();
+        if (!j.ok) throw new Error(j.error || 'scaffold failed');
+        onCreated();
+        onClose();
+        // Note: user opens the session via the Sessions tab or reattaches in any terminal.
+        return;
+      }
+
+      // Task mode (or refine — refines always go through builder task)
+      const res = await fetch('/api/craft-system/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectPath, projectName,
+          request: text,
+          craftName: refining ? refineCraftName : (name || undefined),
+        }),
+      });
+      const j = await res.json();
+      if (!j.ok) throw new Error(j.error || 'build failed');
+      onCreated();
+      onClose();
+    } catch (e: any) {
+      setErr(e?.message || String(e));
+      setBusy(false);
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={busy ? undefined : onClose}>
-      <div className="bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg shadow-2xl w-[900px] max-w-[95vw] h-[80vh] flex flex-col"
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg shadow-2xl w-[640px] max-w-[95vw] max-h-[90vh] flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-4 py-2.5 border-b border-[var(--border)] flex items-center gap-2">
           <span className="text-sm font-semibold text-[var(--text-primary)]">
             {refining ? `⚙ Refine craft: ${refineCraftName}` : '+ New Craft'}
           </span>
-          {busy && <span className="text-[10px] px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-300 animate-pulse">running</span>}
-          {done && <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">done</span>}
-          {taskId && <a href={`/?task=${taskId}`} target="_blank" rel="noreferrer" className="text-[10px] text-[var(--accent)] hover:underline">task {taskId} ↗</a>}
           <div className="flex-1" />
-          {busy && <button onClick={cancel} className="text-[10px] px-2 py-1 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30">⛔ Cancel</button>}
           <button onClick={onClose} className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]">✕</button>
         </div>
 
-        {/* Input area */}
-        <div className="px-4 py-3 border-b border-[var(--border)] space-y-2 shrink-0">
-          {!refining && !taskId && (
-            <div className="flex flex-wrap gap-1">
-              {TEMPLATES.map(t => (
-                <button key={t.label} onClick={() => setText(t.text)}
-                  className="text-[10px] px-2 py-1 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)]">
-                  {t.label}
-                </button>
-              ))}
+        <div className="p-4 space-y-3 overflow-auto">
+          {!refining && (
+            <>
+              {/* Name + display name */}
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Name (kebab-case · dir name)" hint="Auto-derived from description; click to override.">
+                  <input value={name}
+                    onChange={e => { setName(e.target.value); setNameTouched(true); }}
+                    placeholder="e.g. api-dashboard"
+                    className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 font-mono" />
+                </Field>
+                <Field label="Display name (tab label)" hint="Optional — defaults to 🛠 + name.">
+                  <input value={displayName} onChange={e => setDisplayName(e.target.value)}
+                    placeholder="e.g. 📊 API Dashboard"
+                    className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1" />
+                </Field>
+              </div>
+
+              {/* Quick templates */}
+              <div className="flex flex-wrap gap-1">
+                <span className="text-[10px] text-[var(--text-secondary)] mr-1">Quick start:</span>
+                {TEMPLATES.map(t => (
+                  <button key={t.label} onClick={() => setText(t.text)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)]">
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Description */}
+          <Field label={refining ? 'What should change?' : 'What should this craft do?'}>
+            <textarea
+              value={text}
+              onChange={e => setText(e.target.value)}
+              autoFocus
+              disabled={busy}
+              placeholder={refining
+                ? 'e.g. add a column for last-modified date'
+                : 'e.g. dashboard of all our REST endpoints with migration status, allow batch run + AI fix on failures'}
+              className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2 font-mono min-h-[100px] resize-vertical"
+            />
+          </Field>
+
+          {/* Mode + agent picker (only for new crafts) */}
+          {!refining && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Run mode">
+                <div className="flex gap-1 text-[10px]">
+                  <button onClick={() => setMode('terminal')}
+                    className={`flex-1 px-2 py-1.5 rounded border ${mode === 'terminal' ? 'bg-[var(--accent)]/20 text-[var(--accent)] border-[var(--accent)]/40' : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'}`}>
+                    🖥 Terminal session<br /><span className="opacity-70 text-[9px]">interactive — debug as it builds</span>
+                  </button>
+                  <button onClick={() => setMode('task')}
+                    className={`flex-1 px-2 py-1.5 rounded border ${mode === 'task' ? 'bg-[var(--accent)]/20 text-[var(--accent)] border-[var(--accent)]/40' : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'}`}>
+                    📋 Background task<br /><span className="opacity-70 text-[9px]">fire-and-forget — open in Tasks tab</span>
+                  </button>
+                </div>
+              </Field>
+              <Field label="Agent" hint="The CLI that builds the craft.">
+                <select value={agentId} onChange={e => setAgentId(e.target.value)}
+                  className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1">
+                  {agents.length === 0 && <option value="">no agents detected</option>}
+                  {agents.map(a => (
+                    <option key={a.id} value={a.id}>{a.displayName || a.name || a.id}</option>
+                  ))}
+                </select>
+              </Field>
             </div>
           )}
-          <textarea
-            value={text}
-            onChange={e => setText(e.target.value)}
-            autoFocus
-            disabled={busy}
-            placeholder={refining
-              ? 'e.g. add a column for last-modified date'
-              : 'e.g. dashboard of all our REST endpoints with migration status, allow batch run + AI fix on failures'}
-            className="w-full text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2 font-mono min-h-[80px] resize-vertical disabled:opacity-50"
-          />
-          <div className="flex justify-between items-center">
-            <span className="text-[9px] text-[var(--text-secondary)] opacity-70">
-              {refining ? 'Existing craft files will be re-fed; AI applies a minimal change.' : 'Forge spawns a Claude task in this project; the live log shows below.'}
-            </span>
-            <div className="flex gap-2">
-              {done && (
-                <button onClick={() => { setText(''); setLog([]); setDone(false); setTaskId(null); }}
-                  className="text-xs px-3 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]">
-                  + Another
-                </button>
-              )}
-              <button onClick={submit} disabled={busy || !text.trim()}
-                className="text-xs px-3 py-1 rounded bg-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/40 disabled:opacity-40">
-                {busy ? '⏳ Generating…' : (refining ? 'Apply changes' : 'Generate craft')}
-              </button>
-            </div>
-          </div>
-        </div>
 
-        {/* Terminal-style log */}
-        <div className="flex-1 overflow-auto bg-black/60 p-3 text-[11px] font-mono leading-relaxed min-h-0">
-          {log.length === 0 && <div className="text-[var(--text-secondary)] opacity-60">Type your request above and click Generate. Output will appear here.</div>}
-          {log.map((line, i) => (
-            <div key={i} className={`whitespace-pre-wrap break-all ${KIND_STYLE[line.kind]}`}>
-              <span className="text-gray-600 select-none">[{new Date(line.ts).toLocaleTimeString()}]</span> {line.text}
+          {err && (
+            <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded px-2 py-1.5">
+              {err}
             </div>
-          ))}
-          <div ref={logEndRef} />
-        </div>
+          )}
 
-        {/* Footer */}
-        <div className="px-4 py-2 border-t border-[var(--border)] flex items-center justify-between text-[10px] text-[var(--text-secondary)]">
-          <span>{log.length} log lines{taskId ? ` · task ${taskId}` : ''}</span>
-          <div className="flex gap-2">
-            {done && (
-              <button onClick={onClose}
-                className="text-xs px-3 py-1 rounded bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30">
-                ✓ Open new tab
-              </button>
+          <div className="text-[10px] text-[var(--text-secondary)] opacity-70 leading-relaxed">
+            {refining ? (
+              <>The agent will read this craft's existing files and the refine prompt as a background task. Watch progress in the Tasks tab.</>
+            ) : mode === 'terminal' ? (
+              <>Forge will create <code className="text-[var(--accent)]">.forge/crafts/{name || '<name>'}/</code>, scaffold the manifest + a placeholder UI, then start <b>{agents.find(a => a.id === agentId)?.displayName || agentId || 'the agent'}</b> in a tmux session at that directory and inject the builder prompt. The new tab appears immediately; it hot-reloads as the agent writes files.</>
+            ) : (
+              <>Forge spawns a background task in this project. Modal closes immediately — open the Tasks tab to follow progress.</>
             )}
-            <button onClick={onClose}
-              className="text-xs px-3 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]">
-              Close
-            </button>
           </div>
+        </div>
+
+        <div className="px-4 py-2 border-t border-[var(--border)] flex justify-end gap-2">
+          <button onClick={onClose}
+            className="text-xs px-3 py-1 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]">
+            Cancel
+          </button>
+          <button onClick={submit} disabled={busy || !text.trim() || (!refining && !name.trim())}
+            className="text-xs px-3 py-1 rounded bg-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/40 disabled:opacity-40">
+            {busy ? '⏳ …' : (refining ? 'Apply changes' : (mode === 'terminal' ? '🖥 Start session' : '📋 Spawn task'))}
+          </button>
         </div>
       </div>
     </div>
+  );
+}
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10px] text-[var(--text-secondary)] flex items-center gap-2">
+        {label}
+        {hint && <span className="opacity-60 font-normal">{hint}</span>}
+      </span>
+      {children}
+    </label>
   );
 }

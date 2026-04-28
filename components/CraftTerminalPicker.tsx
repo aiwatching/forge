@@ -3,7 +3,7 @@
 // First-launch picker for a craft's terminal: choose agent, then (if Claude) pick session.
 
 import React, { useEffect, useState } from 'react';
-import { fetchProjectSessions, type SessionInfo } from './TerminalLauncher';
+import type { SessionInfo } from './TerminalLauncher';
 
 export interface AgentSummary { id: string; name?: string; path?: string; cliType?: string; }
 
@@ -13,6 +13,17 @@ export interface CraftTerminalChoice {
   // Session selection — only meaningful when agent supports sessions (e.g. claude)
   sessionMode: 'last' | 'new' | 'specific';
   sessionId?: string;          // required when sessionMode === 'specific'
+}
+
+async function fetchCraftSessions(cwd: string): Promise<SessionInfo[]> {
+  try {
+    const res = await fetch(`/api/craft-system/sessions?cwd=${encodeURIComponent(cwd)}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
 }
 
 function formatRelativeTime(iso: string): string {
@@ -32,8 +43,9 @@ function formatSize(b: number): string {
 
 const SESSION_AWARE = new Set(['claude', 'claude-code']);  // matched by id or cliType
 
-export default function CraftTerminalPicker({ projectName, defaultAgentId, onPick, onCancel }: {
+export default function CraftTerminalPicker({ projectName, craftDir, defaultAgentId, onPick, onCancel }: {
   projectName: string;
+  craftDir: string;
   defaultAgentId?: string;
   onPick: (choice: CraftTerminalChoice) => void;
   onCancel: () => void;
@@ -63,13 +75,13 @@ export default function CraftTerminalPicker({ projectName, defaultAgentId, onPic
   useEffect(() => {
     if (!sessionAware) { setSessions(null); return; }
     setSessions(null);
-    fetchProjectSessions(projectName)
+    fetchCraftSessions(craftDir)
       .then(list => {
-        // Sort newest first
+        // Already sorted by API but keep defensive sort
         const sorted = [...list].sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime());
         setSessions(sorted);
       });
-  }, [sessionAware, projectName]);
+  }, [sessionAware, craftDir]);
 
   const last = sessions?.[0];
 
@@ -96,13 +108,15 @@ export default function CraftTerminalPicker({ projectName, defaultAgentId, onPic
           {/* Session picker — only for session-aware agents */}
           {sessionAware && (
             <div>
-              <div className="text-[10px] text-[var(--text-secondary)] mb-1">Session</div>
+              <div className="text-[10px] text-[var(--text-secondary)] mb-1">
+                Session <span className="opacity-60">— scoped to this craft's directory</span>
+              </div>
 
               {sessions === null && <div className="text-[10px] text-[var(--text-secondary)] py-1">Loading sessions…</div>}
 
               {sessions && (
                 <div className="space-y-1.5">
-                  {/* Resume last (default) */}
+                  {/* Resume last (default) — only when sessions exist */}
                   {last && (
                     <button onClick={() => onPick({ agentId, agentName: picked?.name, sessionMode: 'last', sessionId: last.id })}
                       className="w-full text-left px-2.5 py-1.5 rounded border border-emerald-500/40 hover:border-emerald-500 hover:bg-emerald-500/5 transition-colors">
@@ -117,7 +131,7 @@ export default function CraftTerminalPicker({ projectName, defaultAgentId, onPic
                     </button>
                   )}
 
-                  {/* Fresh */}
+                  {/* Fresh — always available */}
                   <button onClick={() => onPick({ agentId, agentName: picked?.name, sessionMode: 'new' })}
                     className="w-full text-left px-2.5 py-1.5 rounded border border-[var(--border)] hover:border-[var(--accent)] hover:bg-[var(--accent)]/5 transition-colors">
                     <div className="text-[11px] font-semibold text-[var(--text-primary)]">+ New session</div>

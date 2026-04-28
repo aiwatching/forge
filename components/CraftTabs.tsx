@@ -228,6 +228,7 @@ export function CraftTab({ craft, projectPath, projectName }: Props) {
         <Suspense fallback={null}>
           <CraftTerminalPickerLazy
             projectName={projectName}
+            craftDir={craft.dir || `${projectPath}/.forge/crafts/${craft.name}`}
             defaultAgentId={termChoice?.agentId}
             onPick={async (c) => {
               const next: CraftTermChoice = {

@@ -314,42 +314,41 @@ function cleanupOrphans() {
 // ── Start standalone services (single instance each) ──
 const services = [];
 
-function startServices() {
+// When forge runs in the background, services need to fully detach from the
+// invoking shell. Otherwise: closing that shell sends SIGHUP to its process
+// group → terminal-standalone / telegram / workspace die → all browser
+// terminals disconnect.
+//
+// `daemonize` (passed by startBackground) flips on:
+//   - detached: true        → new process group, survives parent SIGHUP
+//   - stdio redirected to forge.log fds (no inherited tty fds that go away)
+//   - child.unref()         → child doesn't keep the launcher alive
+function startServices(daemonize = false) {
   cleanupOrphans();
 
   const instanceTag = `--forge-port=${webPort}`;
+  const stdio = daemonize
+    ? ['ignore', openSync(LOG_FILE, 'a'), openSync(LOG_FILE, 'a')]
+    : ['ignore', 'inherit', 'inherit'];
+  const detached = daemonize;
 
-  // Terminal server
-  const termScript = join(ROOT, 'lib', 'terminal-standalone.ts');
-  const termChild = spawn('npx', ['tsx', termScript, instanceTag], {
-    cwd: ROOT,
-    stdio: ['ignore', 'inherit', 'inherit'],
-    env: { ...process.env },
-  });
-  services.push(termChild);
-  console.log(`[forge] Terminal server started (pid: ${termChild.pid})`);
+  const spawnService = (label, script) => {
+    const child = spawn('npx', ['tsx', script, instanceTag], {
+      cwd: ROOT,
+      stdio,
+      detached,
+      env: { ...process.env },
+    });
+    if (daemonize) child.unref();
+    services.push(child);
+    console.log(`[forge] ${label} started (pid: ${child.pid})`);
+    return child;
+  };
 
-  // Telegram bot
-  const telegramScript = join(ROOT, 'lib', 'telegram-standalone.ts');
-  const telegramChild = spawn('npx', ['tsx', telegramScript, instanceTag], {
-    cwd: ROOT,
-    stdio: ['ignore', 'inherit', 'inherit'],
-    env: { ...process.env },
-  });
-  services.push(telegramChild);
-  console.log(`[forge] Telegram bot started (pid: ${telegramChild.pid})`);
+  spawnService('Terminal server', join(ROOT, 'lib', 'terminal-standalone.ts'));
+  spawnService('Telegram bot',    join(ROOT, 'lib', 'telegram-standalone.ts'));
+  spawnService('Workspace daemon', join(ROOT, 'lib', 'workspace-standalone.ts'));
 
-  // Workspace daemon
-  const workspaceScript = join(ROOT, 'lib', 'workspace-standalone.ts');
-  const workspaceChild = spawn('npx', ['tsx', workspaceScript, instanceTag], {
-    cwd: ROOT,
-    stdio: ['ignore', 'inherit', 'inherit'],
-    env: { ...process.env },
-  });
-  services.push(workspaceChild);
-  console.log(`[forge] Workspace daemon started (pid: ${workspaceChild.pid})`);
-
-  // Track all child PIDs for clean shutdown
   const childPids = services.map(c => c.pid).filter(Boolean);
   savePids(childPids);
 }
@@ -426,8 +425,9 @@ function startBackground() {
   protectedPids.add(String(child.pid));
   child.unref();
 
-  // Start services in background too (cleanupOrphans will skip protectedPids)
-  startServices();
+  // Start services in background too — detached so closing the launcher's
+  // shell can't take the daemons (and all attached browser terminals) down.
+  startServices(true);
 
   console.log(`[forge] Started in background (pid ${child.pid})`);
   if (!getArg('--port')) {
